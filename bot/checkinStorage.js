@@ -1,10 +1,11 @@
 const fs = require('fs');
 const path = require('path');
+const { getSofiaDateKey } = require('./sofiaTime');
 
 const STORAGE_PATH = path.join(__dirname, 'daily_progress.json');
 
-function todayKey() {
-  return new Date().toISOString().split('T')[0];
+function todayKey(now = new Date()) {
+  return getSofiaDateKey(now);
 }
 
 function load() {

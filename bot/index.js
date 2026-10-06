@@ -67,9 +67,7 @@ const forget = require('./commands/forget');
 const userMemory = require('./commands/userMemory');
 const coach = require('./commands/coach');
 const reminders = require('./commands/reminders');
-const { startDailyCoaching } = require('./scheduler');
-const { startReminderScheduler } = require('./reminderScheduler');
-const { startSubscriptionExpiryScheduler } = require('./subscriptionExpiryScheduler');
+const { startBotRuntime } = require('./startup');
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const PORT = process.env.PORT || 3001;
@@ -657,26 +655,48 @@ app.get('/health', (_req, res) => {
 });
 
 async function start() {
-  // launch() stays pending for the lifetime of long polling. Start the expiry
-  // wake-up before awaiting it, otherwise no expiry notifications are processed.
-  const expiryScheduler = startSubscriptionExpiryScheduler();
+  let runtime;
+  let server;
+  let shuttingDown = false;
+
+  const shutdown = (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    runtime?.stop();
+    server?.close();
+    try {
+      bot.stop(signal);
+    } catch (err) {
+      // A signal can arrive while Telegraf is still validating the token and
+      // before its polling instance exists. Schedulers/server are already
+      // stopped above, so this is a safe no-op during early shutdown.
+      console.error('Failed to stop bot:', err.message);
+    }
+  };
+
   try {
-    await bot.launch();
+    // `bot.launch()` stays pending for the lifetime of long polling. The
+    // runtime uses Telegraf's validated-launch callback instead of waiting for
+    // that promise, which would otherwise make local schedulers unreachable.
+    runtime = startBotRuntime(bot);
     console.log('Telegram bot started (long polling).');
-    startDailyCoaching(bot);
-    startReminderScheduler(bot);
+
+    server = app.listen(PORT, () => {
+      console.log(`Express health server listening on port ${PORT}`);
+    });
+
+    process.once('SIGINT', () => shutdown('SIGINT'));
+    process.once('SIGTERM', () => shutdown('SIGTERM'));
+
+    await runtime.launchPromise;
+    runtime.stop();
+    server?.close();
   } catch (err) {
-    expiryScheduler.stop();
+    runtime?.stop();
+    server?.close();
     console.error('Failed to start bot:', err.message);
     process.exit(1);
   }
-
-  app.listen(PORT, () => {
-    console.log(`Express health server listening on port ${PORT}`);
-  });
-
-  process.once('SIGINT', () => bot.stop('SIGINT'));
-  process.once('SIGTERM', () => bot.stop('SIGTERM'));
 }
 
 start();

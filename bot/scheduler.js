@@ -4,13 +4,18 @@ const { getMemory, setLastCoachDate } = require('./memoryStorage');
 const { isOwnerId } = require('./adminGuard');
 const { generateCoach } = require('./coachService');
 const { resolveEntitlementStatus } = require('./entitlementResolver');
+const { getSofiaDateKey, getSofiaTimeParts } = require('./sofiaTime');
 
-const COACH_HOUR = Number.isFinite(parseInt(process.env.COACH_HOUR, 10))
-  ? parseInt(process.env.COACH_HOUR, 10)
-  : 9;
+const configuredCoachHour = Number(process.env.COACH_HOUR);
+const COACH_HOUR =
+  Number.isInteger(configuredCoachHour) && configuredCoachHour >= 0 && configuredCoachHour <= 23
+    ? configuredCoachHour
+    : 9;
 
-function todayKey() {
-  return new Date().toISOString().split('T')[0];
+let activeDailyCoachingScheduler = null;
+
+function todayKey(now = new Date()) {
+  return getSofiaDateKey(now);
 }
 
 function sleep(ms) {
@@ -53,22 +58,64 @@ async function runDailyCoaching(bot) {
 }
 
 // Lightweight minute-tick scheduler (no external cron dependency). Fires the
-// daily coaching once when the local hour first matches COACH_HOUR each day.
-function startDailyCoaching(bot) {
+// daily coaching once when the Sofia hour first matches COACH_HOUR each day.
+// The singleton and in-flight guard prevent duplicate timers/messages in one
+// running bot process; persistent per-user lastCoachDate remains the restart
+// dedupe guard.
+function startDailyCoaching(bot, {
+  coachHour = COACH_HOUR,
+  nowFn = () => new Date(),
+  runDailyCoachingFn = runDailyCoaching,
+  setIntervalFn = setInterval,
+  clearIntervalFn = clearInterval,
+  logger = console,
+} = {}) {
+  if (activeDailyCoachingScheduler) return activeDailyCoachingScheduler;
+
   let lastRunDate = null;
+  let inFlight = false;
+  let stopped = false;
 
   const tick = async () => {
-    const now = new Date();
-    if (now.getHours() === COACH_HOUR && lastRunDate !== todayKey()) {
-      lastRunDate = todayKey();
-      console.log(`Running daily coaching for ${todayKey()} at hour ${COACH_HOUR}.`);
-      await runDailyCoaching(bot);
+    if (stopped || inFlight) return;
+
+    let acquired = false;
+    try {
+      const now = getSofiaTimeParts(nowFn());
+      if (now.hour !== coachHour || lastRunDate === now.dateKey) return;
+
+      inFlight = true;
+      acquired = true;
+      logger.log(`Running daily coaching for ${now.dateKey} at Sofia hour ${coachHour}.`);
+      await runDailyCoachingFn(bot);
+      lastRunDate = now.dateKey;
+    } catch (err) {
+      logger.error('Daily coaching scheduler tick error:', err.message);
+    } finally {
+      if (acquired) inFlight = false;
     }
   };
 
-  // Check every minute.
-  setInterval(tick, 60 * 1000);
-  console.log(`Daily coaching scheduler started (target hour: ${COACH_HOUR}).`);
+  // Check every minute and also immediately on boot. The immediate tick covers
+  // a start/restart during the configured Sofia hour instead of missing it.
+  const interval = setIntervalFn(() => {
+    void tick();
+  }, 60 * 1000);
+  interval?.unref?.();
+
+  const scheduler = {
+    tick,
+    stop() {
+      if (stopped) return;
+      stopped = true;
+      clearIntervalFn(interval);
+      activeDailyCoachingScheduler = null;
+    },
+  };
+  activeDailyCoachingScheduler = scheduler;
+  logger.log(`Daily coaching scheduler started (target Sofia hour: ${coachHour}).`);
+  scheduler.ready = tick();
+  return scheduler;
 }
 
-module.exports = { startDailyCoaching, runDailyCoaching };
+module.exports = { startDailyCoaching, runDailyCoaching, todayKey };

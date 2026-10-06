@@ -1,14 +1,15 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-test('production starts expiry wake-ups before awaiting long polling', () => {
+test('production starts the bot runtime before awaiting long polling', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const source = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
   const startup = source.slice(source.indexOf('async function start()'));
-  const scheduler = startup.indexOf('const expiryScheduler = startSubscriptionExpiryScheduler();');
-  assert.ok(scheduler >= 0 && scheduler < startup.indexOf('await bot.launch()'));
-  assert.ok(startup.includes('expiryScheduler.stop();'));
+  const runtime = startup.indexOf('runtime = startBotRuntime(bot);');
+  const awaitLaunch = startup.indexOf('await runtime.launchPromise;');
+  assert.ok(runtime >= 0 && runtime < awaitLaunch);
+  assert.ok(startup.includes('runtime?.stop();'));
 });
 const { startSubscriptionExpiryScheduler } = require('../subscriptionExpiryScheduler');
 

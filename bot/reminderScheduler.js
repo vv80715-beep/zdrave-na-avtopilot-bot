@@ -5,6 +5,10 @@ const {
 } = require('./reminderStorage');
 const { isOwnerId } = require('./adminGuard');
 const { CATEGORY_EMOJI } = require('./constants');
+const { getSofiaTimeParts } = require('./sofiaTime');
+
+let activeReminderScheduler = null;
+let dueRemindersInFlight = false;
 
 // Friendly, motivating line per category.
 const CATEGORY_LINES = {
@@ -15,14 +19,6 @@ const CATEGORY_LINES = {
   medication: 'Не забравяй да го вземеш навреме. 💊',
   custom: 'Малка стъпка към по-добрия ти ден! ✨',
 };
-
-function pad2(n) {
-  return String(n).padStart(2, '0');
-}
-
-function dateKey(d) {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-}
 
 function buildMessage(reminder) {
   const emoji = CATEGORY_EMOJI[reminder.category] || '⏰';
@@ -52,52 +48,97 @@ function isPermanentDeliveryError(err) {
 // Fire any reminders that are due right now. A reminder is due when:
 // active (not paused), today's weekday matches, the HH:MM matches, and it has
 // not already been sent for this exact day+time (the lastSent dedupe stamp).
-async function runDueReminders(bot) {
-  const now = new Date();
-  const weekday = now.getDay(); // 0 = Sunday
-  const hhmm = `${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
-  const stamp = `${dateKey(now)} ${hhmm}`;
+async function runDueReminders(bot, {
+  now = new Date(),
+  getAllReminderUserIdsFn = getAllReminderUserIds,
+  getRemindersFn = getReminders,
+  markSentFn = markSent,
+  isOwnerIdFn = isOwnerId,
+} = {}) {
+  if (dueRemindersInFlight) return;
+  dueRemindersInFlight = true;
 
-  for (const userId of getAllReminderUserIds()) {
-    if (isOwnerId(userId)) continue; // owner mode stays separate
+  try {
+    const sofia = getSofiaTimeParts(now);
+    const stamp = `${sofia.dateKey} ${sofia.hhmm}`;
 
-    for (const reminder of getReminders(userId)) {
-      if (reminder.paused) continue;
-      if (!Array.isArray(reminder.days) || !reminder.days.includes(weekday)) continue;
-      if (reminder.time !== hhmm) continue;
-      if (reminder.lastSent === stamp) continue; // never send a duplicate
+    for (const userId of getAllReminderUserIdsFn()) {
+      if (isOwnerIdFn(userId)) continue; // owner mode stays separate
 
-      try {
-        await bot.telegram.sendMessage(userId, buildMessage(reminder));
-        markSent(userId, reminder.id, stamp);
-      } catch (err) {
-        if (isPermanentDeliveryError(err)) {
-          // User blocked the bot / deactivated / chat gone — skip silently and
-          // stamp so we never retry an unreachable chat.
-          markSent(userId, reminder.id, stamp);
-        } else {
-          // Transient failure (network, rate limit, Telegram hiccup): do NOT
-          // stamp, so the next 30s tick retries within the same minute.
-          console.error(
-            `Reminder send failed (will retry) for ${userId}/${reminder.id}:`,
-            err.message
-          );
+      for (const reminder of getRemindersFn(userId)) {
+        if (reminder.paused) continue;
+        if (!Array.isArray(reminder.days) || !reminder.days.includes(sofia.weekday)) continue;
+        if (reminder.time !== sofia.hhmm) continue;
+        if (reminder.lastSent === stamp) continue; // never send a duplicate
+
+        try {
+          await bot.telegram.sendMessage(userId, buildMessage(reminder));
+          markSentFn(userId, reminder.id, stamp);
+        } catch (err) {
+          if (isPermanentDeliveryError(err)) {
+            // User blocked the bot / deactivated / chat gone — skip silently and
+            // stamp so we never retry an unreachable chat.
+            markSentFn(userId, reminder.id, stamp);
+          } else {
+            // Transient failure (network, rate limit, Telegram hiccup): do NOT
+            // stamp, so the next 30s tick retries within the same minute.
+            console.error(
+              `Reminder send failed (will retry) for ${userId}/${reminder.id}:`,
+              err.message
+            );
+          }
         }
       }
     }
+  } finally {
+    dueRemindersInFlight = false;
   }
 }
 
 // Tick every 30s so each minute is covered at least once; the lastSent stamp
-// guarantees a reminder is delivered only once per scheduled minute.
-function startReminderScheduler(bot) {
+// guarantees a reminder is delivered only once per Sofia scheduled minute.
+function startReminderScheduler(bot, {
+  nowFn = () => new Date(),
+  runDueRemindersFn = runDueReminders,
+  setIntervalFn = setInterval,
+  clearIntervalFn = clearInterval,
+  logger = console,
+} = {}) {
+  if (activeReminderScheduler) return activeReminderScheduler;
+
+  let stopped = false;
+  let inFlight = false;
   const tick = () =>
-    runDueReminders(bot).catch((err) =>
-      console.error('Reminder scheduler tick error:', err.message)
-    );
-  tick(); // run once immediately to reduce first-minute delivery lag
-  setInterval(tick, 30 * 1000);
-  console.log('Reminder scheduler started (30s tick).');
+    (async () => {
+      if (stopped || inFlight) return;
+      inFlight = true;
+      try {
+        await runDueRemindersFn(bot, { now: nowFn() });
+      } catch (err) {
+        logger.error('Reminder scheduler tick error:', err.message);
+      } finally {
+        inFlight = false;
+      }
+    })();
+
+  const interval = setIntervalFn(() => {
+    void tick();
+  }, 30 * 1000);
+  interval?.unref?.();
+
+  const scheduler = {
+    tick,
+    stop() {
+      if (stopped) return;
+      stopped = true;
+      clearIntervalFn(interval);
+      activeReminderScheduler = null;
+    },
+  };
+  activeReminderScheduler = scheduler;
+  logger.log('Reminder scheduler started (30s tick, Europe/Sofia).');
+  scheduler.ready = tick(); // reduce first-minute delivery lag after a restart
+  return scheduler;
 }
 
 module.exports = { startReminderScheduler, runDueReminders };
