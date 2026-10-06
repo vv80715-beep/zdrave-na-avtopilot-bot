@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="bg">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- This page carries payment session identifiers in its address. Never
+         send the address to any other host, not even as a referrer. -->
+    <meta name="referrer" content="no-referrer" />
+    <meta name="description" content="Server-side потвърждение на плащането за Здраве на автопилот." />
+    <meta name="theme-color" content="#070908" />
+    <title>Статус на плащането | Здраве на автопилот</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,600;0,700;1,600;1,700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="confirm-page">
+    <a class="skip-link" href="#main" data-en="Skip to content">Към съдържанието</a>
+    <header class="site-header" data-header>
+      <a class="brand" href="index.html" aria-label="Здраве на автопилот — начало">
+        <span class="brand-mark" aria-hidden="true">Е</span>
+        <span class="brand-name" data-en="Health <em>on Autopilot</em>">Здраве <em>на автопилот</em></span>
+      </a>
+      <div class="header-tools" aria-label="Бързи действия">
+        <a class="micro-pill" href="https://t.me/EliZdraveBot" target="_blank" rel="noopener noreferrer"><span aria-hidden="true">▣</span> Telegram</a>
+        <span class="lang-pill" aria-label="Език / Language">
+          <button class="lang-btn" data-lang="bg" type="button">BG</button>
+          <button class="lang-btn" data-lang="en" type="button">EN</button>
+        </span>
+      </div>
+      <button class="menu-toggle" type="button" aria-label="Отвори менюто" aria-expanded="false" aria-controls="primary-nav" data-en="Open menu"><span></span><span></span></button>
+      <nav id="primary-nav" aria-label="Основна навигация">
+        <a href="index.html" data-en="Home">Начало</a>
+        <a href="index.html#plans" data-en="Plans">Планове</a>
+        <a class="nav-cta" href="https://t.me/EliZdraveBot" target="_blank" rel="noopener noreferrer">Telegram</a>
+      </nav>
+    </header>
+
+    <main id="main" class="payment-result-page">
+      <section class="payment-result-card" data-result-state="checking" aria-live="polite">
+        <div class="payment-result-orbit" aria-hidden="true"><span>Е</span></div>
+        <p class="section-label" data-result-label>SERVER-SIDE ПРОВЕРКА</p>
+        <h1 data-result-title>Потвърждаваме плащането.</h1>
+        <p class="payment-result-copy" data-result-copy data-en="Returning from Stripe doesn't activate Premium by itself. We wait for the verified webhook and the entitlement record in the backend.">Връщането от Stripe не активира само по себе си Premium. Изчакваме проверения webhook и записването на entitlement-а в backend-а.</p>
+
+        <div class="payment-result-summary">
+          <div><span data-en="PLAN">ПЛАН</span><strong data-result-plan data-en="Checking…">Проверка…</strong></div>
+          <div><span data-en="PAYMENT">ПЛАЩАНЕ</span><strong data-result-payment>PROCESSING</strong></div>
+          <div><span data-en="ACCESS">ДОСТЪП</span><strong data-result-entitlement>WAITING</strong></div>
+          <div><span data-en="ACTIVE UNTIL">АКТИВЕН ДО</span><strong data-result-until>—</strong></div>
+        </div>
+
+        <div class="payment-result-actions">
+          <a class="button button-primary" data-result-telegram href="https://t.me/EliZdraveBot?start=payment_complete" target="_blank" rel="noopener noreferrer" hidden><span data-en="Open Eli in Telegram">Отвори Ели в Telegram</span> <span aria-hidden="true">↗</span></a>
+          <button class="button button-quiet" data-result-retry type="button" data-en="Check again">Провери отново</button>
+        </div>
+        <small data-result-help data-en="This page checks automatically for a short time. On confirmed payment, the button returns to EliZdraveBot with a safe server-side plan check.">Страницата проверява автоматично за кратко време. При потвърдено плащане бутонът връща към EliZdraveBot с безопасна server-side проверка на плана.</small>
+      </section>
+    </main>
+
+    <footer>
+      <a class="brand" href="index.html" aria-label="Здраве на автопилот — начало"><span class="brand-mark" aria-hidden="true">Е</span><span class="brand-name" data-en="Health <em>on Autopilot</em>">Здраве <em>на автопилот</em></span></a>
+      <p data-en="© 2026 Health on Autopilot">© 2026 Здраве на автопилот</p>
+      <div><a href="#" data-en="Terms">Условия</a><a href="#" data-en="Privacy">Поверителност</a></div>
+    </footer>
+
+    <script type="module" src="/i18n.js"></script>
+    <script type="module" src="/script.js"></script>
+    <script type="module" src="/payment-status.js"></script>
+  </body>
+</html>

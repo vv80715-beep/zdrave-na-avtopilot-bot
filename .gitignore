@@ -90,3 +90,6 @@ temp/
 
 # Local deployment evidence, not application source
 /bolt-backend/releases/**/baseline/
+
+# Contains key-shaped test literals rejected by GitHub secret protection
+/bolt-backend/server/test/checkout.test.cjs

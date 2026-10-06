@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="bg">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- This page carries a one-time purchase token in its address. Never send
+         the address to any other host, not even as a referrer. -->
+    <meta name="referrer" content="no-referrer" />
+    <meta name="description" content="Потвърди избрания план за Ели и подготви защитената връзка с Telegram преди плащане." />
+    <meta name="theme-color" content="#070908" />
+    <title>Потвърди своя план | Здраве на автопилот</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,600;0,700;1,600;1,700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="confirm-page">
+    <a class="skip-link" href="#main" data-en="Skip to main content">Към основното съдържание</a>
+
+    <header class="site-header" data-header>
+      <a class="brand" href="index.html" aria-label="Здраве на автопилот — начало">
+        <span class="brand-mark" aria-hidden="true">Е</span>
+        <span class="brand-name" data-en="Health <em>on Autopilot</em>">Здраве <em>на автопилот</em></span>
+      </a>
+
+      <div class="header-tools" aria-label="Бързи действия">
+        <a class="micro-pill" href="https://t.me/EliZdraveBot" target="_blank" rel="noopener noreferrer">
+          <span aria-hidden="true">▣</span> Telegram
+        </a>
+        <span class="lang-pill" aria-label="Език / Language">
+          <button class="lang-btn" data-lang="bg" type="button">BG</button>
+          <button class="lang-btn" data-lang="en" type="button">EN</button>
+        </span>
+      </div>
+
+      <button class="menu-toggle" type="button" aria-label="Отвори менюто" aria-expanded="false" aria-controls="primary-nav" data-en="Open menu">
+        <span></span><span></span>
+      </button>
+
+      <nav id="primary-nav" aria-label="Основна навигация">
+        <a href="index.html" data-en="Home">Начало</a>
+        <a href="index.html#plans" data-en="Plans">Планове</a>
+        <a href="#telegram-link">Telegram</a>
+        <a href="#security" data-en="Security">Сигурност</a>
+        <a class="nav-cta" href="#payment" data-en="Payment">Плащане</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="confirm-hero" aria-labelledby="confirm-title">
+        <div class="confirm-hero-copy">
+          <a class="back-link" data-plan-back href="monthly.html"><span aria-hidden="true">←</span> <span data-en="Back to plan">Назад към плана</span></a>
+          <div class="checkout-steps" aria-label="Стъпки на покупката" data-en-label="Checkout steps">
+            <span class="done"><b>1</b> <span data-en="PLAN">ПЛАН</span></span>
+            <i aria-hidden="true"></i>
+            <span class="active"><b>2</b> <span data-en="CONFIRM">ПОТВЪРЖДЕНИЕ</span></span>
+            <i aria-hidden="true"></i>
+            <span><b>3</b> <span data-en="PAYMENT">ПЛАЩАНЕ</span></span>
+          </div>
+          <p class="section-label" data-en="BEFORE PAYMENT">ПРЕДИ ПЛАЩАНЕ</p>
+          <h1 id="confirm-title" data-en="Confirm your plan.<br /><i>Then we connect everything.</i>">Потвърди своя план.<br /><i>После ние свързваме всичко.</i></h1>
+          <p class="confirm-lead" data-en="Here you review what you're choosing and we prepare the secure link between your purchase and your Telegram access. Premium won't unlock from the browser — only after server-side confirmed payment.">Тук проверяваш какво избираш и подготвяме защитената връзка между покупката и твоя Telegram достъп. Premium няма да се отключва от браузъра — само след server-side потвърдено плащане.</p>
+          <div class="confirm-trust-row" aria-label="Защити на покупката" data-en-label="Purchase protections">
+            <span data-en="<b>01</b> No Telegram password"><b>01</b> Без парола за Telegram</span>
+            <span data-en="<b>02</b> Server-side check"><b>02</b> Server-side проверка</span>
+            <span data-en="<b>03</b> Automatic unlock"><b>03</b> Автоматичен unlock</span>
+          </div>
+        </div>
+
+        <aside class="order-summary-card" aria-label="Обобщение на избрания план" data-en-label="Order summary">
+          <div class="order-card-top">
+            <p data-en="YOUR CHOICE">ТВОЯТ ИЗБОР</p>
+            <span class="order-plan-badge" data-plan-badge>1 МЕСЕЦ</span>
+          </div>
+          <h2 data-plan-name>1 месец с Ели</h2>
+          <div class="order-price"><strong data-plan-price>€50</strong><span data-plan-period>/ месец</span></div>
+          <div class="order-divider"></div>
+          <div class="order-includes" data-plan-features>
+            <div><span>TEXT</span><strong data-en="Included">Включен</strong></div>
+            <div><span>VOICE</span><strong data-en="Included">Включен</strong></div>
+            <div><span>AVATAR</span><strong data-en="Up to 30 min./month">До 30 мин./месец</strong></div>
+            <div><span>COMMUNITY</span><strong data-en="Full access">Пълен достъп</strong></div>
+          </div>
+          <div class="order-total">
+            <span data-en="TOTAL">ОБЩО</span>
+            <strong data-plan-total>€50</strong>
+          </div>
+          <a class="change-plan-link" href="index.html#plans"><span data-en="Change plan">Промени плана</span> <span aria-hidden="true">↗</span></a>
+        </aside>
+      </section>
+
+      <section class="confirm-workspace" aria-label="Подготовка на покупката" data-en-label="Purchase preparation">
+        <article class="confirm-panel selected-access-panel">
+          <div class="panel-heading">
+            <span class="panel-index">01</span>
+            <div>
+              <p class="section-label" data-en="CHOSEN ACCESS">ИЗБРАН ДОСТЪП</p>
+              <h2 data-en="Check what <i>you get.</i>">Провери какво <i>получаваш.</i></h2>
+            </div>
+          </div>
+          <p class="panel-intro" data-plan-description>Пълният месечен достъп до Ели с Text, Voice, Community и Avatar.</p>
+          <div class="confirm-feature-list" data-confirm-features>
+            <div><span>TEXT</span><p data-en="Daily conversations and personalized support.">Ежедневни разговори и персонализирана подкрепа.</p><strong>✓</strong></div>
+            <div><span>VOICE</span><p data-en="Voice messages and voice replies.">Гласови съобщения и гласови отговори.</p><strong>✓</strong></div>
+            <div><span>AVATAR</span><p data-en="Up to 30 minutes of generated Avatar video monthly.">До 30 минути генерирано Avatar видео месечно.</p><strong>✓</strong></div>
+            <div><span>COMMUNITY</span><p data-en="Full access to the V1 community.">Пълен достъп до V1 общността.</p><strong>✓</strong></div>
+          </div>
+          <div class="plan-expiry-note">
+            <span aria-hidden="true">✦</span>
+            <p data-expiry-copy><strong data-en="At expiry:">При изтичане:</strong> <span data-en="Premium features lock, but your profile, history, and progress are preserved.">Premium функциите се заключват, но профилът, историята и прогресът ти се запазват.</span></p>
+          </div>
+        </article>
+
+        <article class="confirm-panel telegram-panel" id="telegram-link">
+          <div class="panel-heading">
+            <span class="panel-index">02</span>
+            <div>
+              <p class="section-label">TELEGRAM ВРЪЗКА</p>
+              <h2 data-en="The purchase needs to know <i>who to unlock.</i>">Покупката трябва да знае <i>кого да отключи.</i></h2>
+            </div>
+          </div>
+
+          <div class="telegram-status" data-session-state="missing">
+            <div class="telegram-status-head">
+              <div class="telegram-symbol" aria-hidden="true">↗</div>
+              <div>
+                <span>ELIZDRAVEBOT</span>
+                <strong data-session-title data-en="No linked checkout session">Няма свързана checkout сесия</strong>
+              </div>
+              <span class="connection-badge" data-session-badge data-en="NOT LINKED">НЕ Е СВЪРЗАНО</span>
+            </div>
+            <p data-session-copy data-en="The plan above is a visual choice only. For a real purchase, EliZdraveBot must create a short-lived server-side session linked to your Telegram profile.">Планът по-горе е само визуален избор. За реална покупка EliZdraveBot трябва да създаде краткоживееща server-side сесия, свързана с твоя Telegram профил.</p>
+            <div class="session-preview" data-session-preview hidden>
+              <span>SESSION</span>
+              <code data-session-code>••••••••••••</code>
+              <small data-en="Will be validated only by the backend.">Ще бъде валидирана само от backend-а.</small>
+            </div>
+          </div>
+
+          <a class="button button-quiet telegram-open-button" data-telegram-connect href="https://t.me/EliZdraveBot?start=buy_monthly" target="_blank" rel="noopener noreferrer"><span data-en="Connect purchase with EliZdraveBot">Свържи покупката с EliZdraveBot</span> <span aria-hidden="true">↗</span></a>
+          <small class="telegram-help" data-en="Server-side purchase session API is built. Next we connect EliZdraveBot to it, so it returns a valid one-time link.">Server-side purchase session API вече е изграден. Следва да свържем EliZdraveBot към него, за да връща валиден еднократен линк.</small>
+        </article>
+      </section>
+
+      <section class="security-flow" id="security" aria-labelledby="security-title">
+        <div class="security-heading">
+          <p class="section-label" data-en="HOW IT WILL WORK SECURELY">КАК ЩЕ РАБОТИ СИГУРНО</p>
+          <h2 id="security-title" data-en="The browser shows.<br /><i>The backend decides.</i>">Браузърът показва.<br /><i>Backend-ът решава.</i></h2>
+          <p data-en="Purchase session, Stripe Checkout, and the verified webhook are all built server-side. The browser shows status, but only the backend can write a payment and activate an entitlement.">Purchase session, Stripe Checkout и провереният webhook вече са изградени server-side. Браузърът показва статуса, но само backend-ът може да запише плащане и да активира entitlement.</p>
+        </div>
+        <div class="security-rail">
+          <article>
+            <span>01</span>
+            <div><strong data-en="Eli creates a one-time session">Ели създава еднократна сесия</strong><p data-en="The Purchase API can link the opaque token to the Telegram user and canonical plan. No entitlement, price, or trusted user ID in the URL.">Purchase API вече може да свърже непрозрачния token с Telegram потребителя и canonical плана. В URL няма entitlement, цена или доверен user ID.</p></div>
+          </article>
+          <article>
+            <span>02</span>
+            <div><strong data-en="The site requests server-side check">Сайтът иска server-side проверка</strong><p data-en="Before checkout, the backend validates the session and returns only the safe purchase summary.">Преди checkout backend-ът валидира сесията и връща само безопасното обобщение на покупката.</p></div>
+          </article>
+          <article>
+            <span>03</span>
+            <div><strong data-en="Payment is confirmed by webhook">Плащането се потвърждава от webhook</strong><p data-en="Only the verified server-side event can activate or renew Premium access.">Само потвърденото server-side събитие може да активира или поднови Premium достъпа.</p></div>
+          </article>
+          <article>
+            <span>04</span>
+            <div><strong data-en="Telegram unlocks automatically">Telegram се отключва автоматично</strong><p data-en="The backend updates the entitlement and EliZdraveBot sees the new active plan without manual intervention.">Backend-ът обновява entitlement-а и EliZdraveBot вижда новия активен план без ръчна намеса.</p></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="payment-stage" id="payment" aria-labelledby="payment-title">
+        <div class="payment-stage-glow" aria-hidden="true"></div>
+        <div class="payment-stage-inner">
+          <div class="payment-copy">
+            <p class="section-label" data-en="NEXT STEP">СЛЕДВАЩА СТЪПКА</p>
+            <h2 id="payment-title" data-en="The session is secure.<br /><i>Payment is next.</i>">Сесията е защитена.<br /><i>Плащането е следващо.</i></h2>
+            <p data-en="The Purchase session API validates identity and canonical plan on the server. With Stripe configured, the backend creates a secure Checkout, and Premium activates only after a verified and idempotent webhook.">Purchase session API валидира идентичността и canonical плана на сървъра. При конфигуриран Stripe backend-ът създава защитен Checkout, а Premium се активира единствено след проверен и idempotent webhook.</p>
+          </div>
+
+          <div class="payment-box">
+            <div class="payment-box-row"><span data-en="PLAN">ПЛАН</span><strong data-payment-plan>1 месец</strong></div>
+            <div class="payment-box-row"><span data-en="AMOUNT">СУМА</span><strong data-payment-price>€50</strong></div>
+            <div class="payment-box-row"><span>TELEGRAM</span><strong data-payment-telegram data-en="Awaiting secure session">Очаква защитена сесия</strong></div>
+            <div class="payment-box-row"><span>STATUS</span><strong class="pending-value" data-payment-status>WAITING</strong></div>
+            <button class="button button-primary payment-button" data-payment-button type="button" disabled aria-disabled="true"><span data-en="Continue to secure payment">Продължи към сигурно плащане</span> <span aria-hidden="true">→</span></button>
+            <small data-payment-help data-en="A valid server-side purchase session is needed first. After its verification, the backend enables Stripe Checkout.">Първо е нужна валидна server-side purchase session. След нейната проверка backend-ът разрешава Stripe Checkout.</small>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <a class="brand" href="index.html" aria-label="Здраве на автопилот — начало"><span class="brand-mark" aria-hidden="true">Е</span><span class="brand-name" data-en="Health <em>on Autopilot</em>">Здраве <em>на автопилот</em></span></a>
+      <p data-en="© 2026 Health on Autopilot">© 2026 Здраве на автопилот</p>
+      <div><a href="#" data-en="Terms">Условия</a><a href="#" data-en="Privacy">Поверителност</a></div>
+    </footer>
+
+    <script type="module" src="/i18n.js"></script>
+    <script type="module" src="/script.js"></script>
+    <script type="module" src="/purchase.js"></script>
+  </body>
+</html>
