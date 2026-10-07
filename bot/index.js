@@ -45,6 +45,7 @@ const { sendVoiceReply } = require('./voiceReplyService');
 const { extractHealthEvents } = require('./dailyLogTracker');
 const { resolveLogQuery, answerDailyLogQuery, recordEvents, formatConfirmation } = require('./dailyLogService');
 const { feedbackForEvents } = require('./healthInsights');
+const { createAskEliAdapter } = require('./brain/askEliAdapter');
 
 const profileWizard = require('./scenes/profileWizard');
 const editWizard = require('./scenes/editWizard');
@@ -285,6 +286,7 @@ stats.register(bot);
 // вкъщи" lost the just-discussed topic). RAM-only recent turns — see
 // ownerSession.js. Regular users keep their persisted history.
 const { ownerRecentTurns, ownerRememberTurn } = require('./ownerSession');
+const eliV22Adapter = createAskEliAdapter();
 
 // opts.status: entitlement status from gateChat (computed if missing).
 async function askEli(ctx, question, opts = {}) {
@@ -317,6 +319,16 @@ async function askEli(ctx, question, opts = {}) {
     (storedMode === 'voice' || Boolean(opts.spokenInput));
   const freePlan = status.plan === 'free';
 
+  // Eli V2.2 integration is opt-in only. With the default flags OFF this
+  // returns the legacy route and changes nothing in the production path.
+  const v22Channel = avatarMode ? 'avatar' : voiceMode ? 'voice' : 'text';
+  const v22 = eliV22Adapter.prepare({
+    userId: ctx.from.id,
+    channel: v22Channel,
+    message: question,
+    conversationState,
+  });
+
   // Deterministic answers (log queries, profile dumps, memory commands) follow
   // the same one-delivery rule: voice mode speaks them (text only as fallback);
   // avatar mode falls back to text for these — never a video (cost control).
@@ -331,6 +343,13 @@ async function askEli(ctx, question, opts = {}) {
     }
     await replyWithMarkdownSafe(ctx, full);
   };
+
+  // Urgent V2.2 safety routing is deterministic and never reaches OpenAI.
+  // This path is unreachable while the V2.2 flag remains disabled.
+  if (!v22.legacy && v22.safety?.level === 'urgent' && v22.safety.responseText) {
+    await deliverDeterministic(v22.safety.responseText);
+    return;
+  }
 
   // Explicit relationship-memory management ("забрави, че …", "промени целта ми
   // на …", "какви цели съм ти казвал"). Handled deterministically so Eli acts on
@@ -444,6 +463,12 @@ async function askEli(ctx, question, opts = {}) {
     priorMessages = recentMessages(ctx.from.id, 10);
   }
 
+  // When explicitly enabled, V2.2 contributes read-only safety/context
+  // instructions. It does not persist the memory proposal in Step 2.
+  if (!v22.legacy && Array.isArray(v22.systemAddenda) && v22.systemAddenda.length) {
+    systemContent = `${v22.systemAddenda.join('\n\n')}\n\n${systemContent}`;
+  }
+
   // Tell Eli whether to greet: only for a new or resumed-after-a-pause
   // conversation, never mid-flow. Applies to owner and users alike.
   systemContent = `${systemContent}\n\n${conversationFlowNote(conversationState)}`;
@@ -505,6 +530,10 @@ async function askEli(ctx, question, opts = {}) {
     } else {
       addConversation(ctx.from.id, 'user', question);
       addConversation(ctx.from.id, 'assistant', answer);
+    }
+
+    if (!v22.legacy) {
+      eliV22Adapter.rememberExchange(ctx.from.id, question, answer);
     }
 
     // ONE delivery per turn (strict cost rule):
