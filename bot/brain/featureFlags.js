@@ -49,10 +49,23 @@ function resolveEliV22Flags(overrides = {}, env = process.env) {
   return Object.freeze(flags);
 }
 
+function getOwnerScopedEliV22Flags(owner) {
+  const enabledForOwner = Boolean(owner);
+  return Object.freeze({
+    aiBrain: enabledForOwner,
+    contextBuilder: enabledForOwner,
+    memoryCandidates: enabledForOwner,
+    unifiedProfile: enabledForOwner,
+    durableMemory: false,
+    durableReads: false,
+  });
+}
+
 module.exports = {
   ELI_V2_2_FLAG_DEFAULTS,
   ENVIRONMENT_FLAG_NAMES,
   parseBooleanFlag,
   getEliV22Flags,
   resolveEliV22Flags,
+  getOwnerScopedEliV22Flags,
 };
