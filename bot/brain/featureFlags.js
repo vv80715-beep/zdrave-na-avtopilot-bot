@@ -1,8 +1,8 @@
 'use strict';
 
-// Every V2.2 flag defaults to false. Adding these files therefore has no effect
-// on the production bot until a later, explicitly approved integration turns a
-// flag on in a controlled environment.
+// Every V2.2 flag defaults to false. The production owner canary is a
+// per-request override; process-wide environment flags never grant customers
+// access to the canary.
 
 const ELI_V2_2_FLAG_DEFAULTS = Object.freeze({
   aiBrain: false,
@@ -12,6 +12,18 @@ const ELI_V2_2_FLAG_DEFAULTS = Object.freeze({
   durableMemory: false,
   durableReads: false,
 });
+
+const ELI_V2_2_OWNER_CANARY_FLAGS = Object.freeze({
+  ...ELI_V2_2_FLAG_DEFAULTS,
+  aiBrain: true,
+  contextBuilder: true,
+  memoryCandidates: true,
+  unifiedProfile: true,
+});
+
+function getOwnerScopedEliV22Flags(isOwner) {
+  return isOwner ? ELI_V2_2_OWNER_CANARY_FLAGS : ELI_V2_2_FLAG_DEFAULTS;
+}
 
 const ENVIRONMENT_FLAG_NAMES = Object.freeze({
   aiBrain: 'ELI_V2_2_AI_BRAIN_ENABLED',
@@ -51,7 +63,9 @@ function resolveEliV22Flags(overrides = {}, env = process.env) {
 
 module.exports = {
   ELI_V2_2_FLAG_DEFAULTS,
+  ELI_V2_2_OWNER_CANARY_FLAGS,
   ENVIRONMENT_FLAG_NAMES,
+  getOwnerScopedEliV22Flags,
   parseBooleanFlag,
   getEliV22Flags,
   resolveEliV22Flags,

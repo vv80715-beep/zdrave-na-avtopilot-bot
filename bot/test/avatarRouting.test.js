@@ -18,6 +18,23 @@ test('/mode -> select Avatar -> как си invokes Avatar, not text delivery', 
   const status = { canChat: true, plan: 'owner', allowedModes: ['text', 'voice', 'avatar'] };
   let avatars = 0, voices = 0;
   const replies = [];
+  const canaryFlags = {
+    aiBrain: true,
+    contextBuilder: true,
+    memoryCandidates: true,
+    unifiedProfile: true,
+    durableMemory: false,
+    durableReads: false,
+  };
+  const disabledFlags = {
+    aiBrain: false,
+    contextBuilder: false,
+    memoryCandidates: false,
+    unifiedProfile: false,
+    durableMemory: false,
+    durableReads: false,
+  };
+  const v22Inputs = [];
   const ctx = {
     from: { id: 900000020 }, message: { text: '/mode' },
     reply: async text => replies.push(text), sendChatAction: async () => {},
@@ -34,8 +51,12 @@ test('/mode -> select Avatar -> как си invokes Avatar, not text delivery', 
     modePermissionsText: () => 'Avatar ✅', planKeyboard: () => ({}),
     maybeHandleCommandText: async () => false,
     isOwner: () => true, touchConversationState: () => 'continuing',
+    getOwnerScopedEliV22Flags: owner => owner ? canaryFlags : disabledFlags,
     eliV22Adapter: {
-      prepare: () => ({ legacy: true, safety: null, systemAddenda: [] }),
+      prepare: input => {
+        v22Inputs.push(input);
+        return { legacy: true, safety: null, systemAddenda: [] };
+      },
       rememberExchange: () => {},
     },
     isProfileQuery: () => false, resolveLogQuery: () => null,
@@ -66,5 +87,6 @@ test('/mode -> select Avatar -> как си invokes Avatar, not text delivery', 
   await handlers.get('text')(ctx);
   assert.equal(avatars, 1);
   assert.equal(voices, 0);
+  assert.deepEqual(v22Inputs.at(-1).featureFlags, canaryFlags);
   assert.deepEqual(replies, [], 'normal message must not use text delivery');
 });

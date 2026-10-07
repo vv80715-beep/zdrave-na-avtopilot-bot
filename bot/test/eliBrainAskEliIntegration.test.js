@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { createAskEliAdapter } = require('../brain/askEliAdapter');
 const { createUnknownHealthProfile, createProfileFieldUpdateProposal, applyApprovedProfileFieldUpdate } = require('../brain/unifiedHealthProfile');
 const { clearShortContext } = require('../brain/shortContextSession');
+const { getOwnerScopedEliV22Flags } = require('../brain/featureFlags');
 
 const FLAGS_ON = {
   aiBrain: true,
@@ -23,6 +24,50 @@ test('askEli adapter is legacy by default', () => {
   const result = adapter.prepare({ userId: '300001', channel: 'text', message: 'Здравей' });
   assert.equal(result.legacy, true);
   assert.equal(result.providerModel, 'gpt-4o-mini');
+});
+
+test('owner canary enables only approved flags and overrides process flags for customers', () => {
+  const environment = {
+    ELI_V2_2_AI_BRAIN_ENABLED: 'true',
+    ELI_V2_2_CONTEXT_BUILDER_ENABLED: 'true',
+    ELI_V2_2_MEMORY_CANDIDATES_ENABLED: 'true',
+    ELI_V2_2_UNIFIED_PROFILE_ENABLED: 'true',
+    ELI_V2_2_DURABLE_MEMORY_ENABLED: 'true',
+    ELI_V2_2_DURABLE_READS_ENABLED: 'true',
+  };
+  const adapter = createAskEliAdapter({ environment });
+  const owner = adapter.prepare({
+    userId: '300007',
+    channel: 'text',
+    message: 'Как да продължа?',
+    featureFlags: getOwnerScopedEliV22Flags(true),
+  });
+  const customer = adapter.prepare({
+    userId: '300008',
+    channel: 'text',
+    message: 'Как да продължа?',
+    featureFlags: getOwnerScopedEliV22Flags(false),
+  });
+
+  assert.deepEqual({ ...owner.flags }, {
+    aiBrain: true,
+    contextBuilder: true,
+    memoryCandidates: true,
+    unifiedProfile: true,
+    durableMemory: false,
+    durableReads: false,
+  });
+  assert.equal(owner.legacy, false);
+  assert.equal(owner.providerModel, 'gpt-4o-mini');
+  assert.deepEqual({ ...customer.flags }, {
+    aiBrain: false,
+    contextBuilder: false,
+    memoryCandidates: false,
+    unifiedProfile: false,
+    durableMemory: false,
+    durableReads: false,
+  });
+  assert.equal(customer.legacy, true);
 });
 
 test('text voice avatar share the same brain context when enabled', () => {

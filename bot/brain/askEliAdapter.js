@@ -21,6 +21,7 @@ function createAskEliAdapter(options = {}) {
       longTermFacts: input.longTermFacts || [],
       healthEvents: input.healthEvents || [],
       shortContext: input.shortContext || getShortContext(userId),
+      featureFlags: input.featureFlags,
       now: input.now || null,
     });
 

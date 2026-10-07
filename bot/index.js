@@ -46,6 +46,7 @@ const { extractHealthEvents } = require('./dailyLogTracker');
 const { resolveLogQuery, answerDailyLogQuery, recordEvents, formatConfirmation } = require('./dailyLogService');
 const { feedbackForEvents } = require('./healthInsights');
 const { createAskEliAdapter } = require('./brain/askEliAdapter');
+const { getOwnerScopedEliV22Flags } = require('./brain/featureFlags');
 
 const profileWizard = require('./scenes/profileWizard');
 const editWizard = require('./scenes/editWizard');
@@ -327,6 +328,7 @@ async function askEli(ctx, question, opts = {}) {
     channel: v22Channel,
     message: question,
     conversationState,
+    featureFlags: getOwnerScopedEliV22Flags(owner),
   });
 
   // Deterministic answers (log queries, profile dumps, memory commands) follow
