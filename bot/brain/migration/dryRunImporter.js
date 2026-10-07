@@ -1,5 +1,7 @@
 'use strict';
 
+const { collectUserIssues } = require('./legacyValidators');
+
 const {
   mapLegacyProfile,
   mapRelationshipMemories,
@@ -61,6 +63,12 @@ async function dryRunLegacyImport(sources = {}, options = {}) {
   counts.users = ids.length;
 
   for (const id of ids) {
+    const validationIssues = collectUserIssues(id, sources);
+    if (validationIssues.length) {
+      counts.invalid += validationIssues.length;
+      diagnostics.push(...validationIssues.map((issue) => ({ telegramUserId: id, ...issue })));
+    }
+
     const row = {
       telegramUserId: id,
       profiles: 0,
@@ -73,6 +81,8 @@ async function dryRunLegacyImport(sources = {}, options = {}) {
       invalid: 0,
       conflicting: 0,
     };
+
+    row.invalid += validationIssues.length;
 
     try {
       const profile = mapLegacyProfile(
