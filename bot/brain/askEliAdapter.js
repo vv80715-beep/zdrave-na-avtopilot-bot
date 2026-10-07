@@ -17,6 +17,7 @@ function createAskEliAdapter(options = {}) {
       channel: input.channel || 'text',
       message: input.message || '',
       conversationState: input.conversationState || 'unknown',
+      featureFlags: input.featureFlags,
       profile: input.profile || createUnknownHealthProfile(userId),
       longTermFacts: input.longTermFacts || [],
       healthEvents: input.healthEvents || [],
