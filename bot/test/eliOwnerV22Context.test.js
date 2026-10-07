@@ -1,0 +1,341 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+
+const OWNER_ID = 'v22-owner-fixture';
+process.env.OWNER_TELEGRAM_ID = OWNER_ID;
+
+const { isOwner } = require('../adminGuard');
+const { buildOwnerV22Context } = require('../brain/ownerV22Context');
+const { createAskEliAdapter } = require('../brain/askEliAdapter');
+const { getOwnerScopedEliV22Flags } = require('../brain/featureFlags');
+const { clearShortContext } = require('../brain/shortContextSession');
+const {
+  getProfileField,
+  createUnknownHealthProfile,
+  getKnownProfileEntries,
+} = require('../brain/unifiedHealthProfile');
+
+const ALL_ENV_FLAGS_ON = {
+  ELI_V2_2_AI_BRAIN_ENABLED: 'true',
+  ELI_V2_2_CONTEXT_BUILDER_ENABLED: 'true',
+  ELI_V2_2_MEMORY_CANDIDATES_ENABLED: 'true',
+  ELI_V2_2_UNIFIED_PROFILE_ENABLED: 'true',
+  ELI_V2_2_DURABLE_MEMORY_ENABLED: 'true',
+  ELI_V2_2_DURABLE_READS_ENABLED: 'true',
+};
+
+const OWNER_FLAGS = {
+  aiBrain: true,
+  contextBuilder: true,
+  memoryCandidates: true,
+  unifiedProfile: true,
+  durableMemory: false,
+  durableReads: false,
+};
+
+const OFF_FLAGS = {
+  aiBrain: false,
+  contextBuilder: false,
+  memoryCandidates: false,
+  unifiedProfile: false,
+  durableMemory: false,
+  durableReads: false,
+};
+
+const LEGACY_PROFILE = {
+  firstName: 'Мира',
+  age: 38,
+  gender: 'жена',
+  height: 168,
+  weight: 62,
+  goal: 'подобряване на съня',
+  activityLevel: 'умерена',
+  trainingExperience: 'начинаеща',
+  foodPreferences: 'предпочита растителни храни',
+  medicalNotes: null,
+};
+
+const LEGACY_MEMORY = {
+  injuries: 'стара травма на коляното',
+  allergies: 'фъстъци',
+  favoriteFoods: 'овесени ядки',
+  dislikedFoods: 'гъби',
+  dailyHabits: 'ежедневни разходки',
+  motivationLevel: 7,
+  lastWorkout: { date: '2026-09-30', note: 'силова тренировка' },
+  conversation: [{ role: 'user', content: 'Това остава в отделния разговорен контекст.' }],
+  updatedAt: '2026-09-30T12:00:00.000Z',
+};
+
+const RELATIONSHIP_MEMORIES = [
+  { id: 'goal-1', category: 'goals', value: 'да пробягам 5 км' },
+  { id: 'pref-1', category: 'communication_preferences', value: 'Кратки отговори' },
+];
+
+function fixtureReaders(profile = LEGACY_PROFILE, memory = LEGACY_MEMORY, relationship = RELATIONSHIP_MEMORIES, calls = []) {
+  return {
+    readProfile: (userId) => {
+      calls.push(['profile', userId]);
+      return profile;
+    },
+    readUserMemory: (userId) => {
+      calls.push(['user_memory', userId]);
+      return memory;
+    },
+    readRelationshipMemories: (userId) => {
+      calls.push(['relationship_memory', userId]);
+      return relationship;
+    },
+  };
+}
+
+function findFact(context, key) {
+  return context.longTermFacts.find((fact) => fact.key === key);
+}
+
+test('owner context maps the structured profile and stored long-term facts by the exact owner ID', () => {
+  const reads = [];
+  const ownerContext = buildOwnerV22Context(OWNER_ID, fixtureReaders(undefined, undefined, undefined, reads));
+
+  assert.equal(getProfileField(ownerContext.profile, 'identity.firstName').value, 'Мира');
+  assert.equal(getProfileField(ownerContext.profile, 'goals.primary').value, 'подобряване на съня');
+  assert.equal(getProfileField(ownerContext.profile, 'nutrition.allergies').value, 'фъстъци');
+  assert.equal(getProfileField(ownerContext.profile, 'progress.highlights').value, '2026-09-30 — силова тренировка');
+  assert.equal(findFact(ownerContext, 'injuries').value, 'стара травма на коляното');
+  assert.equal(findFact(ownerContext, 'favoriteFoods').value, 'овесени ядки');
+  assert.equal(findFact(ownerContext, 'motivationLevel').value, '7');
+  assert.ok(ownerContext.longTermFacts.some((fact) => fact.value === 'да пробягам 5 км'));
+  assert.ok(ownerContext.longTermFacts.some((fact) => fact.value === 'Кратки отговори'));
+  assert.equal(ownerContext.longTermFacts.some((fact) => ['dislikedFoods', 'dailyHabits', 'lastWorkout'].includes(fact.key)), false);
+  assert.deepEqual(reads, [
+    ['profile', OWNER_ID],
+    ['user_memory', OWNER_ID],
+    ['relationship_memory', OWNER_ID],
+  ]);
+});
+
+test('profile fact and relevant long-term facts reach Text, Voice and Avatar V2.2 context identically', () => {
+  const ownerContext = buildOwnerV22Context(OWNER_ID, fixtureReaders());
+  const adapter = createAskEliAdapter({ environment: ALL_ENV_FLAGS_ON });
+  const featureFlags = getOwnerScopedEliV22Flags(true);
+  const shortContext = [
+    { role: 'user', content: 'Вчера обсъдихме кратките разходки.' },
+    { role: 'assistant', content: 'Ще продължим оттам.' },
+  ];
+  const common = {
+    userId: OWNER_ID,
+    message: 'Как да подобря съня и да включа овесени ядки за подготовка за 5 км?',
+    ...ownerContext,
+    shortContext,
+    featureFlags,
+  };
+  const prepared = ['text', 'voice', 'avatar'].map((channel) =>
+    adapter.prepare({ ...common, channel })
+  );
+
+  for (const result of prepared) {
+    assert.equal(result.legacy, false);
+    assert.equal(result.providerModel, 'gpt-4o-mini');
+    assert.deepEqual({ ...result.flags }, OWNER_FLAGS);
+    assert.ok(result.context.knownProfile.some(
+      (entry) => entry.path === 'goals.primary' && entry.value === 'подобряване на съня'
+    ));
+    assert.ok(result.context.longTermFacts.some(
+      (fact) => fact.key === 'favoriteFoods' && fact.value === 'овесени ядки'
+    ));
+    assert.ok(result.context.longTermFacts.some((fact) => fact.value === 'да пробягам 5 км'));
+    assert.deepEqual(result.context.shortContext, shortContext);
+    assert.match(result.systemAddenda.join('\n'), /подобряване на съня/);
+    assert.match(result.systemAddenda.join('\n'), /овесени ядки/);
+    assert.match(result.systemAddenda.join('\n'), /да пробягам 5 км/);
+  }
+
+  for (const result of prepared.slice(1)) {
+    assert.deepEqual(result.context.knownProfile, prepared[0].context.knownProfile);
+    assert.deepEqual(result.context.longTermFacts, prepared[0].context.longTermFacts);
+    assert.deepEqual(result.context.shortContext, prepared[0].context.shortContext);
+    assert.deepEqual(result.systemAddenda, prepared[0].systemAddenda);
+  }
+});
+
+test('blank or malformed stored values remain unknown and are not turned into facts', () => {
+  const unknownContext = buildOwnerV22Context(OWNER_ID, fixtureReaders(
+    { firstName: '  ', age: { guessed: 44 }, goal: null, height: Infinity },
+    { injuries: '', favoriteFoods: { guessed: 'ябълки' }, motivationLevel: null, lastWorkout: { secretGuess: 'измислен факт' } },
+    [{ id: 'bad', category: 'goals', value: { guessed: 'измислена цел' } }, { category: 'habits', value: '   ' }]
+  ));
+  const adapter = createAskEliAdapter({ environment: {} });
+  const result = adapter.prepare({
+    userId: OWNER_ID,
+    channel: 'avatar',
+    message: 'Какво знаеш за мен?',
+    ...unknownContext,
+    featureFlags: getOwnerScopedEliV22Flags(true),
+  });
+  const rendered = result.systemAddenda.join('\n');
+
+  assert.deepEqual(getKnownProfileEntries(unknownContext.profile), []);
+  assert.deepEqual(unknownContext.longTermFacts, []);
+  assert.ok(result.context.unknownProfilePaths.includes('identity.firstName'));
+  assert.ok(result.context.unknownProfilePaths.includes('identity.age'));
+  assert.match(rendered, /Все още няма потвърдени профилни данни/);
+  assert.doesNotMatch(rendered, /ябълки|измислена цел|измислен факт|44/);
+});
+
+function createAskEliHarness(readers) {
+  const source = fs.readFileSync(require.resolve('../index'), 'utf8');
+  const start = source.indexOf('async function askEli(');
+  const end = source.indexOf("bot.command('ask'", start);
+  assert.ok(start >= 0 && end > start, 'actual askEli implementation exists');
+
+  const adapterCore = createAskEliAdapter({ environment: ALL_ENV_FLAGS_ON });
+  const adapterCalls = [];
+  const llmCalls = [];
+  const avatarCalls = [];
+  const voiceCalls = [];
+  const memoryReads = [];
+  let storedMode = 'text';
+  let helperCalls = 0;
+  const adapter = {
+    prepare(input) {
+      const result = adapterCore.prepare(input);
+      adapterCalls.push({ input, result });
+      return result;
+    },
+    rememberExchange: (...args) => adapterCore.rememberExchange(...args),
+  };
+  const sandbox = {
+    openai: {
+      chat: {
+        completions: {
+          create: async (request) => {
+            llmCalls.push(request);
+            return { choices: [{ message: { content: 'Mock Eli отговор.' } }] };
+          },
+        },
+      },
+    },
+    gateChat: async () => ({ canChat: true, plan: 'owner', allowedModes: ['text', 'voice', 'avatar'], notice: null }),
+    isOwner,
+    getOwnerScopedEliV22Flags,
+    buildOwnerV22Context: (userId) => {
+      helperCalls += 1;
+      return buildOwnerV22Context(userId, readers);
+    },
+    touchConversationState: () => 'continuing',
+    getMode: () => storedMode,
+    eliV22Adapter: adapter,
+    ownerRecentTurns: () => [{ role: 'user', content: 'Известен кратък разговорен факт.' }],
+    ownerRememberTurn: () => {},
+    conversationFlowNote: () => 'FLOW_NOTE',
+    SYSTEM_PROMPT: 'MOCK_PERSONA',
+    OWNER_MEMORY: 'OWNER_MEMORY',
+    isProfileQuery: () => false,
+    detectMemoryCommand: () => null,
+    rememberFromMessage: (userId) => memoryReads.push(['rememberFromMessage', userId]),
+    buildMemoryContext: (userId) => {
+      memoryReads.push(['buildMemoryContext', userId]);
+      return 'LEGACY_CUSTOMER_MEMORY';
+    },
+    buildRelationshipContext: () => '',
+    recentMessages: () => [],
+    addConversation: () => {},
+    resolveLogQuery: () => null,
+    extractHealthEvents: () => [],
+    sendAvatarReply: async (_ctx, text) => { avatarCalls.push(text); return true; },
+    sendVoiceReply: async (_ctx, text) => { voiceCalls.push(text); return true; },
+    replyWithMarkdownSafe: async (ctx, text) => ctx.reply(text),
+    stripLeadingGreeting: (text) => text,
+    parseLookTag: (text) => ({ text, category: 'neutral' }),
+    chooseLookCategory: () => 'neutral',
+    resolveLookId: () => undefined,
+    LOOK_PROMPT_NOTE: 'MOCK_AVATAR_NOTE',
+    console: { error: (...args) => assert.fail(args.join(' ')), warn: () => {} },
+  };
+  vm.runInNewContext(source.slice(start, end), sandbox);
+
+  function seedShortContext(userId) {
+    clearShortContext(userId);
+    adapterCore.rememberExchange(
+      userId,
+      'Кратък контекстен въпрос.',
+      'Кратък контекстен отговор.'
+    );
+  }
+
+  async function run(userId, mode, status) {
+    storedMode = mode;
+    if (userId === OWNER_ID) seedShortContext(userId);
+    const ctx = {
+      from: { id: userId },
+      message: { text: 'Как да подобря съня и да включа овесени ядки за подготовка за 5 км?' },
+      replyCalls: [],
+      reply: async function(text) { this.replyCalls.push(text); },
+      sendChatAction: async () => {},
+    };
+    const beforeAdapter = adapterCalls.length;
+    const beforeLlm = llmCalls.length;
+    const beforeAvatar = avatarCalls.length;
+    const beforeVoice = voiceCalls.length;
+    await sandbox.askEli(ctx, ctx.message.text, { status });
+    return {
+      ctx,
+      adapterCall: adapterCalls[beforeAdapter],
+      llmCall: llmCalls[beforeLlm],
+      avatarCalls: avatarCalls.slice(beforeAvatar),
+      voiceCalls: voiceCalls.slice(beforeVoice),
+    };
+  }
+
+  return { run, helperCallCount: () => helperCalls, memoryReads, adapterCalls };
+}
+
+test('real askEli owner path loads profile/facts into all channels; customers keep the legacy path', async () => {
+  const sourceReads = [];
+  const harness = createAskEliHarness(fixtureReaders(undefined, undefined, undefined, sourceReads));
+  const ownerStatus = {
+    canChat: true,
+    plan: 'owner',
+    allowedModes: ['text', 'voice', 'avatar'],
+    notice: null,
+  };
+  const text = await harness.run(OWNER_ID, 'text', ownerStatus);
+  const voice = await harness.run(OWNER_ID, 'voice', ownerStatus);
+  const avatar = await harness.run(OWNER_ID, 'avatar', ownerStatus);
+
+  for (const result of [text, voice, avatar]) {
+    assert.equal(result.adapterCall.result.legacy, false);
+    assert.deepEqual({ ...result.adapterCall.result.flags }, OWNER_FLAGS);
+    assert.equal(getProfileField(result.adapterCall.result.request.profile, 'goals.primary').value, 'подобряване на съня');
+    assert.ok(result.adapterCall.result.context.longTermFacts.some(
+      (fact) => fact.key === 'favoriteFoods' && fact.value === 'овесени ядки'
+    ));
+    assert.ok(result.adapterCall.result.context.longTermFacts.some((fact) => fact.value === 'да пробягам 5 км'));
+    assert.deepEqual(result.adapterCall.result.context.shortContext, text.adapterCall.result.context.shortContext);
+    assert.deepEqual(result.adapterCall.result.context.knownProfile, text.adapterCall.result.context.knownProfile);
+    assert.deepEqual(result.adapterCall.result.context.longTermFacts, text.adapterCall.result.context.longTermFacts);
+    assert.match(result.llmCall.messages[0].content, /подобряване на съня/);
+    assert.match(result.llmCall.messages[0].content, /овесени ядки/);
+    assert.match(result.llmCall.messages[0].content, /да пробягам 5 км/);
+  }
+  assert.deepEqual(
+    [text.adapterCall.input.channel, voice.adapterCall.input.channel, avatar.adapterCall.input.channel],
+    ['text', 'voice', 'avatar']
+  );
+  assert.equal(text.adapterCall.result.providerModel, 'gpt-4o-mini');
+  assert.equal(avatar.avatarCalls.length, 1);
+  assert.equal(avatar.ctx.replyCalls.length, 0);
+  assert.equal(voice.voiceCalls.length, 1);
+  assert.equal(harness.helperCallCount(), 3);
+  assert.deepEqual(sourceReads.map(([, userId]) => userId), Array(9).fill(OWNER_ID));
+
+  const customerStatus = { canChat: true, plan: 'free', allowedModes: ['text'], notice: null };
+  const customer = await harness.run('customer-fixture', 'text', customerStatus);
+  assert.equal(customer.adapterCall.result.legacy, true);
+  assert.deepEqual({ ...customer.adapterCall.result.flags }, OFF_FLAGS);
+  assert.equal(harness.helperCallCount(), 3, 'customer path must not read owner V2.2 context sources');
+  assert.ok(harness.memoryReads.some(([name, userId]) => name === 'buildMemoryContext' && userId === 'customer-fixture'));
+  assert.match(customer.llmCall.messages[0].content, /LEGACY_CUSTOMER_MEMORY/);
+});

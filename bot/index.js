@@ -47,6 +47,7 @@ const { resolveLogQuery, answerDailyLogQuery, recordEvents, formatConfirmation }
 const { feedbackForEvents } = require('./healthInsights');
 const { createAskEliAdapter } = require('./brain/askEliAdapter');
 const { getOwnerScopedEliV22Flags } = require('./brain/featureFlags');
+const { buildOwnerV22Context } = require('./brain/ownerV22Context');
 
 const profileWizard = require('./scenes/profileWizard');
 const editWizard = require('./scenes/editWizard');
@@ -323,11 +324,13 @@ async function askEli(ctx, question, opts = {}) {
   // Eli V2.2 integration is opt-in only. With the default flags OFF this
   // returns the legacy route and changes nothing in the production path.
   const v22Channel = avatarMode ? 'avatar' : voiceMode ? 'voice' : 'text';
+  const v22OwnerContext = owner ? buildOwnerV22Context(ctx.from.id) : null;
   const v22 = eliV22Adapter.prepare({
     userId: ctx.from.id,
     channel: v22Channel,
     message: question,
     conversationState,
+    ...(v22OwnerContext || {}),
     featureFlags: getOwnerScopedEliV22Flags(owner),
   });
 

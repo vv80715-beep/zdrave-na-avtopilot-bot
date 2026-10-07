@@ -34,6 +34,10 @@ test('/mode -> select Avatar -> как си invokes Avatar, not text delivery', 
     durableMemory: false,
     durableReads: false,
   };
+  const ownerV22Context = {
+    profile: { contractVersion: 'mock-profile' },
+    longTermFacts: [{ category: 'general', key: 'mock-fact', value: 'known mock fact' }],
+  };
   const v22Inputs = [];
   const ctx = {
     from: { id: 900000020 }, message: { text: '/mode' },
@@ -52,6 +56,10 @@ test('/mode -> select Avatar -> как си invokes Avatar, not text delivery', 
     maybeHandleCommandText: async () => false,
     isOwner: () => true, touchConversationState: () => 'continuing',
     getOwnerScopedEliV22Flags: owner => owner ? canaryFlags : disabledFlags,
+    buildOwnerV22Context: userId => {
+      assert.equal(String(userId), String(ctx.from.id));
+      return ownerV22Context;
+    },
     eliV22Adapter: {
       prepare: input => {
         v22Inputs.push(input);
@@ -88,5 +96,7 @@ test('/mode -> select Avatar -> как си invokes Avatar, not text delivery', 
   assert.equal(avatars, 1);
   assert.equal(voices, 0);
   assert.deepEqual(v22Inputs.at(-1).featureFlags, canaryFlags);
+  assert.deepEqual(v22Inputs.at(-1).profile, ownerV22Context.profile);
+  assert.deepEqual(v22Inputs.at(-1).longTermFacts, ownerV22Context.longTermFacts);
   assert.deepEqual(replies, [], 'normal message must not use text delivery');
 });
