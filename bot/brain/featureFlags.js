@@ -9,6 +9,8 @@ const ELI_V2_2_FLAG_DEFAULTS = Object.freeze({
   contextBuilder: false,
   memoryCandidates: false,
   unifiedProfile: false,
+  durableMemory: false,
+  durableReads: false,
 });
 
 const ENVIRONMENT_FLAG_NAMES = Object.freeze({
@@ -16,6 +18,8 @@ const ENVIRONMENT_FLAG_NAMES = Object.freeze({
   contextBuilder: 'ELI_V2_2_CONTEXT_BUILDER_ENABLED',
   memoryCandidates: 'ELI_V2_2_MEMORY_CANDIDATES_ENABLED',
   unifiedProfile: 'ELI_V2_2_UNIFIED_PROFILE_ENABLED',
+  durableMemory: 'ELI_V2_2_DURABLE_MEMORY_ENABLED',
+  durableReads: 'ELI_V2_2_DURABLE_READS_ENABLED',
 });
 
 function parseBooleanFlag(value, fallback = false) {
