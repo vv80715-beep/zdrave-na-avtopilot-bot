@@ -308,7 +308,7 @@ async function askEli(ctx, question, opts = {}) {
   // Optional, owner-only capture of newly stated relationship facts. The
   // separate local relationship store is opt-in and never imports RAM history.
   // Keep explicit memory commands out of passive capture.
-  if (getOwnerRelationshipMemoryCaptureEnabled(owner, process.env) &&
+  if (getOwnerRelationshipMemoryCaptureEnabled(owner) &&
       !detectMemoryCommand(question)) {
     try {
       rememberFromMessage(ctx.from.id, question);

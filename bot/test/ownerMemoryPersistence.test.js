@@ -106,7 +106,7 @@ test('writes are keyed by Telegram ID and hydrate the owner V2.2 adapter in a ne
   assert.equal(restored.flags.durableMemory, false);
   assert.equal(restored.flags.durableReads, false);
   assert.equal(restored.facts.length, 3);
-  assert.ok(restored.facts.some((fact) => /подобрявам съня си/i.test(fact.value)));
+  assert.ok(restored.facts.some((fact) => /подобря съня си/i.test(fact.value)));
   assert.ok(restored.facts.some((fact) => /леща и ябълки/i.test(fact.value)));
   assert.ok(restored.facts.some(
     (fact) => fact.category === 'communication_preferences' && fact.value === 'Кратки отговори'
