@@ -38,6 +38,9 @@ const CATEGORIES = [
   'habits',
   'motivation',
   'personal_preferences',
+  'personal_facts',
+  'plans',
+  'constraints',
   'follow_up_topics',
   'meaningful_progress',
   'relationship_context',
@@ -49,15 +52,31 @@ function isValidCategory(category) {
 
 function load() {
   if (!fs.existsSync(storagePath())) return {};
-  try {
-    return JSON.parse(fs.readFileSync(storagePath(), 'utf8'));
-  } catch {
-    return {};
+  const parsed = JSON.parse(fs.readFileSync(storagePath(), 'utf8'));
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new TypeError('relationship memory store must contain a JSON object');
   }
+  return parsed;
 }
 
 function save(data) {
-  fs.writeFileSync(storagePath(), JSON.stringify(data, null, 2), 'utf8');
+  const target = storagePath();
+  const temporary = `${target}.${process.pid}.${require('crypto').randomBytes(6).toString('hex')}.tmp`;
+  try {
+    fs.writeFileSync(temporary, JSON.stringify(data, null, 2), {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode: 0o600,
+    });
+    fs.renameSync(temporary, target);
+  } catch (error) {
+    try {
+      fs.rmSync(temporary, { force: true });
+    } catch {
+      // Preserve the original persistence error.
+    }
+    throw error;
+  }
 }
 
 function emptyUser() {
@@ -73,14 +92,16 @@ function newId() {
 // All stored memories for a user (empty array if none). Never returns another
 // user's data — lookups are strictly keyed by the given id.
 function getUserMemories(userId) {
+  const uid = requireUserId(userId);
   const data = load();
-  const entry = data[String(userId)];
+  const entry = data[uid];
   return entry && Array.isArray(entry.memories) ? entry.memories : [];
 }
 
 function addMemory(userId, category, value) {
+  const uid = requireUserId(userId);
+  if (!isValidCategory(category)) throw new TypeError('invalid relationship memory category');
   const data = load();
-  const uid = String(userId);
   if (!data[uid]) data[uid] = emptyUser();
   const now = new Date().toISOString();
   const entry = { id: newId(), category, value, createdAt: now, updatedAt: now };
@@ -91,8 +112,8 @@ function addMemory(userId, category, value) {
 }
 
 function updateMemory(userId, memoryId, value) {
+  const uid = requireUserId(userId);
   const data = load();
-  const uid = String(userId);
   const user = data[uid];
   if (!user || !Array.isArray(user.memories)) return null;
   const entry = user.memories.find((m) => m.id === memoryId);
@@ -105,8 +126,8 @@ function updateMemory(userId, memoryId, value) {
 }
 
 function deleteMemory(userId, memoryId) {
+  const uid = requireUserId(userId);
   const data = load();
-  const uid = String(userId);
   const user = data[uid];
   if (!user || !Array.isArray(user.memories)) return false;
   const before = user.memories.length;
@@ -122,12 +143,24 @@ function deleteMemory(userId, memoryId) {
 // Wipe all relationship memory for a single user (used by "forget everything"
 // and for test isolation). Other users are never touched.
 function deleteAllForUser(userId) {
+  const uid = requireUserId(userId);
   const data = load();
-  const uid = String(userId);
   const existed = Boolean(data[uid]);
-  delete data[uid];
-  save(data);
+  if (existed) {
+    delete data[uid];
+    save(data);
+  }
   return existed;
+}
+
+function requireUserId(userId) {
+  if (
+    (typeof userId !== 'string' && typeof userId !== 'number') ||
+    !String(userId).trim()
+  ) {
+    throw new TypeError('telegram user id is required');
+  }
+  return String(userId);
 }
 
 module.exports = {

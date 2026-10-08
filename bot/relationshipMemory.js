@@ -162,8 +162,8 @@ const RULES = [
   {
     category: 'personal_preferences',
     trigger: /(обичам да|не обичам да|предпочитам да|мразя да|не понасям)/,
-    object: /(тичам|бягам|ходя|разходк|плувам|йога|фитнес|готвя|сутрин|вечер|навън|сам|компания|музика|чета)/,
-    confidence: 0.7,
+    object: /(тичам|бягам|ходя|разходк|плувам|йога|фитнес|готвя|сутрин|вечер|навън|сам|компания|музика|чета|трени|тренировк|лост|калистен|собствено тегло|спорт|упражнен)/,
+    confidence: 0.95,
   },
   // FOOD PREFERENCES — store only an explicit lasting preference, not a meal
   // report. Health events remain in the separate daily-log store.

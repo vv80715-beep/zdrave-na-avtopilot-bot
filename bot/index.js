@@ -53,6 +53,10 @@ const {
 const { buildOwnerV22Context } = require('./brain/ownerV22Context');
 const { formatOwnerPersonalMemory } = require('./brain/ownerMemorySummary');
 const {
+  detectExplicitPreferenceCommand,
+  saveExplicitPreference,
+} = require('./explicitPreferenceMemory');
+const {
   detectOwnerFitnessMemoryCommand,
   saveOwnerFitnessGoal,
 } = require('./ownerFitnessMemory');
@@ -312,12 +316,15 @@ async function askEli(ctx, question, opts = {}) {
   const ownerFitnessCommand = owner
     ? detectOwnerFitnessMemoryCommand(question)
     : null;
+  const explicitPreferenceCommand =
+    detectExplicitPreferenceCommand(question);
 
   // Optional, owner-only capture of newly stated relationship facts. The
   // separate local relationship store is opt-in and never imports RAM history.
   // Keep explicit memory commands out of passive capture.
   if (getOwnerRelationshipMemoryCaptureEnabled(owner) &&
       !ownerFitnessCommand &&
+      !explicitPreferenceCommand &&
       !detectMemoryCommand(question)) {
     try {
       rememberFromMessage(ctx.from.id, question);
@@ -372,6 +379,42 @@ async function askEli(ctx, question, opts = {}) {
     }
     await replyWithMarkdownSafe(ctx, full);
   };
+
+  // Explicit durable preference/habit requests are handled for both owner and
+  // customers before health-log and LLM routing. The local relationship store
+  // verifies each value before this branch can acknowledge it.
+  if (explicitPreferenceCommand) {
+    if (explicitPreferenceCommand.kind === 'invalid_preference') {
+      await deliverDeterministic(
+        'За да запазя предпочитанието точно, уточни конкретно какъв вид тренировка, храна или навик имаш предвид.'
+      );
+      return;
+    }
+
+    let result;
+    try {
+      result = saveExplicitPreference(ctx.from.id, explicitPreferenceCommand);
+    } catch (err) {
+      console.error('Explicit preference memory write failed:', err.message);
+      result = { ok: false, reason: 'storage_failed' };
+    }
+
+    if (!result.ok) {
+      await deliverDeterministic(
+        'Не успях да потвърдя записа в личната ти памет, затова няма да твърдя, че е запазен. Опитай отново.'
+      );
+      return;
+    }
+
+    const confirmations = {
+      workout: 'Записах и проверих предпочитанията ти за тренировки.',
+      food: 'Записах и проверих хранителното ти предпочитание.',
+      habit: 'Записах и проверих посочения навик.',
+      personal: 'Записах и проверих личното ти предпочитание.',
+    };
+    await deliverDeterministic(confirmations[result.domain]);
+    return;
+  }
 
   // Explicit fitness-goal memory management is a narrow owner-only command.
   // The helper rechecks the configured Telegram ID, validates both values,
