@@ -220,6 +220,7 @@ function createAskEliHarness(readers) {
     gateChat: async () => ({ canChat: true, plan: 'owner', allowedModes: ['text', 'voice', 'avatar'], notice: null }),
     isOwner,
     getOwnerScopedEliV22Flags,
+    getOwnerRelationshipMemoryCaptureEnabled: (owner) => owner,
     buildOwnerV22Context: (userId) => {
       helperCalls += 1;
       return buildOwnerV22Context(userId, readers);
@@ -330,6 +331,13 @@ test('real askEli owner path loads profile/facts into all channels; customers ke
   assert.equal(voice.voiceCalls.length, 1);
   assert.equal(harness.helperCallCount(), 3);
   assert.deepEqual(sourceReads.map(([, userId]) => userId), Array(9).fill(OWNER_ID));
+  assert.deepEqual(
+    harness.memoryReads
+      .filter(([name]) => name === 'rememberFromMessage')
+      .map(([, userId]) => userId),
+    [OWNER_ID, OWNER_ID, OWNER_ID],
+    'the owner-only capture gate receives each new owner message'
+  );
 
   const customerStatus = { canChat: true, plan: 'free', allowedModes: ['text'], notice: null };
   const customer = await harness.run('customer-fixture', 'text', customerStatus);
@@ -338,4 +346,11 @@ test('real askEli owner path loads profile/facts into all channels; customers ke
   assert.equal(harness.helperCallCount(), 3, 'customer path must not read owner V2.2 context sources');
   assert.ok(harness.memoryReads.some(([name, userId]) => name === 'buildMemoryContext' && userId === 'customer-fixture'));
   assert.match(customer.llmCall.messages[0].content, /LEGACY_CUSTOMER_MEMORY/);
+  assert.deepEqual(
+    harness.memoryReads
+      .filter(([name]) => name === 'rememberFromMessage')
+      .map(([, userId]) => userId),
+    [OWNER_ID, OWNER_ID, OWNER_ID, 'customer-fixture'],
+    'customer relationship capture remains on its existing per-user path'
+  );
 });

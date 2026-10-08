@@ -165,6 +165,14 @@ const RULES = [
     object: /(тичам|бягам|ходя|разходк|плувам|йога|фитнес|готвя|сутрин|вечер|навън|сам|компания|музика|чета)/,
     confidence: 0.7,
   },
+  // FOOD PREFERENCES — store only an explicit lasting preference, not a meal
+  // report. Health events remain in the separate daily-log store.
+  {
+    category: 'personal_preferences',
+    trigger: /(предпочитам|предпочитания(?:та)?(?: ми)? (?:са|включват)|харесвам|обичам|любимите ми храни са|любима храна(?:та)? ми е)/,
+    object: /(яйц|овес|пилешк|ориз|лещ|боб|риба|месо|плод|зеленч|млечн|кисело мляко)/,
+    confidence: 0.85,
+  },
 ];
 
 function classifyMessage(message) {

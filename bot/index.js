@@ -46,7 +46,10 @@ const { extractHealthEvents } = require('./dailyLogTracker');
 const { resolveLogQuery, answerDailyLogQuery, recordEvents, formatConfirmation } = require('./dailyLogService');
 const { feedbackForEvents } = require('./healthInsights');
 const { createAskEliAdapter } = require('./brain/askEliAdapter');
-const { getOwnerScopedEliV22Flags } = require('./brain/featureFlags');
+const {
+  getOwnerScopedEliV22Flags,
+  getOwnerRelationshipMemoryCaptureEnabled,
+} = require('./brain/featureFlags');
 const { buildOwnerV22Context } = require('./brain/ownerV22Context');
 
 const profileWizard = require('./scenes/profileWizard');
@@ -302,6 +305,18 @@ async function askEli(ctx, question, opts = {}) {
 
   const owner = isOwner(ctx);
 
+  // Optional, owner-only capture of newly stated relationship facts. The
+  // separate local relationship store is opt-in and never imports RAM history.
+  // Keep explicit memory commands out of passive capture.
+  if (getOwnerRelationshipMemoryCaptureEnabled(owner, process.env) &&
+      !detectMemoryCommand(question)) {
+    try {
+      rememberFromMessage(ctx.from.id, question);
+    } catch (err) {
+      console.error('Relationship memory save failed:', err.message);
+    }
+  }
+
   // Record activity once per inbound turn — even for deterministic early
   // returns below — so "how long since we last talked" reflects real chatting,
   // not just LLM replies. Used further down to decide whether to greet.
@@ -442,13 +457,14 @@ async function askEli(ctx, question, opts = {}) {
     }
   }
 
-  // Owner gets the separate owner identity. Everyone else gets their own
-  // long-term memory injected so Eli personalizes automatically.
+  // Owner gets the separate owner identity and RAM-only recent turns. Everyone
+  // else keeps the existing profile and relationship-memory prompt path.
   let systemContent = SYSTEM_PROMPT;
   let priorMessages = [];
   if (owner) {
     systemContent = `${OWNER_MEMORY}\n\n${SYSTEM_PROMPT}`;
-    // Recent turns from RAM only — the owner's on-disk memory stays untouched.
+    // Full conversation turns remain RAM-only; explicitly captured long-term
+    // facts live separately in relationship_memory.json.
     priorMessages = ownerRecentTurns(ctx.from.id);
   } else {
     // Passively capture durable personal context (goals, prefs, recurring

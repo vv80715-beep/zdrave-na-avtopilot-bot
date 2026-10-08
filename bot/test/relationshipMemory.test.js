@@ -75,6 +75,19 @@ test('saves a communication preference (short answers)', () => {
   assert.equal(stored[0].value, 'Кратки отговори');
 });
 
+test('saves explicit food preferences but ignores transient meal reports', () => {
+  const preference = 'Предпочитанията ми са леща и ябълки.';
+  const classified = classifyMessage(preference);
+  assert.equal(classified.action, 'save');
+  assert.equal(classified.category, 'personal_preferences');
+
+  const { action, entry } = rememberFromMessage(USER_A, preference);
+  assert.equal(action, 'save');
+  assert.match(entry.value, /леща и ябълки/i);
+  assert.equal(classifyMessage('Закусих яйца и овес.').action, 'ignore');
+  assert.equal(getRelationshipMemory(USER_A).length, 1);
+});
+
 test('classifies more required "should save" examples correctly', () => {
   assert.equal(classifyMessage('След работа трудно се мотивирам.').action, 'save');
   assert.equal(classifyMessage('След работа трудно се мотивирам.').category, 'recurring_challenges');

@@ -25,6 +25,11 @@ function getOwnerScopedEliV22Flags(isOwner) {
   return isOwner ? ELI_V2_2_OWNER_CANARY_FLAGS : ELI_V2_2_FLAG_DEFAULTS;
 }
 
+function getOwnerRelationshipMemoryCaptureEnabled(isOwner, env = process.env) {
+  return Boolean(isOwner) &&
+    parseBooleanFlag(env.ELI_OWNER_LOCAL_MEMORY_CAPTURE_ENABLED, false);
+}
+
 const ENVIRONMENT_FLAG_NAMES = Object.freeze({
   aiBrain: 'ELI_V2_2_AI_BRAIN_ENABLED',
   contextBuilder: 'ELI_V2_2_CONTEXT_BUILDER_ENABLED',
@@ -66,6 +71,7 @@ module.exports = {
   ELI_V2_2_OWNER_CANARY_FLAGS,
   ENVIRONMENT_FLAG_NAMES,
   getOwnerScopedEliV22Flags,
+  getOwnerRelationshipMemoryCaptureEnabled,
   parseBooleanFlag,
   getEliV22Flags,
   resolveEliV22Flags,
