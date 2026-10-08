@@ -1,0 +1,38 @@
+name: Eli owner goal memory regression
+
+on:
+  push:
+    branches:
+      - fix/eli-v22-owner-memory-github-20261008
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  owner-memory-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # This regression uses only Node built-ins and local modules. Avoid npm
+      # registry dependency and NEVER load live credentials in CI.
+      - name: Syntax check modified modules
+        run: |
+          node --check index.js
+          node --check brain/ownerGoalMemory.js
+          node --check dailyLogService.js
+          node --check commands/showmemory.js
+      - name: Test explicit owner memory without real user data or Telegram token
+        run: node --test test/eliOwnerGoalMemory.test.js
+        env:
+          TELEGRAM_BOT_TOKEN: ''
+          OPENAI_API_KEY: ''
+          HEYGEN_API_KEY: ''
+          STRIPE_SECRET_KEY: ''
