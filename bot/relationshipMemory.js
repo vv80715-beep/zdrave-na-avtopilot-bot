@@ -37,6 +37,9 @@ const CATEGORY_LABELS = {
   follow_up_topics: '📌 Теми за връщане',
   meaningful_progress: '🏆 Значим напредък',
   relationship_context: '🤝 Личен контекст',
+  personal_facts: '🧩 Лични факти',
+  plans: '🗓 Планове',
+  constraints: '🧭 Ограничения',
 };
 
 // ── Text helpers ────────────────────────────────────────────────────────────
@@ -71,6 +74,41 @@ const IGNORE_PATTERNS = [
 // A message is a "replace/change" (update) when it signals correcting or
 // swapping an earlier preference/goal rather than adding a new one.
 const UPDATE_CUE = /(вече не|всъщност|отсега|занапред|промених( се)?|размислих|вместо това|поправка)/i;
+const SENSITIVE_CUE =
+  /(диагноз|болест|заболяв|лекарств|терапи|алерги|интимн|сексуал|религи|политическ|банков|кредитн|дълг|заплат|доход|адресът ми|точния ми адрес|тревожност|депрес|паник|травм|парол|пин код|api[- ]?key|токен|секретен ключ)/iu;
+const CREDENTIAL_CUE =
+  /(парол(?:а|ата)|пин(?:\s+код)?|api[- ]?key|токен|секретен ключ|код за достъп|номер на картата|cvv|cvc)/iu;
+const INTERNAL_INSTRUCTION_CUE =
+  /(игнорирай.{0,60}(?:инструкци|систем|правил)|разкр(?:ий|ивай|ийте).{0,60}(?:вътрешн|систем|секрет|инструкц)|покажи.{0,60}(?:системн|вътрешн|скрит prompt)|system prompt|developer message)/iu;
+const EXPLICIT_SAVE_CUE =
+  /(?:^|[^а-яa-z])(?:искам\s+да\s+(?:запомниш|запишеш|съхраниш|отбележиш)|можеш\s+ли\s+да\s+(?:запомниш|запишеш|съхраниш)|запомни(?:\s+ми)?|запиши(?:\s+ми)?|съхрани|отбележи|добави\s+в\s+(?:паметта|профила)|задръж\s+в\s+паметта)(?![а-яa-z])/iu;
+const MEMORY_STOP_WORDS = new Set([
+  'аз', 'ами', 'без', 'беше', 'бях', 'вече', 'във', 'вие', 'винаги', 'все',
+  'всичко', 'всяка', 'всяко', 'да', 'днес', 'до', 'за', 'знам', 'и', 'или',
+  'имам', 'има', 'искам', 'как', 'какво', 'какъв', 'каква', 'като', 'когато',
+  'което', 'която', 'които', 'ли', 'ме', 'мен', 'ми', 'много', 'на', 'над',
+  'не', 'него', 'нейния', 'нейните', 'нейно', 'ни', 'ние', 'но', 'от', 'по',
+  'под', 'при', 'с', 'са', 'сам', 'само', 'се', 'си', 'съм', 'със', 'тези',
+  'ти', 'то', 'това', 'този', 'тук', 'той', 'тя', 'хора', 'че', 'ще',
+]);
+
+function memoryTokens(value) {
+  return String(value || '')
+    .toLocaleLowerCase('bg')
+    .match(/[а-яa-z0-9]{3,}/giu)
+    ?.filter((token) => !MEMORY_STOP_WORDS.has(token) && !/^\d+$/.test(token)) || [];
+}
+
+function escapeMemoryJson(value) {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026');
+}
+
+function isExplicitMemoryCue(text) {
+  return EXPLICIT_SAVE_CUE.test(String(text || ''));
+}
 
 // Category rules. Each: { category, when: [regexes all-or-any], confidence,
 // canonical? } A rule fires when `trigger` matches AND (no `object` OR `object`
@@ -180,6 +218,9 @@ function classifyMessage(message) {
   const none = { action: 'ignore', category: null, value: null, confidence: 0 };
   if (!text || text.length < 3) return none;
   if (IGNORE_PATTERNS.some((re) => re.test(text))) return none;
+  // Sensitive personal information may enter durable memory only through a
+  // direct, explicit save command handled by detectMemoryCommand below.
+  if (SENSITIVE_CUE.test(text)) return none;
 
   let best = null;
   for (const rule of RULES) {
