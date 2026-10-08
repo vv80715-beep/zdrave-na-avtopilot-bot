@@ -48,6 +48,7 @@ const { feedbackForEvents } = require('./healthInsights');
 const { createAskEliAdapter } = require('./brain/askEliAdapter');
 const { getOwnerScopedEliV22Flags } = require('./brain/featureFlags');
 const { buildOwnerV22Context } = require('./brain/ownerV22Context');
+const { handleOwnerGoalMemory, formatOwnerStoredSummary } = require('./brain/ownerGoalMemory');
 
 const profileWizard = require('./scenes/profileWizard');
 const editWizard = require('./scenes/editWizard');
@@ -349,6 +350,16 @@ async function askEli(ctx, question, opts = {}) {
     await replyWithMarkdownSafe(ctx, full);
   };
 
+  // Explicit owner-only goal memory actions: before daily health-log routing.
+  // Never enabled for other users, and never activates passive owner capture.
+  if (owner) {
+    const ownerGoalReply = handleOwnerGoalMemory(ctx.from.id, question);
+    if (ownerGoalReply !== null) {
+      await deliverDeterministic(ownerGoalReply);
+      return;
+    }
+  }
+
   // Urgent V2.2 safety routing is deterministic and never reaches OpenAI.
   // This path is unreachable while the V2.2 flag remains disabled.
   if (!v22.legacy && v22.safety?.level === 'urgent' && v22.safety.responseText) {
@@ -378,11 +389,7 @@ async function askEli(ctx, question, opts = {}) {
   // from stored data — never let the model invent or paraphrase it.
   if (isProfileQuery(question)) {
     if (owner) {
-      const ownerProfileAnswer =
-        `🧠 *Памет за собственика (${OWNER_NAME})*\n\n` +
-        `Това е отделна и постоянна идентичност, която винаги помня:\n\n` +
-        OWNER_MEMORY;
-      await deliverDeterministic(ownerProfileAnswer);
+      await deliverDeterministic(formatOwnerStoredSummary(ctx.from.id));
       return;
     }
     const summary = formatFullMemory(ctx.from.id);
