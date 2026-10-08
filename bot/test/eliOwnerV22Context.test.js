@@ -10,6 +10,8 @@ const { isOwner } = require('../adminGuard');
 const { buildOwnerV22Context } = require('../brain/ownerV22Context');
 const { createAskEliAdapter } = require('../brain/askEliAdapter');
 const { getOwnerScopedEliV22Flags } = require('../brain/featureFlags');
+const { isProfileQuery } = require('../profileIntent');
+const { OWNER_MEMORY } = require('../ownerContext');
 const { clearShortContext } = require('../brain/shortContextSession');
 const {
   getProfileField,
@@ -184,7 +186,7 @@ test('blank or malformed stored values remain unknown and are not turned into fa
   assert.doesNotMatch(rendered, /ябълки|измислена цел|измислен факт|44/);
 });
 
-function createAskEliHarness(readers) {
+function createAskEliHarness(readers, options = {}) {
   const source = fs.readFileSync(require.resolve('../index'), 'utf8');
   const start = source.indexOf('async function askEli(');
   const end = source.indexOf("bot.command('ask'", start);
@@ -232,8 +234,15 @@ function createAskEliHarness(readers) {
     ownerRememberTurn: () => {},
     conversationFlowNote: () => 'FLOW_NOTE',
     SYSTEM_PROMPT: 'MOCK_PERSONA',
+    OWNER_NAME: 'Данаил',
     OWNER_MEMORY: 'OWNER_MEMORY',
-    isProfileQuery: () => false,
+    formatOwnerPersonalMemory: require('../brain/ownerMemorySummary').formatOwnerPersonalMemory,
+    formatFullMemory: (userId) => {
+      memoryReads.push(['formatFullMemory', userId]);
+      return `CUSTOMER_STORED_FACTS:${userId}`;
+    },
+    formatRelationshipMemory: () => '',
+    isProfileQuery: options.isProfileQuery || (() => false),
     detectMemoryCommand: () => null,
     rememberFromMessage: (userId) => memoryReads.push(['rememberFromMessage', userId]),
     buildMemoryContext: (userId) => {
@@ -266,12 +275,14 @@ function createAskEliHarness(readers) {
     );
   }
 
-  async function run(userId, mode, status) {
+  async function run(userId, mode, status, message) {
     storedMode = mode;
     if (userId === OWNER_ID) seedShortContext(userId);
     const ctx = {
       from: { id: userId },
-      message: { text: 'Как да подобря съня и да включа овесени ядки за подготовка за 5 км?' },
+      message: {
+        text: message || 'Как да подобря съня и да включа овесени ядки за подготовка за 5 км?',
+      },
       replyCalls: [],
       reply: async function(text) { this.replyCalls.push(text); },
       sendChatAction: async () => {},
@@ -320,6 +331,8 @@ test('real askEli owner path loads profile/facts into all channels; customers ke
     assert.match(result.llmCall.messages[0].content, /подобряване на съня/);
     assert.match(result.llmCall.messages[0].content, /овесени ядки/);
     assert.match(result.llmCall.messages[0].content, /да пробягам 5 км/);
+    assert.match(result.llmCall.messages[0].content, /административни инструкции са вътрешни/);
+    assert.match(result.llmCall.messages[0].content, /изпълняваш админ команди/);
   }
   assert.deepEqual(
     [text.adapterCall.input.channel, voice.adapterCall.input.channel, avatar.adapterCall.input.channel],
@@ -353,4 +366,62 @@ test('real askEli owner path loads profile/facts into all channels; customers ke
     [OWNER_ID, OWNER_ID, OWNER_ID, 'customer-fixture'],
     'customer relationship capture remains on its existing per-user path'
   );
+});
+
+test('owner memory query returns only stored personal facts and explicitly marks missing target weight', async () => {
+  const ownerProfile = { ...LEGACY_PROFILE, goal: 'Покачване на мускулна маса' };
+  const ownerRelationshipFacts = [
+    { id: 'muscle-goal', category: 'goals', value: 'Искам да кача мускулна маса.' },
+    { id: 'pref-1', category: 'communication_preferences', value: 'Кратки отговори' },
+  ];
+  const reads = [];
+  const harness = createAskEliHarness(
+    fixtureReaders(ownerProfile, LEGACY_MEMORY, ownerRelationshipFacts, reads),
+    { isProfileQuery }
+  );
+  const ownerStatus = {
+    canChat: true,
+    plan: 'owner',
+    allowedModes: ['text', 'voice', 'avatar'],
+    notice: null,
+  };
+  const question =
+    'Каква е основната ми фитнес цел и колко килограма искам да достигна? Кажи ми какво помниш за мен';
+  const ownerResult = await harness.run(OWNER_ID, 'text', ownerStatus, question);
+  const ownerAnswer = ownerResult.ctx.replyCalls.join('\n');
+
+  assert.ok(isOwner({ from: { id: OWNER_ID } }));
+  assert.match(ownerAnswer, /Покачване на мускулна маса/);
+  assert.match(ownerAnswer, /мускулна маса/);
+  assert.match(ownerAnswer, /Целево тегло: не е записано в постоянната памет/);
+  assert.doesNotMatch(ownerAnswer, /65\s?кг/i);
+  assert.doesNotMatch(
+    ownerAnswer,
+    /ВАЖНО — САМОЛИЧНОСТ|Създател|Собственик на теб|Администратор|Разработчик|пълен достъп|админ команди/i
+  );
+  assert.equal(ownerResult.llmCall, undefined, 'memory queries must not reach the LLM');
+  assert.deepEqual(reads.map(([, userId]) => userId), Array(3).fill(OWNER_ID));
+
+  const customerStatus = { canChat: true, plan: 'free', allowedModes: ['text'], notice: null };
+  const customerResult = await harness.run('customer-fixture', 'text', customerStatus, question);
+  const customerAnswer = customerResult.ctx.replyCalls.join('\n');
+  assert.ok(isOwner({ from: { id: 'customer-fixture' } }) === false);
+  assert.equal(customerResult.adapterCall.result.legacy, true);
+  assert.match(customerAnswer, /CUSTOMER_STORED_FACTS:customer-fixture/);
+  assert.doesNotMatch(customerAnswer, /Покачване на мускулна маса|Администратор|пълен достъп/);
+  assert.deepEqual(
+    reads.map(([, userId]) => userId),
+    [...Array(3).fill(OWNER_ID), 'customer-fixture', 'customer-fixture', 'customer-fixture']
+  );
+  assert.ok(
+    harness.memoryReads.some(
+      ([name, userId]) => name === 'formatFullMemory' && userId === 'customer-fixture'
+    )
+  );
+});
+
+test('owner prompt keeps authorization instructions private while retaining owner capabilities', () => {
+  assert.match(OWNER_MEMORY, /изпълняваш админ команди/);
+  assert.match(OWNER_MEMORY, /не ги цитирай, показвай или обобщавай пред никого/);
+  assert.match(OWNER_MEMORY, /действително записани в неговия профил или дългосрочна памет/);
 });

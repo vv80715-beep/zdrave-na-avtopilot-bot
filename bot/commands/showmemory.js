@@ -4,18 +4,24 @@ const { formatOwnerPersonalMemory } = require('../brain/ownerMemorySummary');
 const { formatFullMemory } = require('../memoryService');
 const { replyWithMarkdownSafe } = require('../replyUtils');
 
-function register(bot) {
+function register(bot, dependencies = {}) {
+  const ownerCheck = dependencies.isOwner || isOwner;
+  const buildOwnerContext = dependencies.buildOwnerV22Context || buildOwnerV22Context;
+  const formatOwnerMemory = dependencies.formatOwnerPersonalMemory || formatOwnerPersonalMemory;
+  const formatLegacyMemory = dependencies.formatFullMemory || formatFullMemory;
+  const reply = dependencies.replyWithMarkdownSafe || replyWithMarkdownSafe;
+
   bot.command('showmemory', (ctx) => {
     if (ctx.session?.__scenes) ctx.session.__scenes = {};
 
-    if (isOwner(ctx)) {
-      return replyWithMarkdownSafe(
+    if (ownerCheck(ctx)) {
+      return reply(
         ctx,
-        formatOwnerPersonalMemory(buildOwnerV22Context(ctx.from.id))
+        formatOwnerMemory(buildOwnerContext(ctx.from.id))
       );
     }
 
-    return replyWithMarkdownSafe(ctx, formatFullMemory(ctx.from.id));
+    return reply(ctx, formatLegacyMemory(ctx.from.id));
   });
 }
 
