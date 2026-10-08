@@ -235,7 +235,7 @@ function createAskEliHarness(readers, options = {}) {
     conversationFlowNote: () => 'FLOW_NOTE',
     SYSTEM_PROMPT: 'MOCK_PERSONA',
     OWNER_NAME: 'Данаил',
-    OWNER_MEMORY: 'OWNER_MEMORY',
+    OWNER_MEMORY,
     formatOwnerPersonalMemory: require('../brain/ownerMemorySummary').formatOwnerPersonalMemory,
     formatFullMemory: (userId) => {
       memoryReads.push(['formatFullMemory', userId]);
