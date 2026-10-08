@@ -16,6 +16,7 @@ process.env.USER_MEMORY_PATH = path.join(tmpDir, 'user_memory.json');
 const { extractHealthEvents } = require('../dailyLogTracker');
 const { recordEvents, resolveLogQuery, answerDailyLogQuery } = require('../dailyLogService');
 const storage = require('../dailyLogStorage');
+const { isProfileQuery } = require('../profileIntent');
 
 const USER_A = 111111;
 const USER_B = 222222;
@@ -122,6 +123,18 @@ test('two users: data is fully isolated', () => {
 test('a plain report is NOT treated as a query', () => {
   assert.strictEqual(resolveLogQuery('Спах 7 часа.'), null);
   assert.strictEqual(extractHealthEvents('Спах 7 часа.').length, 1);
+});
+
+test('fitness-goal recall uses memory routing, while a short greeting is not health data', () => {
+  const question = 'Ели, каква е основната ми фитнес цел и колко килограма искам да достигна?';
+  assert.equal(isProfileQuery(question), true);
+  assert.equal(resolveLogQuery(question), null);
+  assert.equal(resolveLogQuery('оп'), null);
+  assert.deepEqual(extractHealthEvents('оп'), []);
+
+  // Ordinary health questions still go through the daily-log router.
+  assert.ok(resolveLogQuery('Колко килограма тежа днес?'));
+  assert.ok(resolveLogQuery('Тренирах ли днес?'));
 });
 
 test('generic "what did I log today" returns the day summary', () => {

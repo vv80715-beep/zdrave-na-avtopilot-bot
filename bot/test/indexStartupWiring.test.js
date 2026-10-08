@@ -13,3 +13,8 @@ test('bot startup keeps the ownerName dependency imported for /start registratio
   assert.match(ownerContextImport[1], /\bOWNER_NAME\b/);
   assert.match(indexSource, /ownerName:\s*OWNER_NAME/);
 });
+
+test('free-text messages have one registered text catch-all', () => {
+  const textHandlers = indexSource.match(/\bbot\.on\(['"]text['"]/g) || [];
+  assert.equal(textHandlers.length, 1);
+});

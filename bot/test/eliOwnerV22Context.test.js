@@ -12,6 +12,8 @@ const { createAskEliAdapter } = require('../brain/askEliAdapter');
 const { getOwnerScopedEliV22Flags } = require('../brain/featureFlags');
 const { isProfileQuery } = require('../profileIntent');
 const { OWNER_MEMORY } = require('../ownerContext');
+const { resolveLogQuery } = require('../dailyLogService');
+const { extractHealthEvents } = require('../dailyLogTracker');
 const { clearShortContext } = require('../brain/shortContextSession');
 const {
   getProfileField,
@@ -252,8 +254,9 @@ function createAskEliHarness(readers, options = {}) {
     buildRelationshipContext: () => '',
     recentMessages: () => [],
     addConversation: () => {},
-    resolveLogQuery: () => null,
-    extractHealthEvents: () => [],
+    resolveLogQuery: options.resolveLogQuery || (() => null),
+    answerDailyLogQuery: options.answerDailyLogQuery || (() => 'MOCK DAILY HEALTH REPORT'),
+    extractHealthEvents: options.extractHealthEvents || (() => []),
     sendAvatarReply: async (_ctx, text) => { avatarCalls.push(text); return true; },
     sendVoiceReply: async (_ctx, text) => { voiceCalls.push(text); return true; },
     replyWithMarkdownSafe: async (ctx, text) => ctx.reply(text),
@@ -375,9 +378,22 @@ test('owner memory query returns only stored personal facts and explicitly marks
     { id: 'pref-1', category: 'communication_preferences', value: 'Кратки отговори' },
   ];
   const reads = [];
+  const healthQueryCalls = [];
+  const healthAnswerCalls = [];
   const harness = createAskEliHarness(
     fixtureReaders(ownerProfile, LEGACY_MEMORY, ownerRelationshipFacts, reads),
-    { isProfileQuery }
+    {
+      isProfileQuery,
+      resolveLogQuery: (text) => {
+        healthQueryCalls.push(text);
+        return resolveLogQuery(text);
+      },
+      answerDailyLogQuery: (userId, descriptor) => {
+        healthAnswerCalls.push([userId, descriptor]);
+        return 'MOCK DAILY HEALTH REPORT';
+      },
+      extractHealthEvents,
+    }
   );
   const ownerStatus = {
     canChat: true,
@@ -385,11 +401,11 @@ test('owner memory query returns only stored personal facts and explicitly marks
     allowedModes: ['text', 'voice', 'avatar'],
     notice: null,
   };
-  const question =
-    'Каква е основната ми фитнес цел и колко килограма искам да достигна? Кажи ми какво помниш за мен';
+  const question = 'Ели, каква е основната ми фитнес цел и колко килограма искам да достигна?';
   const ownerResult = await harness.run(OWNER_ID, 'text', ownerStatus, question);
   const ownerAnswer = ownerResult.ctx.replyCalls.join('\n');
 
+  assert.equal(isProfileQuery(question), true);
   assert.ok(isOwner({ from: { id: OWNER_ID } }));
   assert.match(ownerAnswer, /Покачване на мускулна маса/);
   assert.match(ownerAnswer, /мускулна маса/);
@@ -400,6 +416,9 @@ test('owner memory query returns only stored personal facts and explicitly marks
     /ВАЖНО — САМОЛИЧНОСТ|Създател|Собственик на теб|Администратор|Разработчик|пълен достъп|админ команди/i
   );
   assert.equal(ownerResult.llmCall, undefined, 'memory queries must not reach the LLM');
+  assert.equal(ownerResult.ctx.replyCalls.length, 1, 'one incoming memory query gets one reply');
+  assert.deepEqual(healthQueryCalls, [], 'memory intent returns before health-log routing');
+  assert.deepEqual(healthAnswerCalls, []);
   assert.deepEqual(reads.map(([, userId]) => userId), Array(3).fill(OWNER_ID));
 
   const customerStatus = { canChat: true, plan: 'free', allowedModes: ['text'], notice: null };
@@ -410,11 +429,19 @@ test('owner memory query returns only stored personal facts and explicitly marks
   assert.match(customerAnswer, /CUSTOMER_STORED_FACTS:customer-fixture/);
   assert.doesNotMatch(customerAnswer, /Покачване на мускулна маса|Администратор|пълен достъп/);
   assert.deepEqual(reads.map(([, userId]) => userId), Array(3).fill(OWNER_ID));
+  assert.deepEqual(healthQueryCalls, [], 'customer memory intent also bypasses health-log routing');
   assert.ok(
     harness.memoryReads.some(
       ([name, userId]) => name === 'formatFullMemory' && userId === 'customer-fixture'
     )
   );
+
+  const greetingResult = await harness.run(OWNER_ID, 'text', ownerStatus, 'оп');
+  assert.equal(greetingResult.ctx.replyCalls.length, 1, 'one short greeting gets one reply');
+  assert.equal(greetingResult.ctx.replyCalls[0], 'Mock Eli отговор.');
+  assert.doesNotMatch(greetingResult.ctx.replyCalls[0], /Няма записани данни|Тренировка|Тегло/);
+  assert.deepEqual(healthQueryCalls, ['оп']);
+  assert.deepEqual(healthAnswerCalls, []);
 });
 
 test('owner prompt keeps authorization instructions private while retaining owner capabilities', () => {
