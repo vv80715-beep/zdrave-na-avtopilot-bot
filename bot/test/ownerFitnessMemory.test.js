@@ -171,7 +171,7 @@ test('saved owner goal and target weight survive a fresh process read', () => {
   assert.equal(child.status, 0, child.stderr);
   const restored = JSON.parse(child.stdout);
   assert.deepEqual(restored, [
-    { category: 'goals', value: 'Основна фитнес цел: да подобря издръжливостта си' },
+    { category: 'goals', value: 'Основна фитнес цел: подобря издръжливостта си' },
     { category: 'goals', value: 'Целево тегло: 70 кг' },
   ]);
 });

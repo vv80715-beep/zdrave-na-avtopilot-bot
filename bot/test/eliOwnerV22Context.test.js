@@ -589,7 +589,7 @@ test('fitness memory save phrases do not trigger owner mutation for customers', 
       return { ok: true, goal: 'кача мускулна маса', targetWeightKg: '75' };
     },
     resolveLogQuery: () => null,
-    extractHealthEvents,
+    extractHealthEvents: () => [],
   });
   const customerStatus = {
     canChat: true,
