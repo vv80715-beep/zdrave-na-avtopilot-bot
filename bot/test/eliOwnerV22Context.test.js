@@ -550,7 +550,10 @@ test('owner save failure and incomplete save never claim persistence or send dup
   };
   const failedHarness = createAskEliHarness(fixtureReaders(), {
     isProfileQuery,
-    saveOwnerFitnessGoal: () => ({ ok: false, reason: 'verification_failed' }),
+    saveOwnerFitnessGoal: (_userId, command) =>
+      command.targetWeightKg
+        ? { ok: false, reason: 'verification_failed' }
+        : { ok: false, reason: 'invalid' },
     onConsoleError: (...args) => errors.push(args),
   });
   const failed = await failedHarness.run(
