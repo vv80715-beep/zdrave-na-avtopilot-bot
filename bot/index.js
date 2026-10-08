@@ -6,7 +6,7 @@ const { SYSTEM_PROMPT, conversationFlowNote, stripLeadingGreeting } = require('.
 const openai = require('./openaiClient');
 const { transcribeTelegramAudio, audioSuffix, looksLikeBulgarian } = require('./voiceTranscription');
 const { isOwner } = require('./adminGuard');
-const { OWNER_NAME, OWNER_MEMORY } = require('./ownerContext');
+const { OWNER_MEMORY } = require('./ownerContext');
 const { touchConversationState } = require('./conversationState');
 const { buildMemoryContext, recentMessages, formatFullMemory } = require('./memoryService');
 const { addConversation } = require('./memoryStorage');
@@ -51,6 +51,7 @@ const {
   getOwnerRelationshipMemoryCaptureEnabled,
 } = require('./brain/featureFlags');
 const { buildOwnerV22Context } = require('./brain/ownerV22Context');
+const { formatOwnerPersonalMemory } = require('./brain/ownerMemorySummary');
 
 const profileWizard = require('./scenes/profileWizard');
 const editWizard = require('./scenes/editWizard');
@@ -393,10 +394,7 @@ async function askEli(ctx, question, opts = {}) {
   // from stored data — never let the model invent or paraphrase it.
   if (isProfileQuery(question)) {
     if (owner) {
-      const ownerProfileAnswer =
-        `🧠 *Памет за собственика (${OWNER_NAME})*\n\n` +
-        `Това е отделна и постоянна идентичност, която винаги помня:\n\n` +
-        OWNER_MEMORY;
+      const ownerProfileAnswer = formatOwnerPersonalMemory(v22OwnerContext);
       await deliverDeterministic(ownerProfileAnswer);
       return;
     }
