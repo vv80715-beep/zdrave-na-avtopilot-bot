@@ -409,10 +409,7 @@ test('owner memory query returns only stored personal facts and explicitly marks
   assert.equal(customerResult.adapterCall.result.legacy, true);
   assert.match(customerAnswer, /CUSTOMER_STORED_FACTS:customer-fixture/);
   assert.doesNotMatch(customerAnswer, /Покачване на мускулна маса|Администратор|пълен достъп/);
-  assert.deepEqual(
-    reads.map(([, userId]) => userId),
-    [...Array(3).fill(OWNER_ID), 'customer-fixture', 'customer-fixture', 'customer-fixture']
-  );
+  assert.deepEqual(reads.map(([, userId]) => userId), Array(3).fill(OWNER_ID));
   assert.ok(
     harness.memoryReads.some(
       ([name, userId]) => name === 'formatFullMemory' && userId === 'customer-fixture'
