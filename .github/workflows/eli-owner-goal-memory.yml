@@ -21,10 +21,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: bot/package-lock.json
-      - name: Install dependencies without provider credentials
-        run: npm ci --ignore-scripts --no-audit --no-fund
+      # This regression uses only Node built-ins and local modules. Avoid npm
+      # registry dependency and NEVER load live credentials in CI.
       - name: Syntax check modified modules
         run: |
           node --check index.js
