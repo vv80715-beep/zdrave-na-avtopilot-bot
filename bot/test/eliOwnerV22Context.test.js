@@ -11,6 +11,7 @@ const { buildOwnerV22Context } = require('../brain/ownerV22Context');
 const { createAskEliAdapter } = require('../brain/askEliAdapter');
 const { getOwnerScopedEliV22Flags } = require('../brain/featureFlags');
 const { isProfileQuery } = require('../profileIntent');
+const { detectOwnerFitnessMemoryCommand } = require('../ownerFitnessMemory');
 const { OWNER_MEMORY } = require('../ownerContext');
 const { resolveLogQuery } = require('../dailyLogService');
 const { extractHealthEvents } = require('../dailyLogTracker');
@@ -245,6 +246,10 @@ function createAskEliHarness(readers, options = {}) {
     },
     formatRelationshipMemory: () => '',
     isProfileQuery: options.isProfileQuery || (() => false),
+    detectOwnerFitnessMemoryCommand:
+      options.detectOwnerFitnessMemoryCommand || detectOwnerFitnessMemoryCommand,
+    saveOwnerFitnessGoal:
+      options.saveOwnerFitnessGoal || (() => ({ ok: false, reason: 'invalid' })),
     detectMemoryCommand: () => null,
     rememberFromMessage: (userId) => memoryReads.push(['rememberFromMessage', userId]),
     buildMemoryContext: (userId) => {
@@ -265,7 +270,13 @@ function createAskEliHarness(readers, options = {}) {
     chooseLookCategory: () => 'neutral',
     resolveLookId: () => undefined,
     LOOK_PROMPT_NOTE: 'MOCK_AVATAR_NOTE',
-    console: { error: (...args) => assert.fail(args.join(' ')), warn: () => {} },
+    console: {
+      error: (...args) => {
+        if (options.onConsoleError) options.onConsoleError(...args);
+        else assert.fail(args.join(' '));
+      },
+      warn: () => {},
+    },
   };
   vm.runInNewContext(source.slice(start, end), sandbox);
 
@@ -442,6 +453,158 @@ test('owner memory query returns only stored personal facts and explicitly marks
   assert.doesNotMatch(greetingResult.ctx.replyCalls[0], /Няма записани данни|Тренировка|Тегло/);
   assert.deepEqual(healthQueryCalls, ['оп']);
   assert.deepEqual(healthAnswerCalls, []);
+});
+
+test('fitness-goal recall paraphrases route to stored memory before daily logs', async () => {
+  const reads = [];
+  const healthQueryCalls = [];
+  const harness = createAskEliHarness(
+    fixtureReaders(
+      { ...LEGACY_PROFILE, goal: 'Покачване на мускулна маса' },
+      LEGACY_MEMORY,
+      [{ id: 'goal', category: 'goals', value: 'Основна фитнес цел: качване на мускулна маса' }],
+      reads
+    ),
+    {
+      isProfileQuery,
+      resolveLogQuery: (text) => {
+        healthQueryCalls.push(text);
+        return resolveLogQuery(text);
+      },
+      extractHealthEvents,
+    }
+  );
+  const status = {
+    canChat: true,
+    plan: 'owner',
+    allowedModes: ['text', 'voice', 'avatar'],
+    notice: null,
+  };
+  const questions = [
+    'Ели, каква беше фитнес целта ми и до колко кг исках да стигна?',
+    'Припомни ми основната фитнес цел и колко килограма исках да достигна.',
+    'Колко кг искам да достигна?',
+  ];
+
+  for (const question of questions) {
+    assert.equal(isProfileQuery(question), true, question);
+    const result = await harness.run(OWNER_ID, 'text', status, question);
+    assert.equal(result.ctx.replyCalls.length, 1, 'exactly one deterministic reply');
+    assert.equal(result.llmCall, undefined, 'recall must not reach the model');
+    assert.match(result.ctx.replyCalls[0], /Покачване на мускулна маса/);
+  }
+  assert.deepEqual(healthQueryCalls, [], 'memory recall must not resolve against today’s log');
+});
+
+test('owner explicit fitness save verifies once and bypasses capture, daily logs, and LLM', async () => {
+  const calls = [];
+  const logQueries = [];
+  const saveResult = { ok: true, goal: 'кача мускулна маса', targetWeightKg: '75' };
+  const harness = createAskEliHarness(fixtureReaders(), {
+    isProfileQuery,
+    saveOwnerFitnessGoal: (userId, command) => {
+      calls.push([userId, command]);
+      return saveResult;
+    },
+    resolveLogQuery: (text) => {
+      logQueries.push(text);
+      return resolveLogQuery(text);
+    },
+    extractHealthEvents,
+  });
+  const status = {
+    canChat: true,
+    plan: 'owner',
+    allowedModes: ['text', 'voice', 'avatar'],
+    notice: null,
+  };
+  const phrase =
+    'Запомни, че фитнес целта ми е да кача мускулна маса и целевото ми тегло е 75 кг.';
+  const result = await harness.run(OWNER_ID, 'text', status, phrase);
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], OWNER_ID);
+  assert.deepEqual({ ...calls[0][1] }, {
+    kind: 'save_fitness_goal',
+    goal: 'кача мускулна маса',
+    targetWeightKg: '75',
+  });
+  assert.equal(result.ctx.replyCalls.length, 1, 'one save request produces one reply');
+  assert.match(result.ctx.replyCalls[0], /Запазих фитнес целта/);
+  assert.equal(result.llmCall, undefined);
+  assert.deepEqual(logQueries, []);
+  assert.equal(
+    harness.memoryReads.some(([name]) => name === 'rememberFromMessage'),
+    false,
+    'the explicit command is excluded from passive memory capture'
+  );
+});
+
+test('owner save failure and incomplete save never claim persistence or send duplicate replies', async () => {
+  const errors = [];
+  const status = {
+    canChat: true,
+    plan: 'owner',
+    allowedModes: ['text', 'voice', 'avatar'],
+    notice: null,
+  };
+  const failedHarness = createAskEliHarness(fixtureReaders(), {
+    isProfileQuery,
+    saveOwnerFitnessGoal: () => ({ ok: false, reason: 'verification_failed' }),
+    onConsoleError: (...args) => errors.push(args),
+  });
+  const failed = await failedHarness.run(
+    OWNER_ID,
+    'text',
+    status,
+    'Запомни, че фитнес целта ми е да кача мускулна маса и целевото ми тегло е 75 кг.'
+  );
+  assert.equal(failed.ctx.replyCalls.length, 1);
+  assert.match(failed.ctx.replyCalls[0], /Не мога да потвърдя/);
+  assert.doesNotMatch(failed.ctx.replyCalls[0], /Запазих|запазено е|успешно записах/i);
+  assert.equal(failed.llmCall, undefined);
+
+  const incomplete = await failedHarness.run(
+    OWNER_ID,
+    'text',
+    status,
+    'Запомни, че фитнес целта ми е да кача мускулна маса.'
+  );
+  assert.equal(incomplete.ctx.replyCalls.length, 1);
+  assert.match(incomplete.ctx.replyCalls[0], /изпрати изрично фитнес целта и целевото тегло/);
+  assert.doesNotMatch(incomplete.ctx.replyCalls[0], /Запазих|запазено е|успешно записах/i);
+  assert.equal(incomplete.llmCall, undefined);
+  assert.deepEqual(errors, []);
+});
+
+test('fitness memory save phrases do not trigger owner mutation for customers', async () => {
+  const writes = [];
+  const harness = createAskEliHarness(fixtureReaders(), {
+    isProfileQuery,
+    saveOwnerFitnessGoal: (...args) => {
+      writes.push(args);
+      return { ok: true, goal: 'кача мускулна маса', targetWeightKg: '75' };
+    },
+    resolveLogQuery: () => null,
+    extractHealthEvents,
+  });
+  const customerStatus = {
+    canChat: true,
+    plan: 'free',
+    allowedModes: ['text'],
+    notice: null,
+  };
+  const result = await harness.run(
+    'customer-fixture',
+    'text',
+    customerStatus,
+    'Запомни, че фитнес целта ми е да кача мускулна маса и целевото ми тегло е 75 кг.'
+  );
+
+  assert.deepEqual(writes, []);
+  assert.equal(result.adapterCall.result.legacy, true);
+  assert.ok(result.llmCall, 'customer turn continues through the legacy chat route');
+  assert.doesNotMatch(result.ctx.replyCalls.join('\n'), /Запазих фитнес целта/);
 });
 
 test('owner prompt keeps authorization instructions private while retaining owner capabilities', () => {

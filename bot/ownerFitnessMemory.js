@@ -54,6 +54,7 @@ function detectOwnerFitnessMemoryCommand(text) {
     .replace(/(?:,?\s*)до\s+\d{2,3}(?:[.,]\d+)?\s*(?:кг|килограм(?:а|и|ов)?).*$/iu, '')
     .replace(/\s+(?:и|а|като)$/iu, '')
     .replace(/\s+/g, ' ')
+    .replace(/[\s,;:.—-]+$/g, '')
     .trim();
   const targetWeightKg = parseTargetWeight(normalized);
 
