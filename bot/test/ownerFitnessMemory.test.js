@@ -51,6 +51,11 @@ test('fitness-goal save parser accepts explicit Bulgarian forms and rejects ordi
       'пробягам 5 км',
       '72',
     ],
+    [
+      'Промени фитнес целта ми на подобряване на издръжливостта и целевото тегло на 70 кг.',
+      'подобряване на издръжливостта',
+      '70',
+    ],
   ];
 
   for (const [text, goal, targetWeightKg] of cases) {
