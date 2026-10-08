@@ -20,6 +20,8 @@ const {
 } = require('../ownerFitnessMemory');
 const { getRelationshipMemory } = require('../relationshipMemory');
 const { isProfileQuery } = require('../profileIntent');
+const { buildOwnerV22Context } = require('../brain/ownerV22Context');
+const { formatOwnerPersonalMemory } = require('../brain/ownerMemorySummary');
 
 function clearStore() {
   if (fs.existsSync(memoryPath)) fs.rmSync(memoryPath);
@@ -179,6 +181,19 @@ test('saved owner goal and target weight survive a fresh process read', () => {
     { category: 'goals', value: 'Основна фитнес цел: подобря издръжливостта си' },
     { category: 'goals', value: 'Целево тегло: 70 кг' },
   ]);
+
+  const context = buildOwnerV22Context(OWNER_ID, {
+    readProfile: () => null,
+    readUserMemory: () => null,
+  });
+  const summary = formatOwnerPersonalMemory(context);
+  assert.match(summary, /подобря издръжливостта си/);
+  assert.match(summary, /Целево тегло: 70 кг \(изрично записано към цел\)/);
+  assert.equal(
+    (summary.match(/Целево тегло: 70 кг/g) || []).length,
+    1,
+    'the stored target should not also appear in the general goals list'
+  );
 });
 
 test('fitness-goal recall wording is memory intent, not a health-log lookup', () => {

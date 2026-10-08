@@ -3,6 +3,7 @@
 const { getKnownProfileEntries } = require('./unifiedHealthProfile');
 
 const GOAL_PROFILE_PATHS = new Set(['goals.primary', 'goals.supporting']);
+const TARGET_WEIGHT_FACT = /^целево\s+тегло\s*:/iu;
 
 const FACT_CATEGORY_LABELS = Object.freeze({
   health_context: 'Здравен контекст',
@@ -56,14 +57,17 @@ function formatOwnerPersonalMemory(context = {}) {
     .filter((entry) => GOAL_PROFILE_PATHS.has(entry.path))
     .map((entry) => displayValue(entry.value))
     .filter(Boolean);
-  const storedGoalFacts = facts
+  const allStoredGoalFacts = facts
     .filter((fact) => fact && fact.category === 'goals')
     .map((fact) => displayValue(fact.value))
     .filter(Boolean);
+  const storedGoalFacts = allStoredGoalFacts.filter(
+    (value) => !TARGET_WEIGHT_FACT.test(value)
+  );
   const goalValues = [...new Set([...profileGoalValues, ...storedGoalFacts])];
 
   const targetWeights = [...new Set(
-    [...profileGoalValues, ...storedGoalFacts]
+    [...profileGoalValues, ...allStoredGoalFacts]
       .map(targetWeightFromGoal)
       .filter(Boolean)
   )];
