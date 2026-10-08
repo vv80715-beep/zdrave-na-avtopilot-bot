@@ -13,6 +13,7 @@ const {
 const { overallInsight } = require('./healthInsights');
 const { getUser } = require('./storage');
 const { pick, CONFIRM_OPENERS } = require('./persona');
+const { isOwnerGoalMemoryIntent } = require('./brain/ownerGoalMemory');
 
 function normalize(text) {
   return String(text || '')
@@ -306,6 +307,8 @@ function matchSummary(t) {
 function resolveLogQuery(text) {
   const t = normalize(text);
   if (!t) return null;
+  // Owner-goal memory questions cannot be misread as today's weight/workout.
+  if (isOwnerGoalMemoryIntent(text)) return null;
 
   const summaryType = matchSummary(t);
   if (summaryType) return { kind: 'summary', type: summaryType };
