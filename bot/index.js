@@ -52,6 +52,10 @@ const {
 } = require('./brain/featureFlags');
 const { buildOwnerV22Context } = require('./brain/ownerV22Context');
 const { formatOwnerPersonalMemory } = require('./brain/ownerMemorySummary');
+const {
+  detectOwnerFitnessMemoryCommand,
+  saveOwnerFitnessGoal,
+} = require('./ownerFitnessMemory');
 
 const profileWizard = require('./scenes/profileWizard');
 const editWizard = require('./scenes/editWizard');
@@ -305,11 +309,15 @@ async function askEli(ctx, question, opts = {}) {
   if (!status) return; // expired trial — static message already sent
 
   const owner = isOwner(ctx);
+  const ownerFitnessCommand = owner
+    ? detectOwnerFitnessMemoryCommand(question)
+    : null;
 
   // Optional, owner-only capture of newly stated relationship facts. The
   // separate local relationship store is opt-in and never imports RAM history.
   // Keep explicit memory commands out of passive capture.
   if (getOwnerRelationshipMemoryCaptureEnabled(owner) &&
+      !ownerFitnessCommand &&
       !detectMemoryCommand(question)) {
     try {
       rememberFromMessage(ctx.from.id, question);
@@ -364,6 +372,35 @@ async function askEli(ctx, question, opts = {}) {
     }
     await replyWithMarkdownSafe(ctx, full);
   };
+
+  // Explicit fitness-goal memory management is a narrow owner-only command.
+  // The helper rechecks the configured Telegram ID, validates both values,
+  // writes to local relationship memory, and verifies persistence before
+  // returning success. It must not fall through to the daily log or LLM.
+  if (ownerFitnessCommand && owner) {
+    let result;
+    try {
+      result = saveOwnerFitnessGoal(ctx.from.id, ownerFitnessCommand);
+    } catch (err) {
+      console.error('Owner fitness memory write failed:', err.message);
+      result = { ok: false, reason: 'storage_failed' };
+    }
+
+    if (result.ok) {
+      await deliverDeterministic(
+        `Запазих фитнес целта „${result.goal}“ и целевото тегло ${result.targetWeightKg} кг в постоянната ти памет.`
+      );
+    } else if (result.reason === 'invalid') {
+      await deliverDeterministic(
+        'За да го запиша точно, изпрати изрично фитнес целта и целевото тегло в килограми.'
+      );
+    } else {
+      await deliverDeterministic(
+        'Не мога да потвърдя, че фитнес целта и целевото тегло са запазени. Опитай отново.'
+      );
+    }
+    return;
+  }
 
   // Urgent V2.2 safety routing is deterministic and never reaches OpenAI.
   // This path is unreachable while the V2.2 flag remains disabled.
