@@ -21,8 +21,42 @@ const ELI_V2_2_OWNER_CANARY_FLAGS = Object.freeze({
   unifiedProfile: true,
 });
 
-function getOwnerScopedEliV22Flags(isOwner) {
-  return isOwner ? ELI_V2_2_OWNER_CANARY_FLAGS : ELI_V2_2_FLAG_DEFAULTS;
+const { DURABLE_MEMORY_CONTRACT_VERSION } = require('./durableMemoryContracts');
+const { APPROVED_SUPABASE_PROJECT_REF } = require('./eliMemoryClient');
+const MEMORY_ACCESS_MAX_AGE_MS = 30_000;
+
+function hasVerifiedEliMemoryAccess(access, now = Date.now()) {
+  const checkedAt = Date.parse(access?.checkedAt || '');
+  return access?.ok === true &&
+    access.projectRef === APPROVED_SUPABASE_PROJECT_REF &&
+    access.contractVersion === DURABLE_MEMORY_CONTRACT_VERSION &&
+    Number.isFinite(checkedAt) &&
+    checkedAt <= now &&
+    now - checkedAt <= MEMORY_ACCESS_MAX_AGE_MS;
+}
+
+function getOwnerScopedEliV22Flags(isOwner, options = {}) {
+  if (!isOwner) return ELI_V2_2_FLAG_DEFAULTS;
+
+  const env = options.env || process.env;
+  const now = Number.isFinite(options.now) ? options.now : Date.now();
+  const accessVerified = hasVerifiedEliMemoryAccess(options.backendAccess, now);
+  const durableMemory =
+    accessVerified &&
+    parseBooleanFlag(
+      env.ELI_V2_2_DURABLE_MEMORY_ENABLED,
+      ELI_V2_2_FLAG_DEFAULTS.durableMemory
+    );
+  const durableReads = durableMemory && parseBooleanFlag(
+    env.ELI_V2_2_DURABLE_READS_ENABLED,
+    ELI_V2_2_FLAG_DEFAULTS.durableReads
+  );
+
+  return Object.freeze({
+    ...ELI_V2_2_OWNER_CANARY_FLAGS,
+    durableMemory,
+    durableReads,
+  });
 }
 
 function getOwnerRelationshipMemoryCaptureEnabled(isOwner, env = process.env) {
@@ -69,7 +103,9 @@ function resolveEliV22Flags(overrides = {}, env = process.env) {
 module.exports = {
   ELI_V2_2_FLAG_DEFAULTS,
   ELI_V2_2_OWNER_CANARY_FLAGS,
+  MEMORY_ACCESS_MAX_AGE_MS,
   ENVIRONMENT_FLAG_NAMES,
+  hasVerifiedEliMemoryAccess,
   getOwnerScopedEliV22Flags,
   getOwnerRelationshipMemoryCaptureEnabled,
   parseBooleanFlag,
