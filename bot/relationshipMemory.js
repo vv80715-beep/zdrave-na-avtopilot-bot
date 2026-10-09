@@ -218,8 +218,8 @@ function classifyMessage(message) {
   const none = { action: 'ignore', category: null, value: null, confidence: 0 };
   if (!text || text.length < 3) return none;
   if (IGNORE_PATTERNS.some((re) => re.test(text))) return none;
-  // Sensitive personal information may enter durable memory only through a
-  // direct, explicit save command handled by detectMemoryCommand below.
+  // Sensitive personal information is not accepted by this classifier, even
+  // when the user uses an explicit save cue.
   if (SENSITIVE_CUE.test(text)) return none;
 
   let best = null;

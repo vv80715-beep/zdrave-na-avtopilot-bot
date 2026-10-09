@@ -19,6 +19,7 @@ process.env.USER_MEMORY_PATH = path.join(tmpDir, 'user_memory.json');
 
 const {
   saveRelationshipMemory,
+  saveExplicitRelationshipMemory,
   getRelationshipMemory,
   updateRelationshipMemory,
   deleteRelationshipMemory,
@@ -235,6 +236,16 @@ test('explicit workout preference is verified and recalled by a natural question
   assert.equal(recall.category, 'personal_preferences');
   assert.equal(recall.topic, 'workout');
   assert.match(applyMemoryCommand(USER_A, recall), /лостове/i);
+});
+
+test('general explicit memory saves a classified fact only after verification', () => {
+  const saved = saveExplicitRelationshipMemory(
+    USER_A,
+    'Запомни, че искам да подобря съня си.'
+  );
+  assert.equal(saved.ok, true);
+  assert.equal(saved.category, 'goals');
+  assert.match(getRelationshipMemory(USER_A)[0].value, /подобря съня/i);
 });
 
 test('explicit preference save fails closed when read-after-write finds no row', () => {
