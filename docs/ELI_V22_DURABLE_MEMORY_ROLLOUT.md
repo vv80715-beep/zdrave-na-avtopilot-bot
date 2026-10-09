@@ -1,6 +1,9 @@
 # Eli V2.2 Durable Memory Rollout
 
-Status: foundation only. No production migration, import, Edge deployment, durable read activation, dual-write, bot restart, or main merge is authorized by this document.
+Status: local development preparation only. CRUD client/service code and an
+Edge Function scaffold are present, but no production migration, import,
+deployment, durable read activation, dual-write, bot restart, or main merge is
+authorized by this document.
 
 ## Durable entities
 
@@ -13,6 +16,14 @@ Status: foundation only. No production migration, import, Edge deployment, durab
 - eli_scheduled_deliveries
 
 Every user-scoped row is keyed by telegram_user_id. Short context is bounded to 10 messages and must expire no later than 24 hours after refresh. Health events are append-only. Delivery claims use an idempotency key and lease.
+
+The `eli-memory` function is deliberately limited to `eli_memory_facts`; it
+does not return health events or profile/context rows. Its local deployment
+contract and required secret names are documented in
+`bolt-backend/supabase/functions/eli-memory/README.md`. Owner durable flags
+remain off unless the matching explicit environment flag is set and an
+authenticated `/health` response for the approved project and contract was
+verified within 30 seconds.
 
 ## Safe migration sequence
 
