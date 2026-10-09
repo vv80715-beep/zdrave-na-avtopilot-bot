@@ -242,6 +242,27 @@ test('universal memory service completes scoped CRUD through the mock HTTP clien
   assert.ok(calls.every((call) => call.internalHeader === FIXTURE_SECRET));
 });
 
+test('universal memory service refuses remote writes without verified backend access', async () => {
+  let requests = 0;
+  const client = createEliMemoryClient({
+    env: {},
+    fetchImpl: async () => {
+      requests += 1;
+      return response({});
+    },
+  });
+  const memory = createUniversalMemoryService({ repository: client });
+
+  const result = await memory.rememberMessage(
+    '610022',
+    'Запомни, че предпочитам да тренирам на лостове.'
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.confirmed, false);
+  assert.equal(result.reason, 'backend_not_ready');
+  assert.equal(requests, 0);
+});
+
 test('owner durable flags need explicit opt-in and recent approved backend verification', () => {
   const now = Date.UTC(2026, 9, 9, 12);
   const requested = {
