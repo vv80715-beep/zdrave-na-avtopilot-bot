@@ -3,6 +3,7 @@
 const { classifyMessage } = require('../relationshipMemory');
 const { memoryFact } = require('./durableMemoryContracts');
 const { validTelegramUserId } = require('./eliMemoryClient');
+const { hasVerifiedEliMemoryAccess } = require('./featureFlags');
 
 const TOPIC_PATTERNS = Object.freeze({
   workout: /(тренир|трениров|лост|калистен|собствено тегло|фитнес|спорт|упражнен|плув|бяган|тичам|йога|кросфит|пилат)/iu,
@@ -70,13 +71,40 @@ function createUniversalMemoryService(options = {}) {
     throw new TypeError('a complete memory repository is required');
   }
 
+  let cachedBackendAccess = null;
+
   function requireUserId(value) {
     const id = String(value ?? '').trim();
     if (!validTelegramUserId(id)) throw new TypeError('valid Telegram user ID required');
     return id;
   }
 
+  async function requireBackendAccess() {
+    if (typeof repository.checkAccess !== 'function') return;
+    if (hasVerifiedEliMemoryAccess(cachedBackendAccess)) return;
+    let access = null;
+    try {
+      access = await repository.checkAccess();
+    } catch {
+      access = null;
+    }
+    if (!hasVerifiedEliMemoryAccess(access)) {
+      cachedBackendAccess = null;
+      const error = new Error('durable memory backend is not verified');
+      error.code = 'memory_backend_not_ready';
+      throw error;
+    }
+    cachedBackendAccess = access;
+  }
+
+  function storageFailure(error) {
+    return error?.code === 'memory_backend_not_ready'
+      ? 'backend_not_ready'
+      : 'storage_unavailable';
+  }
+
   async function listActive(userId) {
+    await requireBackendAccess();
     return activeAndScoped(userId, await repository.listFacts(userId));
   }
 
@@ -122,7 +150,7 @@ function createUniversalMemoryService(options = {}) {
       }
       return { ok: true, confirmed: true, fact: verified };
     } catch {
-      return { ok: false, confirmed: false, reason: 'storage_unavailable' };
+      return { ok: false, confirmed: false, reason: storageFailure(arguments[0]) };
     }
   }
 
@@ -133,7 +161,12 @@ function createUniversalMemoryService(options = {}) {
       const matches = selectMatches(facts, query);
       return { ok: true, confirmed: true, facts: matches };
     } catch {
-      return { ok: false, confirmed: false, reason: 'storage_unavailable', facts: [] };
+      return {
+        ok: false,
+        confirmed: false,
+        reason: storageFailure(arguments[0]),
+        facts: [],
+      };
     }
   }
 
@@ -162,7 +195,7 @@ function createUniversalMemoryService(options = {}) {
       }
       return { ok: true, confirmed: true, fact: verified };
     } catch {
-      return { ok: false, confirmed: false, reason: 'storage_unavailable' };
+      return { ok: false, confirmed: false, reason: storageFailure(arguments[0]) };
     }
   }
 
@@ -193,7 +226,7 @@ function createUniversalMemoryService(options = {}) {
       }
       return { ok: true, confirmed: true, deletedCount: matches.length };
     } catch {
-      return { ok: false, confirmed: false, reason: 'storage_unavailable' };
+      return { ok: false, confirmed: false, reason: storageFailure(arguments[0]) };
     }
   }
 
