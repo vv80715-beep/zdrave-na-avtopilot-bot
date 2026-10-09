@@ -1,7 +1,15 @@
 'use strict';
 
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'eli-v22-client-fixture-'));
+process.env.RELATIONSHIP_MEMORY_PATH = path.join(tempDir, 'relationship-memory.json');
+process.env.DAILY_LOG_PATH = path.join(tempDir, 'daily-logs.json');
+process.env.USER_MEMORY_PATH = path.join(tempDir, 'user-memory.json');
+
 const {
   APPROVED_ELI_MEMORY_BASE_URL,
   APPROVED_SUPABASE_PROJECT_REF,
@@ -11,12 +19,15 @@ const {
   DURABLE_MEMORY_CONTRACT_VERSION,
 } = require('../brain/durableMemoryContracts');
 const { getOwnerScopedEliV22Flags } = require('../brain/featureFlags');
+const { createUniversalMemoryService } = require('../brain/universalMemoryService');
 
 const FIXTURE_SECRET = 'fixture-only-memory-secret';
 const CONFIGURED_ENV = {
   ELI_MEMORY_BASE_URL: APPROVED_ELI_MEMORY_BASE_URL,
   ELI_MEMORY_INTERNAL_SECRET: FIXTURE_SECRET,
 };
+
+test.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
 
 function response(payload, ok = true) {
   return {
@@ -131,6 +142,104 @@ test('a failed remote write does not leak response contents or the internal secr
       return true;
     }
   );
+});
+
+test('universal memory service completes scoped CRUD through the mock HTTP client', async () => {
+  const facts = [];
+  const calls = [];
+  let nextId = 0;
+  const client = createEliMemoryClient({
+    env: CONFIGURED_ENV,
+    fetchImpl: async (url, options) => {
+      const parsed = new URL(url);
+      const method = options.method;
+      const body = options.body ? JSON.parse(options.body) : null;
+      calls.push({
+        method,
+        path: parsed.pathname,
+        operation: body?.operation || null,
+        internalHeader: options.headers['x-eli-memory-secret'],
+      });
+
+      if (method === 'GET' && parsed.pathname.endsWith('/health')) {
+        return response({
+          status: 'ready',
+          project_ref: APPROVED_SUPABASE_PROJECT_REF,
+          contract_version: DURABLE_MEMORY_CONTRACT_VERSION,
+        });
+      }
+      if (method === 'GET') {
+        const telegramUserId = parsed.searchParams.get('telegram_user_id');
+        return response({
+          telegram_user_id: telegramUserId,
+          facts: facts.filter((fact) => fact.telegram_user_id === telegramUserId),
+        });
+      }
+
+      const telegramUserId = body.telegram_user_id;
+      if (body.operation === 'save_fact') {
+        const fact = {
+          id: `fixture-row-${++nextId}`,
+          telegram_user_id: telegramUserId,
+          category: body.fact.category,
+          fact_key: body.fact.fact_key,
+          value: body.fact.value,
+          source: body.fact.source,
+          status: 'active',
+        };
+        facts.push(fact);
+        return response({ ok: true, telegram_user_id: telegramUserId, fact });
+      }
+      if (body.operation === 'update_fact') {
+        const fact = facts.find(
+          (row) =>
+            row.id === body.fact_id &&
+            row.telegram_user_id === telegramUserId &&
+            row.status === 'active'
+        );
+        if (!fact) return response({ error: 'fact_not_found' }, false);
+        fact.value = body.value;
+        return response({ ok: true, telegram_user_id: telegramUserId, fact });
+      }
+      if (body.operation === 'delete_fact') {
+        const fact = facts.find(
+          (row) =>
+            row.id === body.fact_id &&
+            row.telegram_user_id === telegramUserId &&
+            row.status === 'active'
+        );
+        if (!fact) return response({ error: 'fact_not_found' }, false);
+        fact.status = 'deleted';
+        return response({
+          ok: true,
+          telegram_user_id: telegramUserId,
+          fact_id: fact.id,
+        });
+      }
+      return response({ error: 'unknown_operation' }, false);
+    },
+  });
+  const memory = createUniversalMemoryService({ repository: client });
+
+  const saved = await memory.rememberMessage(
+    '610021',
+    'Запомни, че предпочитам да тренирам на лостове.'
+  );
+  assert.equal(saved.confirmed, true);
+
+  const edited = await memory.edit('610021', 'тренировки', 'Йога');
+  assert.equal(edited.confirmed, true);
+  assert.equal(edited.fact.value, 'Йога');
+
+  const forgotten = await memory.forget('610021', 'тренировки');
+  assert.equal(forgotten.confirmed, true);
+  assert.deepEqual(await client.listFacts('610021'), []);
+
+  assert.deepEqual(
+    calls.filter((call) => call.method === 'POST').map((call) => call.operation),
+    ['save_fact', 'update_fact', 'delete_fact']
+  );
+  assert.ok(calls.every((call) => call.internalHeader === FIXTURE_SECRET));
 });
 
 test('owner durable flags need explicit opt-in and recent approved backend verification', () => {
