@@ -34,6 +34,7 @@ jobs:
           node --check commands/forget.js
           node --check commands/plan.js
           node --check commands/userMemory.js
+          node --check commands/coach.js
           for file in brain/universal/*.js scripts/universalMemoryMigration.js; do node --check "$file"; done
       - name: Synthetic memory, migration and runtime regressions
         run: node --test test/eli*.test.js test/relationshipMemory.test.js

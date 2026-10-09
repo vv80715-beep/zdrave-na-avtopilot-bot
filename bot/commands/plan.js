@@ -74,6 +74,7 @@ function register(bot) {
     if (!status) return;
     const universal = getUniversalMemoryRuntime();
     const canonical = universal.active(ctx.from.id);
+    if (canonical && ctx.chat?.type !== 'private') return ctx.reply('Поискай личния план в личния чат с Ели.');
 
     await ctx.sendChatAction('typing');
     await ctx.reply(
