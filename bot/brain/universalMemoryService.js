@@ -149,8 +149,8 @@ function createUniversalMemoryService(options = {}) {
         return { ok: false, confirmed: false, reason: 'write_not_verified' };
       }
       return { ok: true, confirmed: true, fact: verified };
-    } catch {
-      return { ok: false, confirmed: false, reason: storageFailure(arguments[0]) };
+    } catch (error) {
+      return { ok: false, confirmed: false, reason: storageFailure(error) };
     }
   }
 
@@ -160,11 +160,11 @@ function createUniversalMemoryService(options = {}) {
       const facts = await listActive(userId);
       const matches = selectMatches(facts, query);
       return { ok: true, confirmed: true, facts: matches };
-    } catch {
+    } catch (error) {
       return {
         ok: false,
         confirmed: false,
-        reason: storageFailure(arguments[0]),
+        reason: storageFailure(error),
         facts: [],
       };
     }
@@ -194,8 +194,8 @@ function createUniversalMemoryService(options = {}) {
         return { ok: false, confirmed: false, reason: 'write_not_verified' };
       }
       return { ok: true, confirmed: true, fact: verified };
-    } catch {
-      return { ok: false, confirmed: false, reason: storageFailure(arguments[0]) };
+    } catch (error) {
+      return { ok: false, confirmed: false, reason: storageFailure(error) };
     }
   }
 
@@ -225,8 +225,8 @@ function createUniversalMemoryService(options = {}) {
         return { ok: false, confirmed: false, reason: 'delete_not_verified' };
       }
       return { ok: true, confirmed: true, deletedCount: matches.length };
-    } catch {
-      return { ok: false, confirmed: false, reason: storageFailure(arguments[0]) };
+    } catch (error) {
+      return { ok: false, confirmed: false, reason: storageFailure(error) };
     }
   }
 
