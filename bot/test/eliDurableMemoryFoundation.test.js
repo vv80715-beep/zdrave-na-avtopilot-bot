@@ -5,12 +5,20 @@ const { createInMemoryDurableMemoryRepository } = require('../brain/inMemoryDura
 const { profileRecord, memoryFact, healthEvent, shortContextRecord } = require('../brain/durableMemoryContracts');
 const { createStorageBackedEliBrain } = require('../brain/storageBackedEliBrain');
 const { createUnknownHealthProfile, createProfileFieldUpdateProposal, applyApprovedProfileFieldUpdate } = require('../brain/unifiedHealthProfile');
+const {
+  APPROVED_SUPABASE_PROJECT_REF,
+} = require('../brain/eliMemoryClient');
+const {
+  DURABLE_MEMORY_CONTRACT_VERSION,
+} = require('../brain/durableMemoryContracts');
 
 const FLAGS_ON = {
   aiBrain: true,
   contextBuilder: true,
   memoryCandidates: true,
   unifiedProfile: true,
+  durableMemory: true,
+  durableReads: true,
 };
 
 test('durable repository isolates users', async () => {
@@ -53,8 +61,89 @@ test('short context contract stays bounded to ten turns', async () => {
 test('storage-backed brain reads common durable context without writes', async () => {
   const repo = createInMemoryDurableMemoryRepository();
   await repo.appendFact(memoryFact({ telegramUserId: '410006', category: 'communication', value: 'кратки отговори' }));
-  const brain = createStorageBackedEliBrain({ repository: repo, featureFlags: FLAGS_ON, environment: {} });
+  const brain = createStorageBackedEliBrain({
+    repository: repo,
+    ownerUserId: '410006',
+    backendAccess: {
+      ok: true,
+      projectRef: APPROVED_SUPABASE_PROJECT_REF,
+      contractVersion: DURABLE_MEMORY_CONTRACT_VERSION,
+      checkedAt: new Date().toISOString(),
+    },
+    featureFlags: FLAGS_ON,
+    environment: {},
+  });
   const result = await brain.prepare({ userId: '410006', channel: 'text', message: 'Как да продължа?' });
   assert.equal(result.context.longTermFacts[0].value, 'кратки отговори');
+  assert.equal(result.flags.durableReads, true);
   assert.equal(repo.snapshot().facts.length, 1);
+});
+
+test('storage-backed brain never reads durable rows without verified owner access', async () => {
+  const repository = createInMemoryDurableMemoryRepository();
+  await repository.appendFact(
+    memoryFact({ telegramUserId: '410007', category: 'goal', value: 'synthetic fact' })
+  );
+  let reads = 0;
+  const instrumented = {
+    ...repository,
+    async getProfile(userId) {
+      reads += 1;
+      return repository.getProfile(userId);
+    },
+    async listFacts(userId) {
+      reads += 1;
+      return repository.listFacts(userId);
+    },
+    async listHealthEvents(userId, limit) {
+      reads += 1;
+      return repository.listHealthEvents(userId, limit);
+    },
+    async getShortContext(userId) {
+      reads += 1;
+      return repository.getShortContext(userId);
+    },
+  };
+  const brain = createStorageBackedEliBrain({
+    repository: instrumented,
+    ownerUserId: '410007',
+    featureFlags: FLAGS_ON,
+    environment: {},
+  });
+  const result = await brain.prepare({
+    userId: '410007',
+    channel: 'text',
+    message: 'Как да продължа?',
+  });
+  assert.equal(reads, 0);
+  assert.equal(result.flags.durableMemory, false);
+  assert.equal(result.flags.durableReads, false);
+  assert.deepEqual(result.context.longTermFacts, []);
+});
+
+test('storage-backed brain does not read durable rows for a different Telegram user', async () => {
+  const repository = createInMemoryDurableMemoryRepository();
+  await repository.appendFact(
+    memoryFact({ telegramUserId: '410008', category: 'goal', value: 'synthetic fact' })
+  );
+  const access = {
+    ok: true,
+    projectRef: APPROVED_SUPABASE_PROJECT_REF,
+    contractVersion: DURABLE_MEMORY_CONTRACT_VERSION,
+    checkedAt: new Date().toISOString(),
+  };
+  const brain = createStorageBackedEliBrain({
+    repository,
+    ownerUserId: '410008',
+    backendAccess: access,
+    featureFlags: FLAGS_ON,
+    environment: {},
+  });
+  const result = await brain.prepare({
+    userId: '410009',
+    channel: 'text',
+    message: 'Как да продължа?',
+  });
+  assert.equal(result.flags.durableReads, false);
+  assert.deepEqual(result.context.longTermFacts, []);
 });
