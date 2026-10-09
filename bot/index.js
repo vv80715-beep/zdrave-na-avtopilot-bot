@@ -49,6 +49,9 @@ const { createAskEliAdapter } = require('./brain/askEliAdapter');
 const { getOwnerScopedEliV22Flags } = require('./brain/featureFlags');
 const { buildOwnerV22Context } = require('./brain/ownerV22Context');
 const { handleOwnerGoalMemory, formatOwnerStoredSummary } = require('./brain/ownerGoalMemory');
+const { getUniversalMemoryRuntime } = require('./brain/universal/runtime');
+const { clearShortContext } = require('./brain/shortContextSession');
+const universalMemory = getUniversalMemoryRuntime();
 
 const profileWizard = require('./scenes/profileWizard');
 const editWizard = require('./scenes/editWizard');
@@ -126,6 +129,9 @@ const SCENE_ENTRY_COMMANDS = [
 ];
 bot.use((ctx, next) => {
   const text = ctx.message?.text;
+  if (universalMemory.active(ctx.from?.id) && ctx.session?.__scenes?.current === 'memory-wizard') {
+    ctx.session.__scenes = {};
+  }
   if (text && ctx.session?.__scenes?.current) {
     const cmd = text.split(/[\s@]/)[0].toLowerCase();
     if (SCENE_ENTRY_COMMANDS.includes(cmd)) {
@@ -158,6 +164,9 @@ bot.command('checkin', (ctx) => ctx.scene.enter('checkin-wizard'));
 
 // /memory — edit long-term memory (owner identity is separate & permanent)
 bot.command('memory', (ctx) => {
+  if (universalMemory.active(ctx.from.id)) {
+    return ctx.reply('Лична памет: „Запомни, че …“, „Припомни …“, „Актуализирай …“, „Забрави …“. Всички факти: /showmemory. Изтриване на личната памет: /forget.');
+  }
   if (isOwner(ctx)) {
     return ctx.reply(
       'Твоята идентичност като собственик е постоянна и се управлява отделно. 👑\n\n' +
@@ -293,7 +302,8 @@ const eliV22Adapter = createAskEliAdapter();
 
 // opts.status: entitlement status from gateChat (computed if missing).
 async function askEli(ctx, question, opts = {}) {
-  if (!openai) {
+  const universalActive = universalMemory.active(ctx.from.id);
+  if (!openai && !universalActive) {
     await ctx.reply('OpenAI не е конфигуриран. Моля, провери настройките на бота.');
     return;
   }
@@ -325,7 +335,7 @@ async function askEli(ctx, question, opts = {}) {
   // Eli V2.2 integration is opt-in only. With the default flags OFF this
   // returns the legacy route and changes nothing in the production path.
   const v22Channel = avatarMode ? 'avatar' : voiceMode ? 'voice' : 'text';
-  const ownerV22Context = owner ? buildOwnerV22Context(ctx.from.id) : null;
+  const ownerV22Context = owner && !universalActive ? buildOwnerV22Context(ctx.from.id) : null;
   const v22 = eliV22Adapter.prepare({
     userId: ctx.from.id,
     channel: v22Channel,
@@ -352,7 +362,7 @@ async function askEli(ctx, question, opts = {}) {
 
   // Explicit owner-only goal memory actions: before daily health-log routing.
   // Never enabled for other users, and never activates passive owner capture.
-  if (owner) {
+  if (owner && !universalActive) {
     const ownerGoalReply = handleOwnerGoalMemory(ctx.from.id, question);
     if (ownerGoalReply !== null) {
       await deliverDeterministic(ownerGoalReply);
@@ -367,11 +377,30 @@ async function askEli(ctx, question, opts = {}) {
     return;
   }
 
+  // One personal source of truth for canaries, before every legacy handler.
+  // Health logs and the owner administrative identity remain separate.
+  if (universalActive) {
+    const result = await universalMemory.handle(ctx, question);
+    if (result.handled) {
+      if (result.status === 'verified') clearShortContext(ctx.from.id);
+      await deliverDeterministic(result.text);
+      return;
+    }
+    if (isProfileQuery(question)) {
+      await deliverDeterministic(await universalMemory.show(ctx));
+      return;
+    }
+    if (!openai) {
+      await deliverDeterministic('OpenAI не е конфигуриран. Не мога да извлека или използвам лични факти.');
+      return;
+    }
+  }
+
   // Explicit relationship-memory management ("забрави, че …", "промени целта ми
   // на …", "какви цели съм ти казвал"). Handled deterministically so Eli acts on
   // real stored data, never a hallucinated edit. Owner memory is a separate
   // identity, so this only runs for regular users.
-  if (!owner) {
+  if (!owner && !universalActive) {
     const memCmd = detectMemoryCommand(question);
     if (memCmd) {
       const reply = applyMemoryCommand(ctx.from.id, memCmd);
@@ -387,7 +416,7 @@ async function askEli(ctx, question, opts = {}) {
   // If the user explicitly asks what Eli knows about them ("Какво знаеш за
   // мен?", "Покажи ми профила", "What do you know about me?"), answer straight
   // from stored data — never let the model invent or paraphrase it.
-  if (isProfileQuery(question)) {
+  if (!universalActive && isProfileQuery(question)) {
     if (owner) {
       await deliverDeterministic(formatOwnerStoredSummary(ctx.from.id));
       return;
@@ -457,7 +486,7 @@ async function askEli(ctx, question, opts = {}) {
     systemContent = `${OWNER_MEMORY}\n\n${SYSTEM_PROMPT}`;
     // Recent turns from RAM only — the owner's on-disk memory stays untouched.
     priorMessages = ownerRecentTurns(ctx.from.id);
-  } else {
+  } else if (!universalActive) {
     // Passively capture durable personal context (goals, prefs, recurring
     // struggles …) from this message. The conservative classifier ignores
     // ordinary chatter and health reports, so nothing casual is stored.
@@ -473,6 +502,13 @@ async function askEli(ctx, question, opts = {}) {
     const relBlock = buildRelationshipContext(ctx.from.id, question);
     if (relBlock) systemContent = `${relBlock}\n\n${systemContent}`;
     priorMessages = recentMessages(ctx.from.id, 10);
+  }
+
+  if (universalActive) {
+    // Legacy conversation history may repeat deleted personal facts. Use only
+    // the fresh in-memory session plus the canonical verified context.
+    priorMessages = eliV22Adapter.getShortContext(ctx.from.id);
+    systemContent += await universalMemory.context(ctx, question);
   }
 
   // When explicitly enabled, V2.2 contributes read-only safety/context
@@ -539,12 +575,12 @@ async function askEli(ctx, question, opts = {}) {
     if (owner) {
       ownerRememberTurn(ctx.from.id, 'user', question);
       ownerRememberTurn(ctx.from.id, 'assistant', answer);
-    } else {
+    } else if (!universalActive) {
       addConversation(ctx.from.id, 'user', question);
       addConversation(ctx.from.id, 'assistant', answer);
     }
 
-    if (!v22.legacy) {
+    if (!v22.legacy || universalActive) {
       eliV22Adapter.rememberExchange(ctx.from.id, question, answer);
     }
 
@@ -741,3 +777,4 @@ async function start() {
 }
 
 start();
+

@@ -4,6 +4,7 @@ const openai = require('../openaiClient');
 const { addPlan } = require('../memoryStorage');
 const { isOwner } = require('../adminGuard');
 const { gateChat } = require('../chatGate');
+const { getUniversalMemoryRuntime } = require('../brain/universal/runtime');
 
 function buildPlanPrompt(profile) {
   return (
@@ -71,18 +72,25 @@ function register(bot) {
     // Entitlement gate: an expired trial gets the static message — no AI call.
     const status = await gateChat(ctx);
     if (!status) return;
+    const universal = getUniversalMemoryRuntime();
+    const canonical = universal.active(ctx.from.id);
 
     await ctx.sendChatAction('typing');
     await ctx.reply(
-      `Подготвям твоя личен 7-дневен план, ${profile.firstName}! Изчакай малко... 🌟`
+      canonical ? 'Подготвям твоя личен 7-дневен план! Изчакай малко... 🌟' : `Подготвям твоя личен 7-дневен план, ${profile.firstName}! Изчакай малко... 🌟`
     );
 
     try {
+      const canonicalContext = canonical ? await universal.context(ctx, '7-дневен план според личните цели, навици, хранителни и тренировъчни предпочитания') : '';
+      const healthMeasurements = Object.fromEntries(['age', 'height', 'weight'].map((key) => [key, Number.isFinite(profile[key]) ? profile[key] : null]));
+      const planRequest = canonical
+        ? 'Създай кратък персонализиран 7-дневен стартов план с навици, вода, сън, тренировки, хранене и мотивация. Здравни измервания (JSON данни): ' + JSON.stringify(healthMeasurements) + '. Ако липсва необходим личен факт, попитай, без да го измисляш.'
+        : buildPlanPrompt(profile);
       const completion = await openai.chat.completions.create({
         model: 'gpt-4o-mini',
         messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: buildPlanPrompt(profile) },
+          { role: 'system', content: SYSTEM_PROMPT + canonicalContext },
+          { role: 'user', content: planRequest },
         ],
         max_tokens: 2000,
       });
@@ -99,7 +107,7 @@ function register(bot) {
 
       // Remember that a plan was created (never for the owner).
       if (!isOwner(ctx)) {
-        addPlan(ctx.from.id, `7-дневен план за цел: ${profile.goal}`);
+        addPlan(ctx.from.id, canonical ? 'Създаден 7-дневен план' : `7-дневен план за цел: ${profile.goal}`);
       }
     } catch (err) {
       console.error('Plan generation error:', err.message);
@@ -111,3 +119,4 @@ function register(bot) {
 }
 
 module.exports = { register };
+

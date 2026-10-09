@@ -2,6 +2,7 @@ const { getUser } = require('./storage');
 const { getMemory, getWeightLog, addSentMotivation, getSentMotivations } = require('./memoryStorage');
 const { getHistory } = require('./checkinStorage');
 const { SYSTEM_PROMPT, stripLeadingGreeting } = require('./prompts');
+const { getUniversalMemoryRuntime } = require('./brain/universal/runtime');
 
 function avg(arr) {
   if (!arr.length) return 0;
@@ -68,10 +69,11 @@ function buildCoachingFacts(userId) {
   const memory = getMemory(userId);
   const weekly = computeWeekly(userId);
   const weight = computeWeightProgress(userId);
+  const personalLegacy = !getUniversalMemoryRuntime().active(userId);
 
   const lines = ['ДАННИ ЗА ПОТРЕБИТЕЛЯ:'];
 
-  if (profile) {
+  if (profile && personalLegacy) {
     if (profile.firstName) lines.push(`- Име: ${profile.firstName}`);
     if (profile.age != null) lines.push(`- Възраст: ${profile.age}`);
     if (profile.goal) lines.push(`- Цел: ${profile.goal}`);
@@ -80,12 +82,14 @@ function buildCoachingFacts(userId) {
   }
 
   if (memory) {
+    if (personalLegacy) {
     if (memory.injuries) lines.push(`- Травми: ${memory.injuries}`);
     if (memory.allergies) lines.push(`- Алергии: ${memory.allergies}`);
     if (memory.favoriteFoods) lines.push(`- Любими храни: ${memory.favoriteFoods}`);
     if (memory.dislikedFoods) lines.push(`- Нелюбими храни: ${memory.dislikedFoods}`);
     if (memory.dailyHabits) lines.push(`- Дневни навици: ${memory.dailyHabits}`);
     if (memory.motivationLevel != null) lines.push(`- Ниво на мотивация: ${memory.motivationLevel}/10`);
+    }
     if (memory.lastWorkout?.date) {
       lines.push(`- Последна тренировка: ${new Date(memory.lastWorkout.date).toLocaleDateString('bg-BG')}`);
     }
@@ -114,6 +118,15 @@ function buildCoachingFacts(userId) {
   }
 
   return { facts: lines.join('\n'), profile, weekly, weight };
+}
+
+async function factsForAI(userId, question) {
+  const data = buildCoachingFacts(userId);
+  const runtime = getUniversalMemoryRuntime();
+  if (runtime.active(userId)) {
+    data.facts += await runtime.context({ from: { id: userId }, chat: { type: 'private' } }, question);
+  }
+  return data;
 }
 
 async function callAI(openai, { system, user, maxTokens = 500, temperature = 0.85 }) {
@@ -170,7 +183,7 @@ async function generateUniqueMotivation(openai, userId, { system, user, persist 
 }
 
 async function generateCoach(openai, userId, { persist = true } = {}) {
-  const { facts } = buildCoachingFacts(userId);
+  const { facts } = await factsForAI(userId, 'Дневно коучинг послание за личните цели и навици');
   const system =
     `${SYSTEM_PROMPT}\n\n${facts}\n\n` +
     'Ти си личен коуч. Напиши кратко дневно коучинг послание (3–5 изречения): ' +
@@ -184,7 +197,7 @@ async function generateCoach(openai, userId, { persist = true } = {}) {
 }
 
 async function generateMotivate(openai, userId, { persist = true } = {}) {
-  const { facts } = buildCoachingFacts(userId);
+  const { facts } = await factsForAI(userId, 'Мотивация за личните цели и предпочитания');
   const system =
     `${SYSTEM_PROMPT}\n\n${facts}\n\n` +
     'Напиши едно уникално, свежо мотивационно послание (2–4 изречения), ' +
@@ -198,7 +211,7 @@ async function generateMotivate(openai, userId, { persist = true } = {}) {
 }
 
 async function generateNextStep(openai, userId) {
-  const { facts } = buildCoachingFacts(userId);
+  const { facts } = await factsForAI(userId, 'Една следваща стъпка за личните цели и навици');
   const system =
     `${SYSTEM_PROMPT}\n\n${facts}\n\n` +
     'Дай ТОЧНО ЕДНА малка, конкретна и изпълнима днес стъпка, съобразена с най-слабата област ' +
@@ -213,7 +226,7 @@ async function generateNextStep(openai, userId) {
 }
 
 async function generateWeeklyReview(openai, userId) {
-  const { facts, weekly } = buildCoachingFacts(userId);
+  const { facts, weekly } = await factsForAI(userId, 'Седмичен преглед на целите и здравния дневник');
   if (!weekly || weekly.count === 0) {
     return null; // caller handles the "no data" case
   }
@@ -241,3 +254,4 @@ module.exports = {
   generateNextStep,
   generateWeeklyReview,
 };
+
