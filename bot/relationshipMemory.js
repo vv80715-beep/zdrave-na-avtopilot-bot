@@ -261,10 +261,20 @@ function saveRelationshipMemory(userId, category, value) {
     const conflict = existing.find(
       (m) => m.category === category && LENGTH_PREFS.has(tidy(m.value))
     );
-    if (conflict) return store.updateMemory(userId, conflict.id, clean);
+    if (conflict) {
+      store.updateMemory(userId, conflict.id, clean);
+      return store.getUserMemories(userId).find(
+        (m) => m.id === conflict.id && m.category === category && normalize(m.value) === norm
+      ) || null;
+    }
   }
 
-  return store.addMemory(userId, category, clean);
+  const added = store.addMemory(userId, category, clean);
+  return store.getUserMemories(userId).find(
+    (m) =>
+      (added?.id && m.id === added.id) ||
+      (m.category === category && normalize(m.value) === norm)
+  ) || null;
 }
 
 function getRelationshipMemory(userId) {
@@ -274,11 +284,16 @@ function getRelationshipMemory(userId) {
 function updateRelationshipMemory(userId, memoryId, value) {
   const clean = tidy(value);
   if (!clean) return null;
-  return store.updateMemory(userId, memoryId, clean);
+  store.updateMemory(userId, memoryId, clean);
+  return store.getUserMemories(userId).find(
+    (m) => m.id === memoryId && normalize(m.value) === normalize(clean)
+  ) || null;
 }
 
 function deleteRelationshipMemory(userId, memoryId) {
-  return store.deleteMemory(userId, memoryId);
+  const deleted = store.deleteMemory(userId, memoryId);
+  if (!deleted) return false;
+  return !store.getUserMemories(userId).some((m) => m.id === memoryId);
 }
 
 // ── Relevance matching ──────────────────────────────────────────────────────
@@ -291,7 +306,7 @@ const TOPICS = {
   weight: /(тегло|килограм|кила|отслабв|отслабн|свал|напълн|качих кила)/,
   nutrition: /(храна|хранене|хапвам|ям|ядене|диета|калори|захар|протеин|въглехидрат)/,
   water: /(вода|хидрат)/,
-  workout: /(тренир|фитнес|движение|разходк|ходене|тичам|бягам|спорт|упражн|активност)/,
+  workout: /(тренир|фитнес|движение|разходк|ходене|тичам|бягам|спорт|упражн|активност|лост|калистен|собствено тегло|йога|танц|кросфит|пилат)/,
   motivation: /(мотивац|мотивир|отказ|воля|дисциплин|инат|стимул)/,
   stress: /(стрес|напрежение|тревог|притесн|нерв|претовар)/,
   mood: /(настроение|тъжен|тъга|щаст|радост|самочувствие|депрес|самота)/,
@@ -329,7 +344,28 @@ function rememberFromMessage(userId, message) {
   const result = classifyMessage(message);
   if (result.action === 'ignore') return { action: 'ignore', entry: null };
   const entry = saveRelationshipMemory(userId, result.category, result.value);
-  return { action: result.action, entry };
+  return entry
+    ? { action: result.action, entry }
+    : { action: 'error', entry: null };
+}
+
+function saveExplicitRelationshipMemory(userId, message) {
+  if (!isExplicitMemoryCue(message)) return { ok: false, reason: 'not_explicit' };
+  const result = classifyMessage(message);
+  if (result.action === 'ignore') return { ok: false, reason: 'unsupported' };
+
+  try {
+    const entry = saveRelationshipMemory(userId, result.category, result.value);
+    const persisted = getRelationshipMemory(userId).find(
+      (m) =>
+        m.category === result.category &&
+        normalize(m.value) === normalize(result.value)
+    );
+    if (!entry || !persisted) return { ok: false, reason: 'verification_failed' };
+    return { ok: true, category: persisted.category, value: persisted.value };
+  } catch {
+    return { ok: false, reason: 'storage_failed' };
+  }
 }
 
 // ── Prompt context ──────────────────────────────────────────────────────────
@@ -429,11 +465,26 @@ function detectMemoryCommand(message) {
     /(?:промени|смени|обнови|актуализирай|редактирай)\s+(.+?)\s+на\s+(.+)/
   );
   if (update) {
+    const target = update[1].trim();
     return {
       type: 'update',
-      target: update[1].trim(),
+      target,
       value: tidy(update[2]),
-      category: targetToCategory(update[1]),
+      category: targetToCategory(target),
+      topic: targetToTopic(target),
+    };
+  }
+
+  // Direct recall for preference questions. Keep this deterministic so the
+  // answer comes from the user's own stored facts, not a model guess.
+  if (
+    /как(?:ъв|ва|ви)\s+(?:вид\s+)?(?:трениров|спорт|упражнен).*(?:предпочит|харесв|обич)/.test(text) ||
+    /какво\s+предпочитам\s+да\s+тренирам/.test(text)
+  ) {
+    return {
+      type: 'recall',
+      category: 'personal_preferences',
+      topic: 'workout',
     };
   }
 
@@ -442,6 +493,9 @@ function detectMemoryCommand(message) {
   if (/какв(и|о)\s+(цел|цели)\s+.*(казвал|казах|споделял|са ми|имам|съм ти)/.test(text)) {
     return { type: 'recall', category: 'goals' };
   }
+  if (/какво\s+(?:помниш|си\s+запомнила)\s+за\s+мен/.test(text)) {
+    return { type: 'recall' };
+  }
   return null;
 }
 
@@ -449,9 +503,46 @@ function targetToCategory(target) {
   const t = normalize(target);
   if (/цел/.test(t)) return 'goals';
   if (/навик/.test(t)) return 'habits';
-  if (/предпочитан|отговор|тон/.test(t)) return 'communication_preferences';
+  if (/трениров|спорт|упражнен|лост|калистен|йога|фитнес/.test(t)) {
+    return 'personal_preferences';
+  }
+  if (/кратк|подробн|формал|официал|отговор|тон|обръщ/.test(t)) {
+    return 'communication_preferences';
+  }
+  if (/предпочитан/.test(t)) return 'personal_preferences';
   if (/мотивац/.test(t)) return 'motivation';
   return null;
+}
+
+function targetToTopic(target) {
+  const found = topicsOf(target);
+  return found.size === 1 ? [...found][0] : null;
+}
+
+function findMemoryCommandMatches(memories, target, category, explicitTopic = null) {
+  let candidates = memories.filter((m) => !category || m.category === category);
+  const topic = explicitTopic || targetToTopic(target);
+  if (topic) candidates = candidates.filter((m) => topicsOf(m.value).has(topic));
+  if (!candidates.length) return [];
+
+  const tokens = memoryTokens(target);
+  if (!tokens.length) return candidates.length === 1 ? candidates : [];
+  const scored = candidates
+    .map((memory) => {
+      const valueTokens = new Set(memoryTokens(memory.value));
+      const tokenScore = tokens.reduce(
+        (score, token) => score + Number(valueTokens.has(token)),
+        0
+      );
+      const topicScore = topic && topicsOf(memory.value).has(topic) ? 1 : 0;
+      return { memory, score: tokenScore + topicScore };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  if (!scored.length) return candidates.length === 1 ? candidates : [];
+  const best = scored[0].score;
+  return scored.filter((item) => item.score === best).map((item) => item.memory);
 }
 
 // Executes a detected command and returns a warm Bulgarian reply (Markdown).
@@ -459,42 +550,64 @@ function applyMemoryCommand(userId, cmd) {
   if (!cmd) return null;
 
   if (cmd.type === 'recall') {
-    const memories = store
-      .getUserMemories(userId)
-      .filter((m) => !cmd.category || m.category === cmd.category);
-    if (!memories.length) {
-      return cmd.category === 'goals'
-        ? 'Още не си ми казвал конкретна цел. Каква искаш да си поставим? 😊'
-        : formatRelationshipMemory(userId);
+    try {
+      const allMemories = getRelationshipMemory(userId);
+      const memories = allMemories.filter(
+        (m) =>
+          (!cmd.category || m.category === cmd.category) &&
+          (!cmd.topic || topicsOf(m.value).has(cmd.topic))
+      );
+      if (!memories.length) {
+        if (cmd.category === 'goals') {
+          return 'Още не си ми казвал конкретна цел. Каква искаш да си поставим? 😊';
+        }
+        if (cmd.topic === 'workout') {
+          return 'Не открих запазено предпочитание за тренировки. Ако искаш, кажи ми какво предпочиташ и изрично ме помоли да го запомня. 😊';
+        }
+        return formatRelationshipMemory(userId);
+      }
+      const label = CATEGORY_LABELS[cmd.category] || 'Ето какво помня';
+      const list = memories.map((m) => `• ${m.value}`).join('\n');
+      return `${label}, които си споделял с мен:\n${list}`;
+    } catch {
+      return 'Не успях да проверя паметта ти, затова няма да гадая. Опитай отново след малко.';
     }
-    const label = CATEGORY_LABELS[cmd.category] || 'Ето какво помня';
-    const list = memories.map((m) => `• ${m.value}`).join('\n');
-    return `${label}, които си споделял с мен:\n${list}`;
   }
 
   if (cmd.type === 'forget') {
-    if (cmd.all) {
-      const existed = store.deleteAllForUser(userId);
-      return existed
-        ? 'Готово — изчистих всичко, което помнех за теб. Започваме на чисто. 💚'
-        : 'Нямаше какво да изтрия — още не съм запомнила нищо за теб. 😊';
+    try {
+      const before = getRelationshipMemory(userId);
+      if (cmd.all) {
+        if (!before.length) {
+          return 'Нямаше какво да изтрия — още не съм запомнила нищо за теб. 😊';
+        }
+        store.deleteAllForUser(userId);
+        if (getRelationshipMemory(userId).length) {
+          return 'Не успях да потвърдя изтриването, затова няма да твърдя, че паметта е изчистена. Опитай отново.';
+        }
+        return 'Готово — изчистих всичко, което помнех за теб. Започваме на чисто. 💚';
+      }
+
+      const toDelete = findMemoryCommandMatches(
+        before,
+        cmd.target,
+        cmd.category || null,
+        cmd.topic || null
+      );
+      if (!toDelete.length) {
+        return 'Не открих еднозначно такава памет, така че не изтрих нищо. Можеш да уточниш конкретния факт. 😊';
+      }
+      if (toDelete.length > 1) {
+        return 'Намерих няколко сходни записа и не искам да изтрия грешния. Уточни кой точно да забравя.';
+      }
+      const deleted = deleteRelationshipMemory(userId, toDelete[0].id);
+      if (!deleted || getRelationshipMemory(userId).some((m) => m.id === toDelete[0].id)) {
+        return 'Не успях да потвърдя изтриването, затова няма да твърдя, че съм го забравила. Опитай отново.';
+      }
+      return `Забравено. Вече няма да помня „${toDelete[0].value}“. 💚`;
+    } catch {
+      return 'Не успях да проверя или променя паметта ти, затова няма да твърдя, че е изтрита. Опитай отново.';
     }
-    const memories = store.getUserMemories(userId);
-    const targetTopics = topicsOf(cmd.target);
-    const targetNorm = normalize(cmd.target);
-    const toDelete = memories.filter((m) => {
-      const mv = normalize(m.value);
-      if (targetNorm && (mv.includes(targetNorm) || targetNorm.includes(mv))) return true;
-      const shared = [...topicsOf(m.value)].filter((t) => targetTopics.has(t));
-      return shared.length > 0;
-    });
-    if (!toDelete.length) {
-      return 'Не открих такова нещо в паметта си, така че няма какво да забравя. 😊';
-    }
-    for (const m of toDelete) store.deleteMemory(userId, m.id);
-    return toDelete.length === 1
-      ? `Забравено. Вече няма да помня „${toDelete[0].value}“. 💚`
-      : `Готово — забравих ${toDelete.length} неща, свързани с това. 💚`;
   }
 
   if (cmd.type === 'update') {
@@ -502,16 +615,36 @@ function applyMemoryCommand(userId, cmd) {
     if (!category) {
       return 'Кажи ми точно какво да променя — например „промени целта ми на …“. 😊';
     }
-    const memories = store
-      .getUserMemories(userId)
-      .filter((m) => m.category === category);
-    if (memories.length) {
-      const latest = memories[memories.length - 1];
-      updateRelationshipMemory(userId, latest.id, cmd.value);
-    } else {
-      saveRelationshipMemory(userId, category, cmd.value);
+    try {
+      const memories = getRelationshipMemory(userId);
+      const matches = findMemoryCommandMatches(
+        memories,
+        cmd.target,
+        category,
+        cmd.topic || null
+      );
+      if (!matches.length) {
+        return 'Не открих еднозначно записа, който искаш да променя. Не създадох нова памет; уточни кой факт имаш предвид.';
+      }
+      if (matches.length > 1) {
+        return 'Намерих няколко сходни записа и не искам да променя грешния. Уточни кой точно имаш предвид.';
+      }
+
+      let value = cmd.value;
+      if (cmd.topic === 'workout' && !/^предпочитан вид тренировка:/i.test(value)) {
+        value = `Предпочитан вид тренировка: ${value}`;
+      }
+      const updated = updateRelationshipMemory(userId, matches[0].id, value);
+      const verified = getRelationshipMemory(userId).some(
+        (m) => m.id === matches[0].id && normalize(m.value) === normalize(value)
+      );
+      if (!updated || !verified) {
+        return 'Не успях да потвърдя промяната в паметта ти, затова няма да твърдя, че е направена. Опитай отново.';
+      }
+      return `Готово — актуализирах записа и проверих, че е запазен като „${value}“. 💚`;
+    } catch {
+      return 'Не успях да проверя или променя паметта ти, затова няма да твърдя, че е актуализирана. Опитай отново.';
     }
-    return `Готово — вече помня, че „${cmd.value}“. 💚`;
   }
 
   return null;
@@ -527,10 +660,12 @@ module.exports = {
   classifyMessage,
   // integration helpers
   rememberFromMessage,
+  saveExplicitRelationshipMemory,
   buildRelationshipContext,
   formatRelationshipMemory,
   detectMemoryCommand,
   applyMemoryCommand,
+  isExplicitMemoryCue,
   // constants (handy for tests / reuse)
   CATEGORY_LABELS,
   CONFIDENCE_THRESHOLD,
