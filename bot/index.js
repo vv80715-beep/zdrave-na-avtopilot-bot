@@ -17,6 +17,8 @@ const {
   formatRelationshipMemory,
   detectMemoryCommand,
   applyMemoryCommand,
+  isExplicitMemoryCue,
+  saveExplicitRelationshipMemory,
 } = require('./relationshipMemory');
 const { replyWithMarkdownSafe } = require('./replyUtils');
 const { parseCommandText } = require('./commandGuard');
@@ -445,6 +447,31 @@ async function askEli(ctx, question, opts = {}) {
     return;
   }
 
+  // General explicit memory requests use the conservative relationship-memory
+  // classifier. A success reply is sent only after the stored value is read
+  // back and verified.
+  if (
+    isExplicitMemoryCue(question) &&
+    !explicitPreferenceCommand &&
+    !ownerFitnessCommand
+  ) {
+    const result = saveExplicitRelationshipMemory(ctx.from.id, question);
+    if (result.ok) {
+      await deliverDeterministic(
+        'Запазих и проверих тази информация в личната ти памет.'
+      );
+    } else if (result.reason === 'unsupported') {
+      await deliverDeterministic(
+        'Не успях да запазя това безопасно и проверимо. Мога да помня ясно формулирани цели, навици и предпочитания; здравни отчети остават в отделния дневник.'
+      );
+    } else {
+      await deliverDeterministic(
+        'Не успях да потвърдя запис в личната ти памет, затова няма да твърдя, че е запазен. Опитай с конкретна цел, навик или предпочитание.'
+      );
+    }
+    return;
+  }
+
   // Urgent V2.2 safety routing is deterministic and never reaches OpenAI.
   // This path is unreachable while the V2.2 flag remains disabled.
   if (!v22.legacy && v22.safety?.level === 'urgent' && v22.safety.responseText) {
@@ -452,20 +479,17 @@ async function askEli(ctx, question, opts = {}) {
     return;
   }
 
-  // Explicit relationship-memory management ("забрави, че …", "промени целта ми
-  // на …", "какви цели съм ти казвал"). Handled deterministically so Eli acts on
-  // real stored data, never a hallucinated edit. Owner memory is a separate
-  // identity, so this only runs for regular users.
-  if (!owner) {
-    const memCmd = detectMemoryCommand(question);
-    if (memCmd) {
-      const reply = applyMemoryCommand(ctx.from.id, memCmd);
-      if (reply) {
-        await deliverDeterministic(reply);
-        addConversation(ctx.from.id, 'user', question);
-        addConversation(ctx.from.id, 'assistant', 'Обработих заявка към отношенската памет.');
-        return;
-      }
+  // Memory operations are always scoped to ctx.from.id, including the owner.
+  // Keep them deterministic so edits, recalls and forget requests act only on
+  // verified records instead of a model guess.
+  const memCmd = detectMemoryCommand(question);
+  if (memCmd) {
+    const reply = applyMemoryCommand(ctx.from.id, memCmd);
+    if (reply) {
+      await deliverDeterministic(reply);
+      addConversation(ctx.from.id, 'user', question);
+      addConversation(ctx.from.id, 'assistant', 'Обработих заявка към отношенската памет.');
+      return;
     }
   }
 
