@@ -20,6 +20,9 @@ function cleanText(value, maxLength = 240) {
 }
 
 function factTopic(fact) {
+  if (Object.prototype.hasOwnProperty.call(TOPIC_PATTERNS, fact?.key)) {
+    return fact.key;
+  }
   const text = `${fact?.category || ''} ${fact?.key || ''} ${fact?.value || ''}`;
   for (const [topic, pattern] of Object.entries(TOPIC_PATTERNS)) {
     if (pattern.test(text)) return topic;

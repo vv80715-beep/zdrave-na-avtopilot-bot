@@ -17,7 +17,9 @@ function createInMemoryDurableMemoryRepository() {
       return structuredClone(record);
     },
     async listFacts(userId) {
-      return structuredClone(facts.get(key(userId)) || []);
+      return structuredClone(
+        (facts.get(key(userId)) || []).filter((fact) => fact.status === 'active')
+      );
     },
     async appendFact(record) {
       const k = key(record.telegramUserId);
