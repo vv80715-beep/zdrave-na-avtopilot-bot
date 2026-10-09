@@ -493,9 +493,6 @@ function detectMemoryCommand(message) {
   if (/какв(и|о)\s+(цел|цели)\s+.*(казвал|казах|споделял|са ми|имам|съм ти)/.test(text)) {
     return { type: 'recall', category: 'goals' };
   }
-  if (/какво\s+(?:помниш|си\s+запомнила)\s+за\s+мен/.test(text)) {
-    return { type: 'recall' };
-  }
   return null;
 }
 
