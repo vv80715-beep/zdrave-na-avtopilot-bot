@@ -30,6 +30,11 @@ const {
   detectMemoryCommand,
   applyMemoryCommand,
 } = require('../relationshipMemory');
+const relationshipStore = require('../relationshipMemoryStorage');
+const {
+  detectExplicitPreferenceCommand,
+  saveExplicitPreference,
+} = require('../explicitPreferenceMemory');
 
 const USER_A = 111111;
 const USER_B = 222222;
@@ -216,6 +221,38 @@ test('recall command lists stored goals', () => {
   assert.match(reply, /мускулна маса/i);
 });
 
+test('explicit workout preference is verified and recalled by a natural question', () => {
+  const message = 'Запомни, че предпочитам да тренирам на лостове.';
+  const command = detectExplicitPreferenceCommand(message);
+  assert.equal(command.kind, 'save_preference');
+  assert.equal(command.domain, 'workout');
+
+  const saved = saveExplicitPreference(USER_A, command);
+  assert.equal(saved.ok, true);
+
+  const recall = detectMemoryCommand('Какъв вид тренировки предпочитам?');
+  assert.equal(recall.type, 'recall');
+  assert.equal(recall.category, 'personal_preferences');
+  assert.equal(recall.topic, 'workout');
+  assert.match(applyMemoryCommand(USER_A, recall), /лостове/i);
+});
+
+test('explicit preference save fails closed when read-after-write finds no row', () => {
+  const command = detectExplicitPreferenceCommand(
+    'Запомни, че предпочитам да тренирам на лостове.'
+  );
+  const originalAddMemory = relationshipStore.addMemory;
+  try {
+    relationshipStore.addMemory = () => ({ id: 'fixture-not-persisted' });
+    const result = saveExplicitPreference(USER_A, command);
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'verification_failed');
+    assert.equal(getRelationshipMemory(USER_A).length, 0);
+  } finally {
+    relationshipStore.addMemory = originalAddMemory;
+  }
+});
+
 test('forget command deletes the matching memory', () => {
   rememberFromMessage(USER_A, 'Предпочитам да ми отговаряш кратко.');
   assert.equal(getRelationshipMemory(USER_A).length, 1);
@@ -239,6 +276,37 @@ test('update command replaces the goal', () => {
   const goals = getRelationshipMemory(USER_A).filter((m) => m.category === 'goals');
   assert.equal(goals.length, 1);
   assert.match(goals[0].value, /мускулна маса/i);
+});
+
+test('failed update and forget writes do not return success acknowledgments', () => {
+  const goal = saveRelationshipMemory(USER_A, 'goals', 'Искам да подобря съня си');
+  const originalUpdateMemory = relationshipStore.updateMemory;
+  try {
+    relationshipStore.updateMemory = () => null;
+    const updateReply = applyMemoryCommand(
+      USER_A,
+      detectMemoryCommand('Промени целта ми на покачване на мускулна маса.')
+    );
+    assert.match(updateReply, /няма да твърдя/i);
+    assert.equal(getRelationshipMemory(USER_A)[0].id, goal.id);
+    assert.match(getRelationshipMemory(USER_A)[0].value, /съня/i);
+  } finally {
+    relationshipStore.updateMemory = originalUpdateMemory;
+  }
+
+  rememberFromMessage(USER_A, 'Предпочитам да ми отговаряш кратко.');
+  const originalDeleteMemory = relationshipStore.deleteMemory;
+  try {
+    relationshipStore.deleteMemory = () => false;
+    const forgetReply = applyMemoryCommand(
+      USER_A,
+      detectMemoryCommand('Забрави, че предпочитам кратки отговори.')
+    );
+    assert.match(forgetReply, /няма да твърдя/i);
+    assert.equal(getRelationshipMemory(USER_A).length, 2);
+  } finally {
+    relationshipStore.deleteMemory = originalDeleteMemory;
+  }
 });
 
 // ── Natural, non-robotic use in conversation ────────────────────────────────
