@@ -303,6 +303,7 @@ const eliV22Adapter = createAskEliAdapter();
 // opts.status: entitlement status from gateChat (computed if missing).
 async function askEli(ctx, question, opts = {}) {
   const universalActive = universalMemory.active(ctx.from.id);
+  const universalPrivate = universalActive && ctx.chat?.type === 'private';
   if (!openai && !universalActive) {
     await ctx.reply('OpenAI не е конфигуриран. Моля, провери настройките на бота.');
     return;
@@ -342,7 +343,7 @@ async function askEli(ctx, question, opts = {}) {
     message: question,
     conversationState,
     ...(ownerV22Context || {}),
-    featureFlags: getOwnerScopedEliV22Flags(owner),
+    featureFlags: getOwnerScopedEliV22Flags(owner && (!universalActive || universalPrivate)),
   });
 
   // Deterministic answers (log queries, profile dumps, memory commands) follow
@@ -507,7 +508,8 @@ async function askEli(ctx, question, opts = {}) {
   if (universalActive) {
     // Legacy conversation history may repeat deleted personal facts. Use only
     // the fresh in-memory session plus the canonical verified context.
-    priorMessages = eliV22Adapter.getShortContext(ctx.from.id);
+    priorMessages = universalPrivate ? eliV22Adapter.getShortContext(ctx.from.id) : [];
+    if (!universalPrivate) systemContent = SYSTEM_PROMPT;
     systemContent += await universalMemory.context(ctx, question);
   }
 
@@ -572,7 +574,7 @@ async function askEli(ctx, question, opts = {}) {
     // Persist the exchange to the user's long-term memory (never the owner's)
     // BEFORE delivery — memory survives even if delivery fails. The owner's
     // turns go to the in-RAM session buffer instead (context without disk).
-    if (owner) {
+    if (owner && (!universalActive || universalPrivate)) {
       ownerRememberTurn(ctx.from.id, 'user', question);
       ownerRememberTurn(ctx.from.id, 'assistant', answer);
     } else if (!universalActive) {
@@ -580,7 +582,7 @@ async function askEli(ctx, question, opts = {}) {
       addConversation(ctx.from.id, 'assistant', answer);
     }
 
-    if (!v22.legacy || universalActive) {
+    if ((!v22.legacy || universalActive) && (!universalActive || universalPrivate)) {
       eliV22Adapter.rememberExchange(ctx.from.id, question, answer);
     }
 

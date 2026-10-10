@@ -33,14 +33,17 @@ test('LIVE OpenAI: generic topics, semantic recall, correction, injection and di
     ['предпочитам да тренирам на лостове', 'лостове'], ['професията ми е библиотекар', 'библиотекар'],
     ['работният ми график е от 10 до 18 часа', '10'], ['хобито ми е оригами', 'оригами'],
     ['целта ми е да науча японски', 'японски'], ['наричам домашния си телескоп Северна искра', 'Северна искра'],
+    ['предпочитам да общувам на български', 'български', 'Моля те, запомни, че'],
   ];
-  for (const [fact] of inputs) {
-    const result = await service.handle({ user, message: `Запомни в дългосрочната си памет, че ${fact}. Потвърди само след успешен запис.` });
+  for (const [fact, expected, prefix = 'Запомни в дългосрочната си памет, че'] of inputs) {
+    const result = await service.handle({ user, message: `${prefix} ${fact}. Потвърди само след успешен запис.` });
     assert.equal(result.status, 'verified');
+    assert.ok((await repository.read(user)).state.facts.some((f) => f.value.includes(expected)), 'the requested value must be present in actual readback');
   }
   assert.equal((await service.handle({ user, message: 'Запомни, че най-много харесвам зеленото' })).status, 'verified');
   assert.equal((await repository.read(user)).state.facts.length, inputs.length);
   const restarted = createMemoryService({ repository: createFileRepository({ directory, cipher }), semantic });
+  assert.equal((await restarted.handle({ user, message: 'Какво помниш за мен?' })).status, 'read');
   const recall = await restarted.handle({ user, message: 'Припомни ми името на уреда, с който гледам звездите' });
   assert.ok(recall.text.includes('Северна искра'));
   assert.equal((await restarted.handle({ user, message: 'Запомни, че любимият ми цвят вече е син' })).status, 'conflict');

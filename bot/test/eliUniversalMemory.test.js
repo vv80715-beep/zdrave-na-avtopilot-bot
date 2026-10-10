@@ -4,8 +4,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
-const { MemoryError, intent, hash } = require('../brain/universal/contracts');
+const { MemoryError, intent, hash, emptyState } = require('../brain/universal/contracts');
 const { createMemoryService } = require('../brain/universal/service');
 const { createFileRepository, createSupabaseRepository } = require('../brain/universal/repositories');
 const { createSemanticEngine } = require('../brain/universal/semantic');
@@ -48,6 +49,8 @@ test('reproduces old category restriction before verifying replacement', async (
 
 test('Cyrillic intents and explicit clear do not depend on ASCII word boundaries', () => {
   assert.equal(intent('Ели, Запомни, че фактът е нов'), 'remember');
+  assert.equal(intent('Ели, моля те, запомни, че фактът е нов'), 'remember');
+  assert.equal(intent('Please remember my new fact'), 'remember');
   assert.equal(intent('Актуализирай: нова стойност'), 'update');
   assert.equal(intent('Забрави само цвета'), 'delete');
   assert.equal(intent('Изтрий цялата памет за мен'), 'clear');
@@ -115,6 +118,29 @@ test('selection-only schema cannot extract writes during recall, context or dele
   assert.equal((await r.repository.read(USER_A)).state.facts.length, 0);
 });
 
+test('provider schemas constrain identities to the current sender and pair new facts with null', async (t) => {
+  const r = await rig(t, ({ operation, message, facts }) => operation === 'remember'
+    ? answer({ topic: message, evidence: message.slice(9) })
+    : answer({ selectedIds: facts.map((f) => f.id) }));
+  await r.service.handle({ user: USER_A, message: 'Запомни: собствен факт A' });
+  const initial = r.openai.calls[0].response_format.json_schema.schema;
+  assert.deepEqual(initial.properties.facts.items.properties.existingId.enum, [null]);
+  assert.deepEqual(initial.properties.facts.items.properties.relation.enum, ['new']);
+  assert.equal(initial.properties.selectedIds.maxItems, 0);
+  await r.service.handle({ user: USER_B, message: 'Запомни: собствен факт B' });
+  const foreign = (await r.repository.read(USER_B)).state.facts[0].id;
+  const own = (await r.repository.read(USER_A)).state.facts[0].id;
+  await r.service.handle({ user: USER_A, message: 'Запомни: независим факт C' });
+  const write = r.openai.calls.at(-1).response_format.json_schema.schema;
+  assert.deepEqual(write.properties.facts.items.anyOf[1].properties.existingId.enum, [own]);
+  assert.deepEqual(write.properties.facts.items.anyOf[1].properties.relation.enum, ['same', 'changed']);
+  assert.doesNotMatch(JSON.stringify(write), new RegExp(foreign));
+  await r.service.handle({ user: USER_A, message: 'Припомни ми собствените факти по тема' });
+  const selected = r.openai.calls.at(-1).response_format.json_schema.schema.properties.selectedIds;
+  assert.deepEqual(selected.items.enum, (await r.repository.read(USER_A)).state.facts.map((f) => f.id));
+  assert.doesNotMatch(JSON.stringify(selected), new RegExp(foreign));
+});
+
 test('specific deletion, idempotency and clear survive reload without legacy resurrection', async (t) => {
   let imports = 0;
   const r = await rig(t, ({ operation, message, facts }) => ['recall', 'delete'].includes(operation) ? answer({ selectedIds: operation === 'delete' ? [facts[0].id] : facts.map((f) => f.id) }) : answer({ topic: message, evidence: message.slice(9) }), { importUser: async () => { imports++; return []; } });
@@ -144,10 +170,32 @@ test('trusted sender isolation: no model-generated ID can select another user', 
   const r = await rig(t, ({ operation, message }) => operation === 'recall' ? answer({ selectedIds: [stolen] }) : answer({ topic: 'личен факт', evidence: message.slice(9) }));
   await r.service.handle({ user: USER_A, message: 'Запомни: собствен факт A' });
   stolen = (await r.repository.read(USER_A)).state.facts[0].id;
-  const b = await r.service.handle({ user: USER_B, message: 'Припомни ми всичко' });
+  const b = await r.service.handle({ user: USER_B, message: 'Припомни ми личния факт' });
   assert.equal(b.status, 'failed'); assert.doesNotMatch(b.text, /собствен факт A/);
   assert.equal((await r.repository.read(USER_B)).state.facts.length, 0);
   assert.equal((await r.service.handle({ user: '../../other', message: 'Изтрий цялата памет за мен' })).status, 'failed');
+});
+
+test('empty canonical AI context still forbids unverified persistence claims', async (t) => {
+  const r = await rig(t, () => { throw new Error('empty memory needs no selection request'); });
+  const context = await r.service.context(USER_A, 'Можеш ли да помниш нов личен факт?');
+  assert.match(context, /Няма проверени релевантни лични факти/);
+  assert.match(context, /Не твърди, че си записала/);
+  assert.equal(r.openai.calls.length, 0);
+});
+
+test('broad recall reads a full bounded canonical state without model truncation or disclosure to another sender', async (t) => {
+  const r = await rig(t, () => { throw new Error('broad recall must not upload the full state'); });
+  const state = emptyState(); const stamp = new Date().toISOString();
+  for (let i = 0; i < 200; i++) state.facts.push({ id: crypto.randomUUID(), topic: 'синтетичен етикет', value: `Синтетичен собствен факт ${i} със запазена проверена стойност`, sensitive: false, createdAt: stamp, updatedAt: stamp });
+  await r.repository.compareAndSwap(USER_A, 0, state);
+  const recall = await r.service.handle({ user: USER_A, message: 'Какво помниш за мен?' });
+  assert.equal(recall.status, 'read'); assert.match(recall.text, /Синтетичен собствен факт 0/);
+  assert.match(recall.text, /Още \d+ факта/); assert.ok(recall.text.length < 4096);
+  const other = await r.service.handle({ user: USER_B, message: 'Моля, покажи ми паметта' });
+  assert.equal(other.status, 'read'); assert.doesNotMatch(other.text, /Синтетичен собствен факт/);
+  assert.equal((await r.repository.read(USER_A)).state.facts.length, 200);
+  assert.equal(r.openai.calls.length, 0);
 });
 
 test('write and readback failures never confirm success or fall back to legacy', async (t) => {

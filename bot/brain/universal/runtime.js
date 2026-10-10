@@ -50,7 +50,8 @@ function createRuntime({ environment = process.env, openai, diagnostic = (event)
       try { return await (await service()).show(ctx.from.id); } catch { return UNAVAILABLE; }
     },
     async context(ctx, message) {
-      if (!active(ctx.from?.id) || !isPrivate(ctx)) return '';
+      if (!active(ctx.from?.id)) return '';
+      if (!isPrivate(ctx)) return '\nТова е групов разговор. Не използвай лична памет или частни разговори. Не твърди, че знаеш, записваш, променяш или изтриваш лични факти. Насочи управлението на паметта към личния чат.';
       try { return await (await service()).context(ctx.from.id, message); }
       catch { return '\nПостоянната памет е недостъпна. Не твърди, че познаваш, записваш или изтриваш запазени лични факти.'; }
     },

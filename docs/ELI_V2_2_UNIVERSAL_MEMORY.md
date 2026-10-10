@@ -1,114 +1,71 @@
-# Eli V2.2 universal personal memory — staged GitHub implementation
+# Eli V2.2 universal personal memory
 
-Status: code and synthetic regression tests are ready for review. This is **not an activated production deployment**. Real-model extraction, PostgREST access, current Replit reconciliation, production backup and Telegram rollout remain release gates.
+Status on 2026-10-10: **staged source; production activation is blocked**. The newer Replit source must be preserved and reconciled with this patch. Runtime Supabase credentials, the universal encryption secret, compatible legacy reconciliation, real PostgREST checks and Telegram rollout are not yet verified.
 
-## Reproduced cause and source boundary
+## Proven causes and source boundary
 
-The latest available V2.2 GitHub base is `cd1d96f31e2bfbb333e50307f9d8460b410c82ad` on `fix/eli-v22-owner-memory-github-20261008`. `main` is older. The previously inspected Replit HEAD, `c6793593dd7f837a9bd9de5b3b381560435d2fcd`, is not available in GitHub. This patch must be reconciled with that newer runtime code before deployment; it must never replace the Replit project with this GitHub snapshot.
+GitHub base `cd1d96f31e2bfbb333e50307f9d8460b410c82ad` contains fitness-oriented relationship/candidate handlers. Automated tests reproduce their refusal of the favorite-color request before persistence. The fresh Replit audit found a newer, unpublished HEAD, `c0f2341b1e4a08d5bf8c585940f5d11dd42c23cf`: its explicit-preference handler also misses the color wording and falls through to the restricted relationship classifier. This is an extraction/routing restriction, not evidence of a Supabase outage. Never replace the newer Replit checkout with this GitHub snapshot.
 
-`eliUniversalMemory.test.js` reproduces the favorite-color request against the unmodified legacy implementations:
+Controlled tests with the actual `gpt-4o-mini` model exposed two further generic faults in the first patch: broad topic labels merged independent facts, and recall/deletion generated unwanted write proposals. Commit `2553728` removes topic-only identity matching and separates selection from write schemas. Its final controlled run passed 15/15, but other runs failed and therefore did not establish release readiness.
 
-| Stage | GitHub base behavior |
-| --- | --- |
-| `relationshipMemory.classifyMessage` | Fitness/health-oriented lexical rules return `ignore` for favorite color. |
-| `brain/memoryCandidate.extractMemoryCandidate` | Selected profile paths and health-related patterns return `ignore`, with no persistence. |
-| `brain/ownerGoalMemory` | Owner-only fitness-goal handler; arbitrary personal facts are outside its scope. |
-| Existing durable repository | In-memory foundation, not a verified production Supabase writer. |
-| JSON loaders | Separate sources; malformed JSON may be treated as empty by legacy loaders. |
+Follow-up diagnosis reproduced `existing_id_not_in_scope`: the model invented or altered an existing UUID. Three of five controlled examples were rejected, and another full run failed after one such rejection. The current correction constrains provider schemas to this sender's actual IDs, distinguishes new/null from existing/same-or-changed records, and retains server-side membership validation. A repeated real-model check of the exact corrected source remains mandatory. Rejection is never converted into success or retried with a relaxed identity check.
 
-The earlier read-only runtime audit also identified a restricted explicit-preference handler in the newer Replit code, but that handler is absent from this GitHub base. Consequently the automated reproduction proves the GitHub restriction; it does not substitute for a current runtime test of the unpublished handler. The owner durable-memory flags were off in that earlier audit. Their present runtime values were not rechecked after access to Replit was prohibited.
+## One logical source of truth
 
-Read-only Supabase inspection on 2026-10-09 confirmed PostgreSQL 17.6, an existing server `service_role` with BYPASSRLS, no `public.eli_memory_state`, and no memory Edge Function. No table, function, payment record, user record or deployment was changed during that inspection. Database connectivity through the management connector does not prove connectivity from the bot runtime.
+For exact canary senders, trusted Telegram sender identity selects one canonical encrypted state. Generic operation detection handles remembering, recall, update, deletion and explicit clear without enumerating fact categories. Polite command prefixes are supported. Ordinary facts of arbitrary topics are extracted with literal evidence; health reports remain in separate journals. Sensitive facts require fresh explicit consent from the same sender, tied to the unchanged revision and expiring after five minutes. Pending consent is RAM-only. Unsafe instructions, credentials and third-party private data are rejected.
 
-## Generic path and source of truth
+Facts have stable UUIDs and timestamps. Semantic identity uses an existing ID, with an exact topic-and-value duplicate fallback; a broad topic label is only a display label. Multiple hobbies or plans can coexist. Contradictory values require an explicit update. Bounded idempotency receipts contain hashes, not incoming message text. Compare-and-swap prevents concurrent silent overwrites. Success is confirmed only after a fresh read matches the full expected state and revision.
 
-For explicitly selected canary senders:
+Canary routing precedes legacy personal memory handlers and disables their passive personal capture, profile dumps and memory wizard. Show, forget, coaching and plans use the same canonical personal context. Legacy personal JSON is retained; journals, generated plans and administrative owner identity remain separate. Administrative commands cannot expose another sender's canonical private facts. Missing model, database, encryption or migration configuration fails closed, with no alternative unverified writer.
 
-1. Trusted `ctx.from.id` determines the sender. Model output never determines an identity. Private memory cannot be displayed or mutated in groups.
-2. Operation detection recognizes remember/update/delete/clear/recall commands without enumerating fact categories.
-3. `gpt-4o-mini` extracts a strict structured write result: arbitrary semantic topic, literal evidence, existing fact ID, and semantic relation. Recall, deletion and context use a separate selection-only schema with no fact-proposal field. Safety classification separates ordinary facts, sensitive facts, daily reports, unsafe input and unclear input.
-4. Validation rejects invented evidence, foreign fact IDs, secrets and instructions. Identity is the selected existing ID, with a fallback only for an exact topic-and-value duplicate. Broad topic labels do not merge unrelated facts; multiple facts may share a label. Paraphrases can retain an existing fact; conflicting values require an explicit update.
-5. One per-sender state holds stable UUIDs, timestamps, consent metadata and bounded idempotency receipts. No raw incoming message is stored as a receipt.
-6. AES-256-GCM encrypts the state, bound to the sender and revision. PostgreSQL compare-and-swap prevents silent concurrent overwrites.
-7. A fresh read must match the expected revision and entire state before success is confirmed. Database/model/refusal/integrity failures consume the command and return an honest failure, without writing elsewhere.
-8. Future conversations select relevant IDs semantically from that sender's verified records. Facts are JSON data with explicit instructions against executing their contents.
+Normal canary private chats use a bounded RAM session instead of writing personal exchanges to legacy conversation files. Verified mutations clear that session. Group AI requests omit private canonical facts, owner memory and private session history; group exchanges never enter the private session. Even an empty or irrelevant memory context includes instructions against false claims of persistence. Relevant facts enter the AI prompt as JSON data with instructions against executing their contents. Broad profile recall reads verified state directly, avoiding unnecessary model uploads and large ID outputs.
 
-Enabled canaries bypass legacy owner-goal, relationship-memory and personal-profile dumps, passive relationship capture and personal memory wizard. `/showmemory` reads the same canonical state. `/forget` directs the user to an explicit clear command; stale legacy buttons cannot erase health logs. Coaching and plan requests also use canonical personal context, retaining separate health measurements. The administrative inspection command cannot show stale legacy personal facts for migrated senders or expose their canonical private facts to another sender. Legacy JSON remains intact; health journals, check-ins, generated plans and administrative owner identity remain separate.
-
-Normal canary chat uses the bounded RAM session, rather than persisting personal answers into the old unencrypted conversation file. Verified memory mutations clear that session. Limits are 200 personal facts per sender, 800 characters per fact, eight extracted facts per operation, eight context facts, and 50 idempotency receipts. Memory summaries respect Telegram text size and invite topic-specific recall when truncated. Writes beyond a limit fail visibly.
-
-Sensitive facts require a fresh explicit consent reply owned by the same sender, tied to the unchanged revision, expiring after five minutes. Pending consent exists only in RAM. The encryption key is mandatory; missing configuration fails closed. Secrets, credentials and other people's private facts are rejected. Pattern guards, model instructions and structured validation are layered protections; the live adversarial tests must pass before release.
+Limits: 200 facts per sender, 800 characters per fact, eight extracted facts per write, eight context facts and 50 receipts. Summaries respect Telegram message size and invite specific recall when truncated. Limits and integrity failures produce visible failures.
 
 ## Persistence and schema
 
-`supabase/eli-universal-memory.sql` is a staged SQL specification, **not an applied or timestamped migration**. After backup and review, use `supabase migration new eli_universal_memory` and put the SQL in the CLI-created migration. Do not generate a guessed migration timestamp. The SQL creates only a new memory table and a server-only SECURITY INVOKER CAS function, enables RLS, revokes public/anon/authenticated access, and grants the minimal server permissions. Memory uses PostgREST directly from the server; existing Edge Functions are unaffected.
+The SQL specification is staged, not applied. Production uses server-side Supabase PostgREST directly; existing Edge Functions remain untouched. The new table has RLS and revoked public/anon/authenticated permissions. The SECURITY INVOKER compare-and-swap function uses an empty search path and minimal server grants. No existing table or payment schema changes.
 
-The filesystem repository is for isolated tests (`NODE_ENV=test`). Production requires the Supabase backend. There is no automatic filesystem fallback if Supabase is missing or unavailable. Encrypted row storage remains private server-side; no service key or encryption key is sent to Telegram or committed to GitHub.
+The filesystem repository is isolated-test-only. There is no production filesystem fallback. AES-256-GCM binds ciphertext to sender and revision. Configure a canonical base64 32-byte encryption secret and a protected independent recovery copy; never print or commit either it or a service-role key. Losing the key makes encrypted state and backups unrecoverable.
 
-## Backup and reconciliation before release
+Read-only production inspection found PostgreSQL 17.6 and no memory table or memory Edge Function. Management-connector access does not establish runtime REST access. Replit's audit found OpenAI configured, but no runtime Supabase server credentials or universal encryption secret. No production schema migration or memory write has been made.
 
-Keep private source data and all output artifacts outside the checkout. Configure `ELI_UNIVERSAL_MEMORY_KEY` in the host's secret manager: a canonical base64 encoding of 32 random bytes, with a separate protected recovery copy. Losing the key makes the encrypted state and backups unrecoverable. Never paste it in a PR or print it into captured logs.
+## Backup, reconciliation and rollback gates
 
-The migration utility never writes to Supabase or legacy files. It backs up the exact available bytes of users, user memory, relationship memory, journals, check-ins, reminders and conversation state. Exclusive creation prevents overwriting a backup; decryption plus SHA-256 manifests verify completeness. Even malformed legacy bytes are preserved before the operation fails.
+A private encrypted backup of 19 current Replit files was verified stable and restored in an isolated environment: 19/19 SHA-256 matches; tampered ciphertext rejected before extraction. It contains legacy data and relevant owner/configuration/source material outside the checkout. The original archive is not directly compatible with the importer; a compatible verified archive and encrypted reconciliation plan are still required. No independent offsite archive/key recovery has been verified. Original files remain intact.
 
-Backup format 2 stores the raw source bytes as base64 inside the encrypted envelope. Invalid UTF-8 is rejected for import, while its original bytes remain recoverable with the same checksum. Existing verified format-1 text backups remain readable. The added regression restores a deliberately damaged byte sequence into a disposable file and verifies its original SHA-256; no production file is restored or overwritten by the test.
+The migration utility preserves exact source bytes, including corrupt or invalid UTF-8 data, before failing. Format 2 stores raw base64 bytes inside encryption; old format-1 verified text backups remain readable. Exclusive output creation prevents overwriting an archive. Reconciliation never writes production data: ordinary historical facts can be semantically consolidated with explicitly authorized AI use; sensitive/unsafe records are held without model upload. Contradictions and unclear values are held for private resolution, and senders with held records cannot be imported. Full original values remain recoverable. Health diaries and conversation turns do not become personal facts.
 
-```sh
-cd bot
-node scripts/universalMemoryMigration.js backup /private/legacy /private/pre-rollout.memory-backup
+First import validates source fingerprints. Changes to personal legacy values block import; independent journal changes do not break restart. Initialized canonical state is never reimported, including after clear. Before production data changes, verify backup, isolated restore, reconciliation counts, conflicts, duplicates and rollback. Any existing database state also requires its own approved private backup and restore check before modification.
 
-# Only after authorizing upload of ordinary historical facts for reconciliation:
-ELI_MEMORY_RECONCILIATION_AI_CONSENT=1 node scripts/universalMemoryMigration.js reconcile /private/legacy /private/pre-rollout.memory-backup /private/reconciled.memory-plan
+Rollback disables new writes while retaining migrated-sender routing, encrypted state, schema, verified backup/plan and recovery key. Canonical reads remain available and deleted facts cannot reappear from JSON. Rolling back to an older binary without canonical routing requires explicit reverse reconciliation of new facts and deletions. Never restore stale JSON over current data.
 
-node scripts/universalMemoryMigration.js verify /private/legacy /private/pre-rollout.memory-backup /private/reconciled.memory-plan
-```
+## Flags and runtime status
 
-Reconciliation produces encrypted facts plus held records and aggregate counts. Exact/semantic duplicates can be consolidated; contradictions are held for private resolution. Historical sensitive/unsafe values are held without uploading them to the model. Unclear records are held. A sender with held records cannot be migrated until reviewed; nothing is silently discarded or overwritten. The complete original values remain in the verified backup. Health reports and conversation turns do not become personal facts. An already initialized canonical state is never reimported, including after clear. Changed legacy personal values block first import; changing journals independently does not break a restart.
-
-Before any change to an existing memory schema or production records, also export that database state through an approved private backup workflow, verify it, and test restore in a disposable environment. That production database backup has not been performed in this GitHub-only task.
-
-## Flags and controlled rollout
-
-All new flags remain unset/off in this change. No actual host secrets or flags were modified.
+All new rollout flags are off/unset. The audited Telegram workspace workflow was stopped with zero observed pollers and no local health response. Replit reports no published deployment; this alone does not establish whether another host is polling Telegram.
 
 | Setting | Purpose / default |
 | --- | --- |
-| `ELI_UNIVERSAL_MEMORY_ENABLED` | Write rollout; default false. |
-| `ELI_UNIVERSAL_MEMORY_USERS` | Exact comma-separated sender allowlist; default empty. No wildcard or owner bypass. |
-| `ELI_UNIVERSAL_MEMORY_MIGRATED_USERS` | Persist the adopted sender list before activation. Keeps canonical routing if writes are disabled for rollback. |
-| `ELI_UNIVERSAL_MEMORY_BACKEND` | `supabase` in production; default supabase. |
-| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Server REST access; mandatory, never frontend/public. |
-| `ELI_UNIVERSAL_MEMORY_KEY` | Mandatory encryption/recovery key. |
-| `ELI_UNIVERSAL_MEMORY_LEGACY_DIRECTORY` | Actual legacy directory, including any env-configured storage files; default bot directory. |
-| `ELI_UNIVERSAL_MEMORY_BACKUP` | Absolute verified encrypted backup path. |
-| `ELI_UNIVERSAL_MEMORY_RECONCILIATION` | Absolute verified encrypted plan path. |
+| `ELI_UNIVERSAL_MEMORY_ENABLED` | Writes; false. |
+| `ELI_UNIVERSAL_MEMORY_USERS` | Exact sender allowlist; empty, no wildcard or owner bypass. |
+| `ELI_UNIVERSAL_MEMORY_MIGRATED_USERS` | Adopted senders; preserve for read routing during rollback. |
+| `ELI_UNIVERSAL_MEMORY_BACKEND` | Supabase in production. |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Private server REST credentials. |
+| `ELI_UNIVERSAL_MEMORY_KEY` | Encryption and recovery secret. |
+| `ELI_UNIVERSAL_MEMORY_LEGACY_DIRECTORY` | Actual legacy location, respecting storage overrides. |
+| `ELI_UNIVERSAL_MEMORY_BACKUP` | Absolute verified encrypted archive location. |
+| `ELI_UNIVERSAL_MEMORY_RECONCILIATION` | Absolute verified encrypted reconciliation plan location. |
 
-Use a staging project first. Run the real model/database tests below, resolve held records, prove restoration, then reconcile this commit with the newer runtime source. Stop polling before snapshot/cutover, preserve the previous release, set exact canaries and migrated-user protection, start exactly one polling process, check health and sanitized logs, and use only authorized test chats. Do not send test messages to real users without their permission. Expand only after actual read/write/readback, update/delete and restart checks pass through the Telegram runtime.
+Only after all gates pass: preserve the rollback release, reconcile onto the newest source, stop polling for cutover, enable exact canaries plus migrated-sender protection, start one poller and verify health and sanitized logs. Do not send test messages to real users without permission. Expansion requires actual persistent write/readback, update/delete and restart verification through the runtime.
 
-Rollback first disables writes with `ELI_UNIVERSAL_MEMORY_ENABLED=false` while retaining `ELI_UNIVERSAL_MEMORY_MIGRATED_USERS`, schema, encrypted records, backup paths and key. Migrated senders retain canonical read routing; old JSON facts cannot reappear. Do not roll back to a binary that lacks this routing protection after new writes/deletions. Returning to the legacy binary requires explicit reverse reconciliation of new facts and deletions, with verified backups. Never restore old JSON over the current data blindly.
+## Validation
 
-## Validation and release blockers
+Unit/regression tests exercise arbitrary facts, operation routing, identity isolation, real filesystem writes, a fresh Node-process reload, corruption, failure/readback handling, consent, prompt injection, daily journals, byte-preserving backup, legacy reconciliation, actual `askEli` and actual show/forget/coaching/plan paths. Provider and REST doubles are used in unit tests; these do not prove production persistence.
 
-```sh
-node --test bot/test/eli*.test.js bot/test/relationshipMemory.test.js
+GitHub Actions runs pinned runtime dependencies, an actual PostgreSQL 17 schema/RLS/grants/CAS check and two competing database sessions. At commit `2553728`, all three jobs passed: 108 memory tests plus 43 runtime tests, zero failures, two separate live integration tests skipped. Evidence: [workflow 38073657212](https://github.com/vv80715-beep/zdrave-na-avtopilot-bot/actions/runs/38073657212). Later source changes require a new CI result.
 
-# Deliberately configure real credentials privately; these are separate gates.
-ELI_MEMORY_LIVE_AI_TESTS=1 node --test bot/test/eliUniversalMemoryLive.test.js
-ELI_MEMORY_LIVE_DATABASE_TESTS=1 node --test bot/test/eliUniversalMemoryLive.test.js
-```
+Live AI tests use the actual SDK/model with synthetic facts and an encrypted filesystem repository, checking readback and re-created service recall. Live database tests require actual Supabase REST credentials, refuse existing synthetic IDs, leave only empty encrypted synthetic state after cleanup, and never poll Telegram or send messages. Neither test is accepted as passed when skipped. The prior ad-hoc in-memory model runs exposed defects but do not substitute for the committed automated filesystem or real database tests.
 
-The local suite includes actual filesystem persistence, an independent Node-process reload, corruption/integrity failures, atomic competing writes, migration backups, and execution of the actual `askEli` function with isolated dependencies. AI responses and REST transport are controlled in unit tests. Real OpenAI and Supabase integration tests are explicitly skipped unless enabled; skip is not production proof. Live database tests refuse to overwrite an existing synthetic ID and leave only an empty encrypted synthetic state after cleanup. They never poll Telegram or send a message.
+Outstanding release gates: exact corrected-source real-model tests; integration with newer Replit code; compatible production reconciliation; independent recovery; runtime credentials; applied and verified memory schema; real Supabase REST persistence and restart; runtime routing checks; single-poller/health verification; controlled activation.
 
-GitHub Actions additionally runs the SQL on a fresh PostgreSQL 17 service, checks RLS/server grants and CAS, and races two independent database sessions. This is separate from the actual Supabase/PostgREST and runtime gates.
-
-Local result at the implementation checkpoint: 103 passed, zero failures, two live tests skipped (105 total). An additional 20 daily-log/startup/command regressions passed. Syntax checks passed. Tests include the actual show/forget/plan/coaching commands and group privacy. GitHub confirmed the original 99 memory passes and actual PostgreSQL schema/permission/CAS/concurrency checks in run [37974669500](https://github.com/vv80715-beep/zdrave-na-avtopilot-bot/actions/runs/37974669500). The local owner-access regression could not start because `telegraf` is absent. The first CI runtime dependency install also stopped because the committed lock resolves packages through Replit's private proxy. The CI job now rewrites only its disposable lock copy's download origin to the public npm registry, retaining all pinned versions and integrity checks; the source lock is unchanged. All three jobs subsequently passed for commit `9e03c0b` in run [37975048961](https://github.com/vv80715-beep/zdrave-na-avtopilot-bot/actions/runs/37975048961). Final command-privacy CI results are recorded in the PR.
-
-Outstanding: newest runtime source reconciliation; actual legacy production backup/reconciliation; real-model extraction and adversarial checks; staged schema application and actual Supabase REST readback from the host; restore test; authorized Telegram runtime/restart checks; polling-process uniqueness; current runtime flags and health; controlled activation. No claim of production readiness or activation is made.
-
-2026-10-10 read-only recheck: the PR's final push and PR workflows both completed successfully. The production Supabase memory table and CAS function are still absent. Replit's deployment connector reports no published deployment; that does not determine whether its workspace Telegram process is running. The initial fresh workspace inspection timed out, and follow-up questions were bounced while that inspection remained busy. No runtime changes or activation were requested during these checks. The byte-preserving backup correction passed 20 targeted migration/runtime tests locally; its new CI result must be recorded separately.
-
-The subsequent Replit audit confirmed current HEAD `c0f2341b1e4a08d5bf8c585940f5d11dd42c23cf`, a stopped Telegram workflow, and the category restriction in the newer explicit-preference/relationship path. OpenAI credentials are present; Supabase runtime credentials and a universal-memory encryption secret are absent. A protected local backup of 19 files was restored in an isolated environment with 19/19 matching SHA-256 checksums, and tampered ciphertext was rejected. Its original archive is outside the checkout and is not directly compatible with this importer. No independent offsite copy or compatible reconciliation plan has yet been verified.
-
-The controlled real `gpt-4o-mini` test of unmodified commit `e2667eef336cac3b0bf383f4f5865c9f40ebe4bb` passed 11/14 cases. It exposed a broad-topic identity collision and unexpected write proposals during recall/deletion. A temporary variant passed 14/14, but that is not proof of the committed source. The committed correction removes topic-only identity matching in both live writes and reconciliation, and prevents write proposals through the provider's selection-only schema rather than silently accepting malformed output. Local regressions after that correction: 108 passed, zero failures, two live tests skipped. The exact corrected commit must still pass the real-model gate; the live test now also checks contradiction handling. Production integration, database access and activation remain outstanding.
-
-Stripe Checkout/webhooks, subscriptions, Community and Voice/Avatar implementations are outside this patch. Their files are preserved.
+Stripe Checkout/webhooks, subscriptions, Community, Voice and Avatar implementations are outside this change.

@@ -34,8 +34,16 @@ function privacy(value) {
 }
 
 // Intent is about the requested operation, never an allowlist of fact topics.
+function commandText(message) {
+  return normalize(message).replace(/^(?:ели|eli)[,!:\s]+/u, '').replace(/^(?:моля(?: те)?|please)[,!:\s]+/u, '');
+}
+
+function allRecall(message) {
+  return /^(?:какво (?:помниш|знаеш) за мен|покажи (?:ми )?(?:паметта|профила)|припомни (?:ми )?(?:всичко(?: за мен)?|всички (?:мои |лични )?факти))[.!?]*$/u.test(commandText(message));
+}
+
 function intent(message) {
-  const s = normalize(message).replace(/^(?:ели|eli)[,!:\s]+/u, '');
+  const s = commandText(message);
   if (/^(?:съгласен съм|съгласна съм|съгласявам се) да запазиш този чувствителен факт[.!]?$/u.test(s)) return 'consent';
   if (/^(?:забрави|изтрий|премахни) (?:цялата (?:си |ми )?памет(?: за мен)?|всичко(?:,? което (?:помниш|знаеш) за мен)?|всички (?:мои |лични )?факти)[.!]?$/u.test(s)) return 'clear';
   if (/^(?:запомни|помни|запиши|съхрани|remember|save)(?=$|[\s,;:!?.])/iu.test(s)) return 'remember';
@@ -80,4 +88,4 @@ function existingFact(facts, item) {
   return exact[0];
 }
 
-module.exports = { MemoryError, userId, normalize, text, privacy, intent, emptyState, validateState, hash, existingFact };
+module.exports = { MemoryError, userId, normalize, text, privacy, intent, allRecall, emptyState, validateState, hash, existingFact };
