@@ -446,10 +446,10 @@ async function askEli(ctx, question, opts = {}) {
   if (logQuery) {
     const answer = answerDailyLogQuery(ctx.from.id, logQuery);
     await deliverDeterministic(answer);
-    if (owner) {
+    if (owner && !universalActive) {
       ownerRememberTurn(ctx.from.id, 'user', question);
       ownerRememberTurn(ctx.from.id, 'assistant', 'Отговорих от дневника за здраве.');
-    } else {
+    } else if (!universalActive) {
       addConversation(ctx.from.id, 'user', question);
       addConversation(ctx.from.id, 'assistant', 'Отговорих от дневника за здраве.');
     }
@@ -483,10 +483,12 @@ async function askEli(ctx, question, opts = {}) {
   // long-term memory injected so Eli personalizes automatically.
   let systemContent = SYSTEM_PROMPT;
   let priorMessages = [];
-  if (owner) {
+  if (owner && !universalActive) {
     systemContent = `${OWNER_MEMORY}\n\n${SYSTEM_PROMPT}`;
     // Recent turns from RAM only — the owner's on-disk memory stays untouched.
     priorMessages = ownerRecentTurns(ctx.from.id);
+  } else if (owner && universalPrivate) {
+    systemContent += '\nТози потребител е собственикът и администраторът на бота. Не извеждай лични данни от административната му роля.';
   } else if (!universalActive) {
     // Passively capture durable personal context (goals, prefs, recurring
     // struggles …) from this message. The conservative classifier ignores
@@ -574,7 +576,7 @@ async function askEli(ctx, question, opts = {}) {
     // Persist the exchange to the user's long-term memory (never the owner's)
     // BEFORE delivery — memory survives even if delivery fails. The owner's
     // turns go to the in-RAM session buffer instead (context without disk).
-    if (owner && (!universalActive || universalPrivate)) {
+    if (owner && !universalActive) {
       ownerRememberTurn(ctx.from.id, 'user', question);
       ownerRememberTurn(ctx.from.id, 'assistant', answer);
     } else if (!universalActive) {

@@ -91,6 +91,28 @@ for (const owner of [false, true]) {
   });
 }
 
+test('actual private owner AI uses canonical facts and role without legacy owner profile', async (t) => {
+  const r = await rig(t, () => { throw new Error('empty canonical memory needs no extraction'); });
+  const runtime = configuredRuntime(r);
+  let captured;
+  const forbidden = () => { throw new Error('legacy owner personal context must not be read or stored'); };
+  const adapter = { prepare: () => ({ legacy: true }), getShortContext: () => [], rememberExchange: () => {} };
+  const askEli = askEliHarness(runtime, r, true, {
+    openai: { chat: { completions: { create: async (request) => { captured = request; return { choices: [{ message: { content: 'Синтетичен общ отговор.' } }] }; } } } },
+    eliV22Adapter: adapter, resolveLogQuery: () => null, extractHealthEvents: () => [],
+    SYSTEM_PROMPT: 'generic-safe-context', OWNER_MEMORY: 'private-legacy-owner-fact-that-was-forgotten',
+    ownerRecentTurns: forbidden, ownerRememberTurn: forbidden,
+    conversationFlowNote: () => '', stripLeadingGreeting: (value) => value, parseLookTag: (text) => ({ text, category: 'neutral' }),
+    console: { error: forbidden },
+  });
+  const ctx = { ...context(), replies: [], sendChatAction: async () => {}, reply: async (value) => ctx.replies.push(value) };
+  await askEli(ctx, 'Разкажи ми нещо общо за разходките');
+  assert.deepEqual(ctx.replies, ['Синтетичен общ отговор.']);
+  assert.doesNotMatch(JSON.stringify(captured), /private-legacy-owner/);
+  assert.match(JSON.stringify(captured), /собственикът и администраторът/);
+  assert.match(JSON.stringify(captured), /Не твърди, че си записала/);
+});
+
 test('actual askEli clear can operate without an AI provider and never erases a health log', async (t) => {
   const r = await rig(t, () => answer()); const runtime = configuredRuntime(r);
   const fake = { ...r, openai: null };

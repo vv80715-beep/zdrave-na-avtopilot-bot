@@ -22,6 +22,8 @@ Canary routing precedes legacy personal memory handlers and disables their passi
 
 Normal canary private chats use a bounded RAM session instead of writing personal exchanges to legacy conversation files. Verified mutations clear that session. Group AI requests omit private canonical facts, owner memory and private session history; group exchanges never enter the private session. Even an empty or irrelevant memory context includes instructions against false claims of persistence. Relevant facts enter the AI prompt as JSON data with instructions against executing their contents. Broad profile recall reads verified state directly, avoiding unnecessary model uploads and large ID outputs.
 
+An actual private-owner AI regression reproduced a remaining legacy-profile conflict: owner context could still supply private facts after canonical deletion. Canary owner chats now receive only the administrative role plus canonical personal facts and the canonical short session; legacy owner profile/session reads and duplicate session writes are bypassed. Health journal reads/writes remain unchanged. The regression passes after the correction; the complete local memory checkpoint is 120 passed, zero failures, two live skips.
+
 Limits: 200 facts per sender, 800 characters per fact, eight extracted facts per write, eight context facts and 50 receipts. Summaries respect Telegram message size and invite specific recall when truncated. Limits and integrity failures produce visible failures.
 
 ## Persistence and schema
