@@ -2,6 +2,7 @@
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { TextDecoder } = require('node:util');
 const { MemoryError, userId, hash, normalize, privacy, text, validateState, emptyState } = require('./contracts');
 const { createChecksumManifest, verifyChecksumManifest } = require('../migration/backupManifest');
 const { collectUserIssues } = require('../migration/legacyValidators');
@@ -14,7 +15,7 @@ const SOURCES = Object.freeze({
 async function readSources(directory) {
   const files = {};
   for (const filename of Object.values(SOURCES)) {
-    try { files[filename] = await fs.readFile(path.join(directory, filename), 'utf8'); }
+    try { files[filename] = await fs.readFile(path.join(directory, filename)); }
     catch (e) { if (e.code !== 'ENOENT') throw new MemoryError('backup_read_failed'); }
   }
   return files;
@@ -25,7 +26,10 @@ function parseSources(files) {
   for (const [name, filename] of Object.entries(SOURCES)) {
     if (!Object.hasOwn(files, filename)) { sources[name] = {}; continue; }
     try {
-      sources[name] = JSON.parse(files[filename]);
+      // A damaged UTF-8 sequence must not turn into an apparently valid fact.
+      const raw = files[filename];
+      const content = Buffer.isBuffer(raw) ? new TextDecoder('utf-8', { fatal: true }).decode(raw) : raw;
+      sources[name] = JSON.parse(content);
       if (!sources[name] || typeof sources[name] !== 'object' || Array.isArray(sources[name])) throw new Error();
     } catch { throw new MemoryError('corrupt_legacy'); }
   }
@@ -47,7 +51,12 @@ async function writePrivate(filename, value) {
 async function createBackup({ directory, filename, cipher }) {
   const files = await readSources(directory);
   // Save raw bytes before parsing: even a corrupt source has a recoverable backup.
-  const backup = { version: 1, manifest: createChecksumManifest(files), files };
+  const backup = {
+    version: 2,
+    encoding: 'base64',
+    manifest: createChecksumManifest(files),
+    files: Object.fromEntries(Object.entries(files).map(([name, bytes]) => [name, bytes.toString('base64')])),
+  };
   await writePrivate(filename, cipher.seal(backup, 'eli-legacy-backup:v1'));
   const verified = await loadBackup({ filename, cipher });
   const fresh = await readSources(directory);
@@ -61,7 +70,20 @@ async function loadBackup({ filename, cipher }) {
   try { envelope = JSON.parse(await fs.readFile(filename, 'utf8')); }
   catch { throw new MemoryError('backup_read_failed'); }
   const backup = cipher.open(envelope, 'eli-legacy-backup:v1');
-  if (backup.version !== 1 || !verifyChecksumManifest(backup.manifest, backup.files).ok) throw new MemoryError('backup_integrity_failed');
+  if (!backup.files || typeof backup.files !== 'object' || Array.isArray(backup.files)) throw new MemoryError('backup_integrity_failed');
+  if (backup.version === 2 && backup.encoding === 'base64') {
+    const files = {};
+    for (const [name, encoded] of Object.entries(backup.files)) {
+      if (typeof encoded !== 'string') throw new MemoryError('backup_integrity_failed');
+      const bytes = Buffer.from(encoded, 'base64');
+      if (bytes.toString('base64') !== encoded) throw new MemoryError('backup_integrity_failed');
+      files[name] = bytes;
+    }
+    backup.files = files;
+  } else if (backup.version !== 1 || Object.values(backup.files).some((value) => typeof value !== 'string')) {
+    throw new MemoryError('backup_integrity_failed');
+  }
+  if (!verifyChecksumManifest(backup.manifest, backup.files).ok) throw new MemoryError('backup_integrity_failed');
   return backup;
 }
 

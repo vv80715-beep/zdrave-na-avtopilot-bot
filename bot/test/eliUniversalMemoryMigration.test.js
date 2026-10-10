@@ -22,7 +22,7 @@ test('encrypted, verified legacy backup and reconciliation preserve sources byte
   assert.deepEqual(await createBackup({ directory: f.legacy, filename: f.backupFilename, cipher: r.cipher }), { files: 1, verified: true });
   assert.doesNotMatch(await fs.readFile(f.backupFilename, 'utf8'), /Северна искра|880000000001/);
   const backup = await loadBackup({ filename: f.backupFilename, cipher: r.cipher });
-  assert.equal(backup.files['relationship_memory.json'], f.original);
+  assert.deepEqual(backup.files['relationship_memory.json'], Buffer.from(f.original));
   const plan = await reconcileBackup({ backup, semantic: r.semantic });
   assert.equal(plan.counts.imported, 1); assert.equal(plan.counts.held, 0);
   await writeReconciliation({ filename: f.planFilename, plan, cipher: r.cipher });
@@ -36,9 +36,36 @@ test('malformed legacy is backed up but never silently treated as empty', async 
   const f = await fixture(r, []); await fs.writeFile(f.source, '{damaged');
   await assert.rejects(createBackup({ directory: f.legacy, filename: f.backupFilename, cipher: r.cipher }), { code: 'corrupt_legacy' });
   const backup = await loadBackup({ filename: f.backupFilename, cipher: r.cipher });
-  assert.equal(backup.files['relationship_memory.json'], '{damaged');
+  assert.deepEqual(backup.files['relationship_memory.json'], Buffer.from('{damaged'));
   assert.equal(await fs.readFile(f.source, 'utf8'), '{damaged');
   assert.equal(r.openai.calls.length, 0);
+});
+
+test('invalid UTF-8 is preserved exactly in the backup and blocks reconciliation', async (t) => {
+  const r = await rig(t, () => answer());
+  const f = await fixture(r, []);
+  const damaged = Buffer.concat([Buffer.from('{"note":"'), Buffer.from([0xff, 0xc3, 0x28]), Buffer.from('"}')]);
+  await fs.writeFile(f.source, damaged);
+  await assert.rejects(createBackup({ directory: f.legacy, filename: f.backupFilename, cipher: r.cipher }), { code: 'corrupt_legacy' });
+  const backup = await loadBackup({ filename: f.backupFilename, cipher: r.cipher });
+  assert.deepEqual(backup.files['relationship_memory.json'], damaged);
+  assert.deepEqual(await fs.readFile(f.source), damaged);
+  await assert.rejects(reconcileBackup({ backup, semantic: r.semantic }), { code: 'corrupt_legacy' });
+  const restored = path.join(r.directory, 'restored.relationship-memory');
+  await fs.writeFile(restored, backup.files['relationship_memory.json']);
+  assert.equal(hash(await fs.readFile(restored)), hash(damaged));
+  assert.equal(r.openai.calls.length, 0);
+});
+
+test('verified version-one UTF-8 backups remain readable after the byte-preserving upgrade', async (t) => {
+  const r = await rig(t, () => answer());
+  const f = await fixture(r, []);
+  const files = { 'relationship_memory.json': f.original };
+  const { createChecksumManifest } = require('../brain/migration/backupManifest');
+  await fs.writeFile(f.backupFilename, JSON.stringify(r.cipher.seal({ version: 1, manifest: createChecksumManifest(files), files }, 'eli-legacy-backup:v1')));
+  const backup = await loadBackup({ filename: f.backupFilename, cipher: r.cipher });
+  assert.equal(backup.files['relationship_memory.json'], f.original);
+  assert.equal((await reconcileBackup({ backup, semantic: r.semantic })).counts.candidates, 0);
 });
 
 test('duplicates, contradictions and sensitive historical facts are reconciled without overwrite', async (t) => {
