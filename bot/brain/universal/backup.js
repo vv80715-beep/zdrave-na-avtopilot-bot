@@ -3,7 +3,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { TextDecoder } = require('node:util');
-const { MemoryError, userId, hash, normalize, privacy, text, validateState, emptyState } = require('./contracts');
+const { MemoryError, userId, hash, normalize, privacy, text, validateState, emptyState, existingFact } = require('./contracts');
 const { createChecksumManifest, verifyChecksumManifest } = require('../migration/backupManifest');
 const { collectUserIssues } = require('../migration/legacyValidators');
 
@@ -127,7 +127,7 @@ async function reconcileBackup({ backup, semantic }) {
         held.push({ ...row, reason: 'needs_review' }); counts.held++; continue;
       }
       const item = { ...a.facts[0], value: row.value }; // Preserve the complete historical value.
-      const existing = facts.find((f) => f.id === item.existingId || normalize(f.topic) === normalize(item.topic));
+      const existing = existingFact(facts, item);
       if (existing) {
         if ((item.relation === 'same' && item.existingId === existing.id) || normalize(existing.value) === normalize(item.value)) { counts.duplicates++; continue; }
         held.push({ ...row, reason: 'conflicting_fact', relatedId: existing.id }); counts.conflicts++; continue;

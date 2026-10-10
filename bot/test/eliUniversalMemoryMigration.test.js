@@ -87,6 +87,21 @@ test('duplicates, contradictions and sensitive historical facts are reconciled w
   assert.equal(await fs.readFile(f.source, 'utf8'), f.original);
 });
 
+test('reconciliation never merges independent legacy facts by a broad topic alone', async (t) => {
+  const r = await rig(t, ({ message }) => answer({ topic: 'хоби', evidence: message.split('): ')[1] }));
+  const f = await fixture(r, [
+    { id: 'a', value: 'хобито ми е оригами' },
+    { id: 'b', value: 'наричам телескопа си Северна искра' },
+    { id: 'c', value: 'хобито ми е оригами' },
+  ]);
+  await createBackup({ directory: f.legacy, filename: f.backupFilename, cipher: r.cipher });
+  const plan = await reconcileBackup({ backup: await loadBackup({ filename: f.backupFilename, cipher: r.cipher }), semantic: r.semantic });
+  assert.equal(plan.counts.imported, 2); assert.equal(plan.counts.duplicates, 1);
+  assert.equal(plan.counts.conflicts, 0); assert.equal(plan.users[USER_A].held.length, 0);
+  assert.equal(new Set(plan.users[USER_A].facts.map((f) => f.id)).size, 2);
+  assert.equal(await fs.readFile(f.source, 'utf8'), f.original);
+});
+
 test('changed personal legacy values block first import; changing journals does not break reload', async (t) => {
   const r = await rig(t, ({ message }) => answer({ topic: 'предпочитание', evidence: message.split('): ')[1] }));
   const f = await fixture(r, [{ id: 'a', value: 'предпочитам зеления цвят' }]);

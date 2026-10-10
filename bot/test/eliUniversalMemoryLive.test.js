@@ -43,6 +43,9 @@ test('LIVE OpenAI: generic topics, semantic recall, correction, injection and di
   const restarted = createMemoryService({ repository: createFileRepository({ directory, cipher }), semantic });
   const recall = await restarted.handle({ user, message: 'Припомни ми името на уреда, с който гледам звездите' });
   assert.ok(recall.text.includes('Северна искра'));
+  assert.equal((await restarted.handle({ user, message: 'Запомни, че любимият ми цвят вече е син' })).status, 'conflict');
+  assert.equal((await repository.read(user)).state.facts.length, inputs.length);
+  assert.ok((await repository.read(user)).state.facts.some((f) => f.value.includes('зелен')));
   const corrected = await restarted.handle({ user, message: 'Актуализирай любимия ми цвят: любимият ми цвят вече е син' });
   assert.equal(corrected.status, 'verified');
   assert.equal((await repository.read(user)).state.facts.length, inputs.length);

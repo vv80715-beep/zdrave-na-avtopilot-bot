@@ -1,7 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const { MemoryError, userId, intent, privacy, normalize, text, hash, emptyState, validateState } = require('./contracts');
+const { MemoryError, userId, intent, privacy, normalize, text, hash, emptyState, validateState, existingFact } = require('./contracts');
 
 const UNAVAILABLE = 'Не успях да проверя постоянната памет. Не потвърждавам запис или промяна. Опитай отново по-късно.';
 const CONSENT = 'Този факт е чувствителен. Ще го пазя шифрован и ще го използвам само за твоите разговори. Ако искаш да го запазя, напиши: „Съгласен съм да запазиш този чувствителен факт“. Съгласието изтича след 5 минути.';
@@ -59,10 +59,7 @@ function createMemoryService({ repository, semantic, importUser = async () => []
       if (!analysis.facts.length) return { handled: true, status: 'unclear', text: 'Кажи ясно кой личен факт искаш да запомня.' };
       const changed = new Set();
       for (const item of analysis.facts) {
-        const byTopic = state.facts.filter((f) => normalize(f.topic) === normalize(item.topic));
-        if (byTopic.length > 1) throw new MemoryError('ambiguous_fact');
-        const existing = item.existingId ? state.facts.find((f) => f.id === item.existingId) : byTopic[0];
-        if (item.existingId && !existing) throw new MemoryError('invalid_selection');
+        const existing = existingFact(state.facts, item);
         if (existing && changed.has(existing.id)) throw new MemoryError('ambiguous_fact');
         if (existing) {
           if (item.relation === 'same' && item.existingId === existing.id) {

@@ -64,7 +64,7 @@ test('restart: a fresh OS process decrypts the persisted fact', async (t) => {
 });
 
 test('contradictions require explicit update and keep the stable fact identity', async (t) => {
-  const r = await rig(t, ({ message, facts }) => answer({ topic: 'цветова симпатия', evidence: message.includes('син') ? 'предпочитам синия цвят' : 'предпочитам зеления цвят', existingId: facts[0]?.id || null }));
+  const r = await rig(t, ({ message, facts }) => answer({ topic: message.includes('син') ? 'нов етикет на същия атрибут' : 'цветова симпатия', evidence: message.includes('син') ? 'предпочитам синия цвят' : 'предпочитам зеления цвят', existingId: facts[0]?.id || null }));
   await r.service.handle({ user: USER_A, message: 'Запомни, че предпочитам зеления цвят', requestId: '1' });
   const original = (await r.repository.read(USER_A)).state.facts[0];
   const conflict = await r.service.handle({ user: USER_A, message: 'Запомни, че предпочитам синия цвят', requestId: '2' });
@@ -73,6 +73,46 @@ test('contradictions require explicit update and keep the stable fact identity',
   assert.equal((await r.service.handle({ user: USER_A, message: 'Актуализирай: предпочитам синия цвят', requestId: '3' })).status, 'verified');
   const updated = (await r.repository.read(USER_A)).state.facts;
   assert.equal(updated.length, 1); assert.equal(updated[0].id, original.id); assert.equal(updated[0].value, 'предпочитам синия цвят');
+});
+
+test('independent facts sharing a broad topic stay separate and update only the selected identity', async (t) => {
+  const r = await rig(t, ({ message, operation, facts }) => answer({
+    topic: 'хоби', evidence: message.slice(9),
+    existingId: operation === 'update' ? facts.find((f) => f.value === 'хобито ми е оригами')?.id || null : null,
+  }));
+  for (const value of ['хобито ми е оригами', 'наричам телескопа си Северна искра']) {
+    assert.equal((await r.service.handle({ user: USER_A, message: 'Запомни: ' + value })).status, 'verified');
+  }
+  const original = (await r.repository.read(USER_A)).state.facts;
+  assert.equal(original.length, 2); assert.notEqual(original[0].id, original[1].id);
+  assert.equal((await r.service.handle({ user: USER_A, message: 'Запомни: хобито ми е оригами' })).status, 'verified');
+  assert.equal((await r.repository.read(USER_A)).state.facts.length, 2, 'exact duplicate does not need a new identity');
+  assert.equal((await r.service.handle({ user: USER_A, message: 'Промени: хобито ми е калиграфия' })).status, 'verified');
+  const updated = (await r.repository.read(USER_A)).state.facts;
+  assert.equal(updated[0].id, original[0].id); assert.equal(updated[0].value, 'хобито ми е калиграфия');
+  assert.deepEqual(updated[1], original[1]);
+});
+
+test('selection-only schema cannot extract writes during recall, context or deletion', async (t) => {
+  let malformed = false;
+  const r = await rig(t, ({ operation, facts }, request) => {
+    if (operation === 'remember') return answer({ topic: 'професия', evidence: 'работя като библиотекар' });
+    assert.equal(request.response_format.json_schema.name, 'eli_memory_selection');
+    assert.equal(request.response_format.json_schema.schema.additionalProperties, false);
+    assert.equal(Object.hasOwn(request.response_format.json_schema.schema.properties, 'facts'), false);
+    return { classification: 'ordinary', subject: 'self', selectedIds: facts.map((f) => f.id), ...(malformed ? { facts: [{ topic: 'нежелан запис', evidence: 'работя като библиотекар', existingId: null, relation: 'new' }] } : {}) };
+  });
+  await r.service.handle({ user: USER_A, message: 'Запомни, че работя като библиотекар' });
+  assert.equal((await r.service.handle({ user: USER_A, message: 'Припомни ми професията' })).status, 'read');
+  assert.match(await r.service.context(USER_A, 'Какво работя?'), /библиотекар/);
+  malformed = true;
+  for (const message of ['Припомни ми професията', 'Забрави професията ми']) {
+    assert.equal((await r.service.handle({ user: USER_A, message })).status, 'failed');
+    assert.equal((await r.repository.read(USER_A)).state.facts.length, 1);
+  }
+  malformed = false;
+  assert.equal((await r.service.handle({ user: USER_A, message: 'Забрави професията ми' })).status, 'verified');
+  assert.equal((await r.repository.read(USER_A)).state.facts.length, 0);
 });
 
 test('specific deletion, idempotency and clear survive reload without legacy resurrection', async (t) => {

@@ -23,8 +23,12 @@ function fakeOpenAI(responder) {
     chat: { completions: { async create(request) {
       calls.push(request);
       const data = JSON.parse(request.messages.at(-1).content);
-      const result = await responder({ ...data, facts: data.existingFacts }, request);
+      let result = await responder({ ...data, facts: data.existingFacts }, request);
       if (result?.choices) return result;
+      if (request.response_format.json_schema.name === 'eli_memory_selection' && Array.isArray(result?.facts) && result.facts.length === 0) {
+        const { facts, ...selection } = result;
+        result = selection;
+      }
       return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(result) } }] };
     } } },
   };

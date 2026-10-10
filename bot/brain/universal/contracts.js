@@ -66,4 +66,18 @@ function validateState(state) {
 
 function hash(value) { return crypto.createHash('sha256').update(value).digest('hex'); }
 
-module.exports = { MemoryError, userId, normalize, text, privacy, intent, emptyState, validateState, hash };
+function existingFact(facts, item) {
+  // A topic is a display label, not a unique attribute key. Two unrelated
+  // hobbies or plans may have the same label without describing the same fact.
+  if (item.existingId !== null) {
+    const existing = facts.find((f) => f.id === item.existingId);
+    if (!existing) throw new MemoryError('invalid_selection');
+    return existing;
+  }
+  // Exact duplicates remain idempotent even if extraction omits the old ID.
+  const exact = facts.filter((f) => normalize(f.topic) === normalize(item.topic) && normalize(f.value) === normalize(item.value));
+  if (exact.length > 1) throw new MemoryError('ambiguous_fact');
+  return exact[0];
+}
+
+module.exports = { MemoryError, userId, normalize, text, privacy, intent, emptyState, validateState, hash, existingFact };
