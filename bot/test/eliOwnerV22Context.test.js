@@ -250,7 +250,11 @@ function createAskEliHarness(readers, options = {}) {
       options.detectOwnerFitnessMemoryCommand || detectOwnerFitnessMemoryCommand,
     saveOwnerFitnessGoal:
       options.saveOwnerFitnessGoal || (() => ({ ok: false, reason: 'invalid' })),
+    detectExplicitPreferenceCommand: () => null,
+    saveExplicitPreference: () => ({ ok: false, reason: 'invalid' }),
     detectMemoryCommand: () => null,
+    isExplicitMemoryCue: () => false,
+    saveExplicitRelationshipMemory: () => ({ ok: false, reason: 'unsupported' }),
     rememberFromMessage: (userId) => memoryReads.push(['rememberFromMessage', userId]),
     buildMemoryContext: (userId) => {
       memoryReads.push(['buildMemoryContext', userId]);
