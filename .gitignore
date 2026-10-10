@@ -93,3 +93,10 @@ temp/
 
 # Contains key-shaped test literals rejected by GitHub secret protection
 /bolt-backend/server/test/checkout.test.cjs
+
+# Encrypted runtime memory and backups are private, too.
+eli-memory-private/
+*.memory-backup
+*.memory-plan
+*.memory-export
+

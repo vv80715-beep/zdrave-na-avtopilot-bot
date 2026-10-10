@@ -3,6 +3,7 @@ const path = require('path');
 const { isOwner } = require('../adminGuard');
 const { formatFullMemory } = require('../memoryService');
 const { getUser } = require('../storage');
+const { getUniversalMemoryRuntime } = require('../brain/universal/runtime');
 
 const USERS_PATH = path.join(__dirname, '..', 'users.json');
 const MEMORY_PATH = path.join(__dirname, '..', 'user_memory.json');
@@ -47,7 +48,7 @@ function register(bot) {
   });
 
   // Inspect any user's memory (owner only).
-  bot.command('usermemory', (ctx) => {
+  bot.command('usermemory', async (ctx) => {
     if (ctx.session?.__scenes) ctx.session.__scenes = {};
     if (!isOwner(ctx)) {
       return ctx.reply('Нямаш достъп до тази команда.');
@@ -60,8 +61,15 @@ function register(bot) {
       );
     }
 
+    const universal = getUniversalMemoryRuntime();
+    if (universal.active(arg)) {
+      if (String(ctx.from.id) === arg) return ctx.reply(await universal.show(ctx));
+      return ctx.reply('Новата лична памет се показва на самия потребител с /showmemory в личния чат.');
+    }
+
     ctx.replyWithMarkdown(formatFullMemory(arg, { admin: true }));
   });
 }
 
 module.exports = { register };
+
