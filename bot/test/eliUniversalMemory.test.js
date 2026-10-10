@@ -165,6 +165,45 @@ test('semantic paraphrases deduplicate without pretending the value contradicted
   assert.equal(facts.length, 1); assert.equal(facts[0].value, original);
 });
 
+for (const [primary, decision, expected] of [
+  ['changed', 'equivalent', 'verified'], ['same', 'contradiction', 'conflict'],
+  ['changed', 'different_fact', 'verified'], ['same', 'unclear', 'failed'],
+]) {
+  test(`independent meaning validation: ${primary} proposal, ${decision} comparison`, async (t) => {
+    const r = await rig(t, ({ facts, message }) => answer({ topic: 'произволен атрибут', evidence: message.slice(9), existingId: facts[0]?.id || null, relation: facts.length ? primary : 'new' }), { meaningResponder: (data, request) => {
+      assert.equal(data.pairs.length, 1);
+      assert.doesNotMatch(JSON.stringify(data), /880000000001|existingId/);
+      assert.deepEqual(request.response_format.json_schema.schema.required, ['0']);
+      return { '0': decision };
+    } });
+    await r.service.handle({ user: USER_A, message: 'Запомни: собствен първи факт' });
+    const original = (await r.repository.read(USER_A)).state.facts[0];
+    assert.equal((await r.service.handle({ user: USER_A, message: 'Запомни: собствен нов израз' })).status, expected);
+    const facts = (await r.repository.read(USER_A)).state.facts;
+    assert.deepEqual(facts[0], original, 'the verified original is never silently replaced');
+    assert.equal(facts.length, decision === 'different_fact' ? 2 : 1);
+  });
+}
+
+test('malformed or refused meaning verification cannot modify verified data', async (t) => {
+  let response = { '1': 'equivalent' };
+  const r = await rig(t, ({ facts, message }) => answer({ topic: 'име на уред', evidence: message.slice(9), existingId: facts[0]?.id || null }), { meaningResponder: () => response });
+  await r.service.handle({ user: USER_A, message: 'Запомни: наричам уреда Северна искра' });
+  const before = await r.repository.read(USER_A);
+  for (const bad of [{ '1': 'equivalent' }, { '0': 'equivalent', extra: 'contradiction' }, { choices: [{ finish_reason: 'stop', message: { refusal: 'refused' } }] }]) {
+    response = bad;
+    assert.equal((await r.service.handle({ user: USER_A, message: 'Промени: наричам уреда Нова искра' })).status, 'failed');
+    assert.deepEqual(await r.repository.read(USER_A), before);
+  }
+});
+
+test('extraction diagnostics explain rejection without exposing input or identity', async (t) => {
+  const r = await rig(t, () => answer({ topic: 'произволен атрибут', evidence: 'измислено доказателство' }));
+  assert.equal((await r.service.handle({ user: USER_A, message: 'Запомни: собствен личен факт' })).status, 'failed');
+  assert.equal(r.diagnostics.at(-1).reason, 'evidence_not_verbatim');
+  assert.doesNotMatch(JSON.stringify(r.diagnostics), /880000000001|собствен|личен факт|измислено/);
+});
+
 test('trusted sender isolation: no model-generated ID can select another user', async (t) => {
   let stolen;
   const r = await rig(t, ({ operation, message }) => operation === 'recall' ? answer({ selectedIds: [stolen] }) : answer({ topic: 'личен факт', evidence: message.slice(9) }));

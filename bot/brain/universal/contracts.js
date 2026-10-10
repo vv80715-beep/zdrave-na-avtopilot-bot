@@ -2,8 +2,9 @@
 
 const crypto = require('node:crypto');
 
+const REASONS = new Set(['schema', 'unexpected_write', 'evidence_not_verbatim', 'invalid_relation', 'existing_id_not_in_scope', 'unsafe_evidence']);
 class MemoryError extends Error {
-  constructor(code) { super(code); this.name = 'MemoryError'; this.code = code; }
+  constructor(code, reason) { super(code); this.name = 'MemoryError'; this.code = code; if (REASONS.has(reason)) this.reason = reason; }
 }
 
 function userId(value) {

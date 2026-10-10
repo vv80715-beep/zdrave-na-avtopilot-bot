@@ -80,7 +80,9 @@ test('duplicates, contradictions and sensitive historical facts are reconciled w
   const backup = await loadBackup({ filename: f.backupFilename, cipher: r.cipher });
   const plan = await reconcileBackup({ backup, semantic: r.semantic });
   assert.equal(plan.counts.duplicates, 1); assert.equal(plan.counts.conflicts, 1); assert.equal(plan.counts.held, 1);
-  assert.equal(plan.users[USER_A].held.length, 2); assert.equal(r.openai.calls.length, 3);
+  assert.equal(plan.users[USER_A].held.length, 2);
+  assert.equal(r.openai.calls.filter((call) => call.response_format.json_schema.name !== 'eli_memory_meaning').length, 3);
+  assert.equal(r.openai.calls.filter((call) => call.response_format.json_schema.name === 'eli_memory_meaning').length, 1);
   await writeReconciliation({ filename: f.planFilename, plan, cipher: r.cipher });
   const importer = await createVerifiedImporter({ directory: f.legacy, ...f, cipher: r.cipher });
   await assert.rejects(importer(USER_A), { code: 'legacy_review_required' });

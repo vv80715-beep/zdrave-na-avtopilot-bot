@@ -16,19 +16,27 @@ function answer({ classification = 'ordinary', subject = 'self', topic, evidence
   return { classification, subject, facts: topic ? [{ topic, evidence, existingId, relation }] : [], selectedIds };
 }
 
-function fakeOpenAI(responder) {
+function fakeOpenAI(responder, meaningResponder) {
   const calls = [];
+  let lastWrite;
   return {
     calls,
     chat: { completions: { async create(request) {
       calls.push(request);
       const data = JSON.parse(request.messages.at(-1).content);
+      if (request.response_format.json_schema.name === 'eli_memory_meaning') {
+        const known = lastWrite.facts.filter((f) => f.existingId && data.pairs.some((pair) => pair.proposed.value === f.evidence));
+        const result = meaningResponder ? await meaningResponder(data, request) : Object.fromEntries(known.map((f, i) => [String(i), f.relation === 'same' ? 'equivalent' : 'contradiction']));
+        if (result?.choices) return result;
+        return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(result) } }] };
+      }
       let result = await responder({ ...data, facts: data.existingFacts }, request);
       if (result?.choices) return result;
       if (request.response_format.json_schema.name === 'eli_memory_selection' && Array.isArray(result?.facts) && result.facts.length === 0) {
         const { facts, ...selection } = result;
         result = selection;
       }
+      if (Array.isArray(result?.facts)) lastWrite = result;
       return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(result) } }] };
     } } },
   };
@@ -40,10 +48,11 @@ async function rig(t, responder, options = {}) {
   const key = crypto.randomBytes(32).toString('base64');
   const cipher = createCipher(key);
   const repository = createFileRepository({ directory, cipher });
-  const openai = fakeOpenAI(responder);
+  const openai = fakeOpenAI(responder, options.meaningResponder);
   const semantic = createSemanticEngine({ openai });
   const diagnostics = [];
-  const service = createMemoryService({ repository, semantic, diagnostic: (e) => diagnostics.push(e), ...options });
+  const { meaningResponder, ...serviceOptions } = options;
+  const service = createMemoryService({ repository, semantic, diagnostic: (e) => diagnostics.push(e), ...serviceOptions });
   return { directory, key, cipher, repository, openai, semantic, service, diagnostics };
 }
 

@@ -46,7 +46,7 @@ function createMemoryService({ repository, semantic, importUser = async () => []
   }
   function failed(error) {
     const code = error instanceof MemoryError ? error.code : 'storage_unavailable';
-    diagnostic({ component: 'universal_memory', result: 'failed', code });
+    diagnostic({ component: 'universal_memory', result: 'failed', code, ...(error instanceof MemoryError && error.reason ? { reason: error.reason } : {}) });
     return { handled: true, status: 'failed', text: code === 'write_conflict' ? 'Паметта се промени едновременно с тази заявка. Изпрати я отново; няма да презаписвам други промени.' : UNAVAILABLE };
   }
   async function mutate(id, before, operation, analysis, requestId, message, consented = false) {
