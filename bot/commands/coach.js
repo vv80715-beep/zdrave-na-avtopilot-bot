@@ -1,6 +1,7 @@
 const openai = require('../openaiClient');
 const { isOwner } = require('../adminGuard');
 const { gateChat } = require('../chatGate');
+const { getUniversalMemoryRuntime } = require('../brain/universal/runtime');
 const {
   generateCoach,
   generateMotivate,
@@ -30,6 +31,9 @@ function clearScene(ctx) {
 
 async function run(ctx, generator, emptyMsg) {
   clearScene(ctx);
+  if (getUniversalMemoryRuntime().active(ctx.from.id) && ctx.chat?.type !== 'private') {
+    return ctx.reply('Поискай личния коучинг в личния чат с Ели.');
+  }
   if (!openai) {
     return ctx.reply('OpenAI не е конфигуриран. Моля, провери настройките на бота.');
   }
@@ -73,3 +77,4 @@ function register(bot) {
 }
 
 module.exports = { register };
+

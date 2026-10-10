@@ -1,0 +1,109 @@
+name: Eli universal memory
+
+on:
+  push:
+    branches:
+      - 'fix/eli-v22-universal-memory-*'
+  pull_request:
+    paths:
+      - 'bot/**'
+      - 'supabase/eli-universal-memory.sql'
+      - '.github/workflows/eli-universal-memory.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  memory-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check syntax
+        run: |
+          node --check index.js
+          node --check coachService.js
+          node --check commands/showmemory.js
+          node --check commands/forget.js
+          node --check commands/plan.js
+          node --check commands/userMemory.js
+          node --check commands/coach.js
+          for file in brain/universal/*.js scripts/universalMemoryMigration.js; do node --check "$file"; done
+      - name: Synthetic memory, migration and runtime regressions
+        run: node --test test/eli*.test.js test/relationshipMemory.test.js
+        env:
+          TELEGRAM_BOT_TOKEN: ''
+          OPENAI_API_KEY: ''
+          SUPABASE_SERVICE_ROLE_KEY: ''
+          ELI_UNIVERSAL_MEMORY_ENABLED: 'false'
+
+  runtime-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pinned bot dependencies without lifecycle scripts
+        run: |
+          # The committed lock uses Replit's internal package proxy. Rewrite
+          # only the CI copy's download origin; preserve versions/integrities.
+          node <<'NODE'
+          const fs = require('node:fs');
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          const prefix = 'http://package-firewall.replit.local/npm/';
+          for (const pkg of Object.values(lock.packages)) {
+            if (typeof pkg.resolved === 'string' && pkg.resolved.startsWith(prefix)) {
+              pkg.resolved = 'https://registry.npmjs.org/' + pkg.resolved.slice(prefix.length);
+            }
+          }
+          fs.writeFileSync('package-lock.json', JSON.stringify(lock, null, 2) + '\n');
+          NODE
+          npm ci --ignore-scripts --no-audit --no-fund
+      - name: Existing runtime, coaching and daily-log regressions
+        run: node --test test/ownerAccess.test.js test/dailyLog.test.js test/startup.test.js test/commandGuard.test.js test/bugfixPass.test.js
+        env:
+          TELEGRAM_BOT_TOKEN: ''
+          OPENAI_API_KEY: ''
+          ELI_UNIVERSAL_MEMORY_ENABLED: 'false'
+
+  postgres-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: synthetic_ci_password
+          POSTGRES_DB: eli_memory_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: bot
+    steps:
+      - uses: actions/checkout@v4
+      - name: Real PostgreSQL schema, permissions, CAS and two-session concurrency
+        run: bash scripts/testUniversalMemoryPostgres.sh
+        env:
+          PGHOST: localhost
+          PGPORT: '5432'
+          PGUSER: postgres
+          PGPASSWORD: synthetic_ci_password
+          PGDATABASE: eli_memory_test
+          ELI_MEMORY_DISPOSABLE_DATABASE: '1'
