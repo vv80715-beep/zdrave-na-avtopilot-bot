@@ -1,8 +1,7 @@
 'use strict';
 
-// Every V2.2 flag defaults to false. The production owner canary is a
-// per-request override; process-wide environment flags never grant customers
-// access to the canary.
+// Every V2.2 flag defaults to false. The owner canary itself also requires
+// explicit opt-in; process-wide flags never grant customers access.
 
 const ELI_V2_2_FLAG_DEFAULTS = Object.freeze({
   aiBrain: false,
@@ -36,9 +35,14 @@ function hasVerifiedEliMemoryAccess(access, now = Date.now()) {
 }
 
 function getOwnerScopedEliV22Flags(isOwner, options = {}) {
-  if (!isOwner) return ELI_V2_2_FLAG_DEFAULTS;
-
   const env = options.env || process.env;
+  if (
+    !isOwner ||
+    !parseBooleanFlag(env.ELI_V2_2_OWNER_CANARY_ENABLED, false)
+  ) {
+    return ELI_V2_2_FLAG_DEFAULTS;
+  }
+
   const now = Number.isFinite(options.now) ? options.now : Date.now();
   const accessVerified = hasVerifiedEliMemoryAccess(options.backendAccess, now);
   const durableMemory =

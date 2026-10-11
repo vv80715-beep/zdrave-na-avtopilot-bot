@@ -49,7 +49,6 @@ const { resolveLogQuery, answerDailyLogQuery, recordEvents, formatConfirmation }
 const { feedbackForEvents } = require('./healthInsights');
 const { createAskEliAdapter } = require('./brain/askEliAdapter');
 const {
-  getOwnerScopedEliV22Flags,
   getOwnerRelationshipMemoryCaptureEnabled,
 } = require('./brain/featureFlags');
 const { buildOwnerV22Context } = require('./brain/ownerV22Context');
@@ -369,14 +368,35 @@ async function askEli(ctx, question, opts = {}) {
   // Eli V2.2 integration is opt-in only. With the default flags OFF this
   // returns the legacy route and changes nothing in the production path.
   const v22Channel = avatarMode ? 'avatar' : voiceMode ? 'voice' : 'text';
-  const v22OwnerContext = owner ? buildOwnerV22Context(ctx.from.id) : null;
+  const v22MemoryContext = await ownerUniversalMemoryRuntime.prepareContext({
+    userId: ctx.from.id,
+    isOwner: owner,
+    message: question,
+  });
+  let v22OwnerContext = owner ? buildOwnerV22Context(ctx.from.id) : null;
+  if (v22OwnerContext && v22MemoryContext.facts.length) {
+    const existing = v22OwnerContext.longTermFacts || [];
+    const existingValues = new Set(existing.map((fact) =>
+      `${fact.category || ''}\u0000${fact.key || ''}\u0000${String(fact.value || '').trim().toLocaleLowerCase('bg')}`
+    ));
+    const durableFacts = v22MemoryContext.facts.filter((fact) => {
+      const key = `${fact.category || ''}\u0000${fact.key || ''}\u0000${String(fact.value || '').trim().toLocaleLowerCase('bg')}`;
+      if (existingValues.has(key)) return false;
+      existingValues.add(key);
+      return true;
+    });
+    v22OwnerContext = {
+      ...v22OwnerContext,
+      longTermFacts: [...existing, ...durableFacts],
+    };
+  }
   const v22 = eliV22Adapter.prepare({
     userId: ctx.from.id,
     channel: v22Channel,
     message: question,
     conversationState,
     ...(v22OwnerContext || {}),
-    featureFlags: getOwnerScopedEliV22Flags(owner),
+    featureFlags: v22MemoryContext.flags,
   });
 
   // Deterministic answers (log queries, profile dumps, memory commands) follow

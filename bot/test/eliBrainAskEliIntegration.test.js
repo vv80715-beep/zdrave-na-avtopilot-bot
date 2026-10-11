@@ -28,6 +28,7 @@ test('askEli adapter is legacy by default', () => {
 
 test('owner canary enables only approved flags and overrides process flags for customers', () => {
   const environment = {
+    ELI_V2_2_OWNER_CANARY_ENABLED: 'true',
     ELI_V2_2_AI_BRAIN_ENABLED: 'true',
     ELI_V2_2_CONTEXT_BUILDER_ENABLED: 'true',
     ELI_V2_2_MEMORY_CANDIDATES_ENABLED: 'true',
@@ -40,7 +41,7 @@ test('owner canary enables only approved flags and overrides process flags for c
     userId: '300007',
     channel: 'text',
     message: 'Как да продължа?',
-    featureFlags: getOwnerScopedEliV22Flags(true),
+    featureFlags: getOwnerScopedEliV22Flags(true, { env: environment }),
   });
   const customer = adapter.prepare({
     userId: '300008',
@@ -68,6 +69,20 @@ test('owner canary enables only approved flags and overrides process flags for c
     durableReads: false,
   });
   assert.equal(customer.legacy, true);
+});
+
+test('owner canary is off until its dedicated rollout gate is enabled', () => {
+  assert.deepEqual(
+    { ...getOwnerScopedEliV22Flags(true, { env: {} }) },
+    {
+      aiBrain: false,
+      contextBuilder: false,
+      memoryCandidates: false,
+      unifiedProfile: false,
+      durableMemory: false,
+      durableReads: false,
+    }
+  );
 });
 
 test('text voice avatar share the same brain context when enabled', () => {

@@ -23,6 +23,7 @@ const {
 } = require('../brain/unifiedHealthProfile');
 
 const ALL_ENV_FLAGS_ON = {
+  ELI_V2_2_OWNER_CANARY_ENABLED: 'true',
   ELI_V2_2_AI_BRAIN_ENABLED: 'true',
   ELI_V2_2_CONTEXT_BUILDER_ENABLED: 'true',
   ELI_V2_2_MEMORY_CANDIDATES_ENABLED: 'true',
@@ -124,7 +125,7 @@ test('owner context maps the structured profile and stored long-term facts by th
 test('profile fact and relevant long-term facts reach Text, Voice and Avatar V2.2 context identically', () => {
   const ownerContext = buildOwnerV22Context(OWNER_ID, fixtureReaders());
   const adapter = createAskEliAdapter({ environment: ALL_ENV_FLAGS_ON });
-  const featureFlags = getOwnerScopedEliV22Flags(true);
+  const featureFlags = getOwnerScopedEliV22Flags(true, { env: ALL_ENV_FLAGS_ON });
   const shortContext = [
     { role: 'user', content: 'Вчера обсъдихме кратките разходки.' },
     { role: 'assistant', content: 'Ще продължим оттам.' },
@@ -177,7 +178,9 @@ test('blank or malformed stored values remain unknown and are not turned into fa
     channel: 'avatar',
     message: 'Какво знаеш за мен?',
     ...unknownContext,
-    featureFlags: getOwnerScopedEliV22Flags(true),
+    featureFlags: getOwnerScopedEliV22Flags(true, {
+      env: { ELI_V2_2_OWNER_CANARY_ENABLED: 'true' },
+    }),
   });
   const rendered = result.systemAddenda.join('\n');
 
@@ -224,7 +227,15 @@ function createAskEliHarness(readers, options = {}) {
     },
     gateChat: async () => ({ canChat: true, plan: 'owner', allowedModes: ['text', 'voice', 'avatar'], notice: null }),
     isOwner,
-    getOwnerScopedEliV22Flags,
+    getOwnerScopedEliV22Flags: (owner) =>
+      getOwnerScopedEliV22Flags(owner, { env: ALL_ENV_FLAGS_ON }),
+    ownerUniversalMemoryRuntime: {
+      handle: async () => ({ handled: false }),
+      prepareContext: async ({ isOwner }) => ({
+        flags: getOwnerScopedEliV22Flags(isOwner, { env: ALL_ENV_FLAGS_ON }),
+        facts: isOwner ? options.durableFacts || [] : [],
+      }),
+    },
     getOwnerRelationshipMemoryCaptureEnabled: (owner) => owner,
     buildOwnerV22Context: (userId) => {
       helperCalls += 1;
@@ -384,6 +395,37 @@ test('real askEli owner path loads profile/facts into all channels; customers ke
     [OWNER_ID, OWNER_ID, OWNER_ID, 'customer-fixture'],
     'customer relationship capture remains on its existing per-user path'
   );
+});
+
+test('askEli includes durable facts for the owner but never customers', async () => {
+  const durableFact = {
+    id: 'synthetic-durable-fact',
+    category: 'preferences',
+    key: 'workout',
+    value: 'Предпочита тренировки на лостове',
+  };
+  const harness = createAskEliHarness(fixtureReaders(), {
+    durableFacts: [durableFact],
+  });
+  const ownerResult = await harness.run(
+    OWNER_ID,
+    'text',
+    { canChat: true, plan: 'owner', allowedModes: ['text'], notice: null },
+    'Какъв вид тренировки предпочитам?'
+  );
+  assert.ok(ownerResult.adapterCall.input.longTermFacts.some(
+    (fact) => fact.id === durableFact.id
+  ));
+
+  const customerResult = await harness.run(
+    '300009',
+    'text',
+    { canChat: true, plan: 'free', allowedModes: ['text'], notice: null },
+    'Какъв вид тренировки предпочитам?'
+  );
+  assert.equal((customerResult.adapterCall.input.longTermFacts || []).some(
+    (fact) => fact.id === durableFact.id
+  ), false);
 });
 
 test('owner memory query returns only stored personal facts and explicitly marks missing target weight', async () => {

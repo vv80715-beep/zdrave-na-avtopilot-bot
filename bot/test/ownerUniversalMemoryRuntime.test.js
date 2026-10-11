@@ -10,6 +10,7 @@ const { DURABLE_MEMORY_CONTRACT_VERSION } = require('../brain/durableMemoryContr
 
 const OWNER = '99000000000000000001';
 const FLAGS_ON = {
+  ELI_V2_2_OWNER_CANARY_ENABLED: 'true',
   ELI_V2_2_DURABLE_MEMORY_ENABLED: 'true',
   ELI_V2_2_DURABLE_READS_ENABLED: 'true',
 };
@@ -84,6 +85,43 @@ test('owner save, read, update, forget and isolation use the verified durable se
   assert.deepEqual(await repository.listFacts(OWNER), []);
   assert.deepEqual(await repository.listFacts('99000000000000000002'), []);
   assert.equal((await send('Какъв вид тренировки предпочитам?')).reply, 'Не открих запазен факт по този въпрос.');
+});
+
+test('verified durable facts enter owner context only when read flags and backend are ready', async () => {
+  const { runtime, service } = fixture();
+  await service.rememberMessage(OWNER, 'Запомни, че предпочитам да тренирам на лостове.');
+
+  const ownerContext = await runtime.prepareContext({
+    userId: OWNER,
+    isOwner: true,
+    message: 'Как да включа повече упражнения в седмичния си план?',
+  });
+  assert.equal(ownerContext.loaded, true);
+  assert.equal(ownerContext.flags.durableReads, true);
+  assert.match(ownerContext.facts[0].value, /лостове/);
+
+  const customerContext = await runtime.prepareContext({
+    userId: '99000000000000000002',
+    isOwner: false,
+    message: 'Как да включа повече упражнения в седмичния си план?',
+  });
+  assert.equal(customerContext.loaded, false);
+  assert.deepEqual(customerContext.facts, []);
+  assert.equal(customerContext.flags.durableReads, false);
+});
+
+test('durable context fails closed when the backend cannot be verified', async () => {
+  const { runtime } = fixture({
+    access: { ok: false, reason: 'backend_unavailable' },
+  });
+  const context = await runtime.prepareContext({
+    userId: OWNER,
+    isOwner: true,
+    message: 'Какъв вид тренировки предпочитам?',
+  });
+  assert.equal(context.loaded, false);
+  assert.deepEqual(context.facts, []);
+  assert.equal(context.flags.durableReads, false);
 });
 
 test('requested owner memory fails closed when approved backend health is unavailable', async () => {

@@ -7,8 +7,6 @@ const {
 } = require('./featureFlags');
 const { detectMemoryCommand, isExplicitMemoryCue } = require('../relationshipMemory');
 
-const ACCESS_CACHE_MS = 30_000;
-
 function createOwnerUniversalMemoryRuntime(options = {}) {
   const client = options.client;
   const service = options.service;
@@ -31,6 +29,7 @@ function createOwnerUniversalMemoryRuntime(options = {}) {
 
   async function getFlags(isOwner) {
     const requested =
+      parseBooleanFlag(env.ELI_V2_2_OWNER_CANARY_ENABLED, false) &&
       parseBooleanFlag(env.ELI_V2_2_DURABLE_MEMORY_ENABLED, false) &&
       parseBooleanFlag(env.ELI_V2_2_DURABLE_READS_ENABLED, false);
     if (!isOwner || !requested) {
@@ -129,7 +128,43 @@ function createOwnerUniversalMemoryRuntime(options = {}) {
     return { handled: false };
   }
 
-  return Object.freeze({ handle });
+  async function prepareContext(input = {}) {
+    const userId = String(input.userId ?? '').trim();
+    const isOwner = input.isOwner === true;
+    const message = String(input.message ?? '');
+    const { requested, flags } = await getFlags(isOwner);
+    if (
+      !isOwner ||
+      !requested ||
+      !flags.durableReads ||
+      detectMemoryCommand(message) ||
+      isExplicitMemoryCue(message)
+    ) {
+      return { flags, facts: [], loaded: false };
+    }
+
+    try {
+      const result = await service.recall(userId, message);
+      if (!result.confirmed) {
+        return {
+          flags: Object.freeze({ ...flags, durableMemory: false, durableReads: false }),
+          facts: [],
+          loaded: false,
+          reason: result.reason || 'read_unverified',
+        };
+      }
+      return { flags, facts: result.facts, loaded: true };
+    } catch {
+      return {
+        flags: Object.freeze({ ...flags, durableMemory: false, durableReads: false }),
+        facts: [],
+        loaded: false,
+        reason: 'read_unverified',
+      };
+    }
+  }
+
+  return Object.freeze({ handle, prepareContext });
 }
 
 module.exports = { createOwnerUniversalMemoryRuntime };

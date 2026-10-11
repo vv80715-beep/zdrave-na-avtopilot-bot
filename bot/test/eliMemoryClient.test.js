@@ -266,6 +266,7 @@ test('universal memory service refuses remote writes without verified backend ac
 test('owner durable flags need explicit opt-in and recent approved backend verification', () => {
   const now = Date.UTC(2026, 9, 9, 12);
   const requested = {
+    ELI_V2_2_OWNER_CANARY_ENABLED: 'true',
     ELI_V2_2_DURABLE_MEMORY_ENABLED: 'true',
     ELI_V2_2_DURABLE_READS_ENABLED: 'true',
   };

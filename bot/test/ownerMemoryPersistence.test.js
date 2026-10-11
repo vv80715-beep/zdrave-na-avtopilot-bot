@@ -79,7 +79,9 @@ test('writes are keyed by Telegram ID and hydrate the owner V2.2 adapter in a ne
       message: 'Как да подобря съня си и да планирам меню с леща и ябълки?',
       profile: context.profile,
       longTermFacts: context.longTermFacts,
-      featureFlags: getOwnerScopedEliV22Flags(true),
+      featureFlags: getOwnerScopedEliV22Flags(true, {
+        env: { ELI_V2_2_OWNER_CANARY_ENABLED: 'true' },
+      }),
     });
     const other = buildOwnerV22Context(${JSON.stringify(OTHER_ID)});
     process.stdout.write(JSON.stringify({
