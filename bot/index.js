@@ -54,6 +54,9 @@ const {
 } = require('./brain/featureFlags');
 const { buildOwnerV22Context } = require('./brain/ownerV22Context');
 const { formatOwnerPersonalMemory } = require('./brain/ownerMemorySummary');
+const { createEliMemoryClient } = require('./brain/eliMemoryClient');
+const { createUniversalMemoryService } = require('./brain/universalMemoryService');
+const { createOwnerUniversalMemoryRuntime } = require('./brain/ownerUniversalMemoryRuntime');
 const {
   detectExplicitPreferenceCommand,
   saveExplicitPreference,
@@ -62,6 +65,15 @@ const {
   detectOwnerFitnessMemoryCommand,
   saveOwnerFitnessGoal,
 } = require('./ownerFitnessMemory');
+
+const eliMemoryClient = createEliMemoryClient();
+const universalMemoryService = createUniversalMemoryService({
+  repository: eliMemoryClient,
+});
+const ownerUniversalMemoryRuntime = createOwnerUniversalMemoryRuntime({
+  client: eliMemoryClient,
+  service: universalMemoryService,
+});
 
 const profileWizard = require('./scenes/profileWizard');
 const editWizard = require('./scenes/editWizard');
@@ -381,6 +393,21 @@ async function askEli(ctx, question, opts = {}) {
     }
     await replyWithMarkdownSafe(ctx, full);
   };
+
+  // Universal long-term memory is owner-only and remains inert unless both
+  // durable flags are explicitly enabled and the approved backend health
+  // contract is verified. Until then, preserve the existing local-memory path.
+  const universalMemoryResult = await ownerUniversalMemoryRuntime.handle({
+    userId: ctx.from.id,
+    isOwner: owner,
+    message: question,
+  });
+  if (universalMemoryResult.handled) {
+    await deliverDeterministic(universalMemoryResult.reply);
+    addConversation(ctx.from.id, 'user', question);
+    addConversation(ctx.from.id, 'assistant', 'Обработих заявка към защитената дългосрочна памет.');
+    return;
+  }
 
   // Explicit durable preference/habit requests are handled for both owner and
   // customers before health-log and LLM routing. The local relationship store
