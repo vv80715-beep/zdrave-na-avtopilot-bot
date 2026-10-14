@@ -5,7 +5,7 @@ const URL = 'https://aoaylzncorwakxcactox.supabase.co/functions/v1/avatar-meteri
 async function meterAvatar(action, userId, requestId, extra = {}, fetchFn = global.fetch, secret = process.env.BOT_PURCHASE_API_SECRET) {
   if (typeof secret !== 'string' || secret.trim().length < 32 ||
       secret === 'replace-with-at-least-32-random-characters') throw new Error('avatar_metering_unavailable');
-  if (!['allowance', 'reserve', 'get', 'begin', 'job', 'uncertain', 'failed', 'complete', 'pending'].includes(action) ||
+  if (!['allowance', 'reserve', 'get', 'begin', 'job', 'uncertain', 'failed', 'complete', 'withhold', 'pending'].includes(action) ||
       (action === 'reserve' && Object.hasOwn(extra, 'hold_seconds')) ||
       !/^[1-9]\d{4,18}$/.test(String(userId)) ||
       requestId !== `tg:${userId}:${requestId?.split(':')[2]}` ||
@@ -36,7 +36,7 @@ async function meterAvatar(action, userId, requestId, extra = {}, fetchFn = glob
     }
     const body = await response.json();
     if (!body || typeof body !== 'object' ||
-        !['eligible', 'exhausted', 'reserved', 'submitting', 'submitted', 'settled', 'failed', 'uncertain', 'none'].includes(body.status) ||
+        !['eligible', 'exhausted', 'reserved', 'submitting', 'submitted', 'settled', 'withheld', 'failed', 'uncertain', 'none'].includes(body.status) ||
         (['eligible','exhausted'].includes(body.status) &&
           (action !== 'allowance' || !Number.isSafeInteger(body.available_seconds) ||
           body.available_seconds < 0)) ||

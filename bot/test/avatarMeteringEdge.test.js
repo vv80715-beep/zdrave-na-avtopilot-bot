@@ -88,3 +88,22 @@ test('ordinary monthly/yearly actions retain customer RPC routing', async () => 
       action === 'pending' ? 'avatar_pending' : 'avatar_transition');
   }
 });
+
+test('withhold action routes to its separate customer and owner no-charge RPCs', async () => {
+  for (const user of [customer, owner]) {
+    calls.length = 0;
+    const res = await handleAvatarMetering(request({
+      ...body(user, 'withhold'),
+      video_id: 'video_12345678',
+      duration_seconds: 31,
+    }), config());
+    assert.equal(res.status, 200);
+    assert.equal(calls[0].name, user === owner ? 'avatar_owner_withhold' : 'avatar_withhold');
+    assert.deepEqual(calls[0].params, {
+      p_user: user,
+      p_request: `tg:${user}:12345`,
+      p_video_id: 'video_12345678',
+      p_duration: 31,
+    });
+  }
+});

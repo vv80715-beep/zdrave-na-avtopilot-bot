@@ -6,7 +6,7 @@ type HandlerConfig = {
   rpc: (name: string, params: Record<string, unknown>, key: string) => Promise<RpcResult>;
 };
 
-const actions = new Set(["allowance", "reserve", "get", "begin", "job", "uncertain", "failed", "complete", "pending"]);
+const actions = new Set(["allowance", "reserve", "get", "begin", "job", "uncertain", "failed", "complete", "withhold", "pending"]);
 const fields = new Set(["action", "telegram_user_id", "request_id", "video_id", "duration_seconds", "video_url"]);
 function reply(status: number, body: Record<string, unknown>) {
   return new Response(JSON.stringify(body), {
@@ -50,7 +50,10 @@ export async function handleAvatarMetering(req: Request, config: HandlerConfig):
   // a bypass; an ordinary user cannot set it in the authenticated JSON body.
   const trustedOwner = config.ownerId?.trim();
   const owner = !!trustedOwner && /^[1-9][0-9]{4,18}$/.test(trustedOwner) && user === trustedOwner;
-  const params = owner
+  const params = action === "withhold"
+    ? { p_user: user, p_request: id,
+        p_video_id: input.video_id ?? null, p_duration: input.duration_seconds ?? null }
+    : owner
     ? { p_user: user, p_request: id, p_action: action,
         p_video_id: input.video_id ?? null, p_duration: input.duration_seconds ?? null,
         p_video_url: input.video_url ?? null }
@@ -59,7 +62,8 @@ export async function handleAvatarMetering(req: Request, config: HandlerConfig):
     : { p_user: user, p_request: id, p_action: action,
         p_video_id: input.video_id ?? null, p_duration: input.duration_seconds ?? null,
         p_video_url: input.video_url ?? null };
-  const rpcName = owner ? "avatar_owner_meter" : action === "reserve" ? "avatar_reserve"
+  const rpcName = owner ? action === "withhold" ? "avatar_owner_withhold" : "avatar_owner_meter"
+    : action === "withhold" ? "avatar_withhold" : action === "reserve" ? "avatar_reserve"
     : action === "pending" ? "avatar_pending" : action === "allowance" ? "avatar_allowance" : "avatar_transition";
   try {
     const { data, error } = await config.rpc(rpcName, params, config.serviceKey);

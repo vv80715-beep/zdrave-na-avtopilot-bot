@@ -137,6 +137,8 @@ fake('avatarMeteringClient', {
     else if (action === 'job' && row.status === 'submitting') { row.status = 'submitted'; row.video_id = extra.video_id; }
     else if (action === 'complete' && row.status === 'submitted') {
       row.status = 'settled'; row.duration_seconds = extra.duration_seconds; row.video_url = extra.video_url;
+    } else if (action === 'withhold' && row.status === 'submitted') {
+      row.status = 'withheld'; row.duration_seconds = extra.duration_seconds; row.video_url = null;
     } else if (action === 'failed' || action === 'uncertain') row.status = action;
     return { ...row };
   },
@@ -313,8 +315,8 @@ test('submitted job is accounted after plan expiry but cannot deliver an expired
   assert.equal(state.get(request).status, 'settled');
   entitlementAllowed = true;
 });
-test('14s and 20s videos deliver; 21s and 28s settle actual use but are withheld without retry', async () => {
-  for (const durationSeconds of [14, 20, 21, 28]) {
+test('14s and 20s deliver; 21s through 45s are durably withheld with no customer charge or retry', async () => {
+  for (const durationSeconds of [14, 20, 21, 28, 30, 31, 45]) {
     result = { url: 'https://cdn.example/avatar.mp4', durationSeconds };
     const c = ctx();
     const request = `tg:900000001:${c.update.update_id}`;
@@ -325,7 +327,7 @@ test('14s and 20s videos deliver; 21s and 28s settle actual use but are withheld
     });
 
     assert.equal(delivered, durationSeconds <= 20);
-    assert.equal(state.get(request).status, 'settled');
+    assert.equal(state.get(request).status, durationSeconds <= 20 ? 'settled' : 'withheld');
     assert.equal(state.get(request).duration_seconds, durationSeconds);
     assert.equal(c.sent.videos, durationSeconds <= 20 ? 1 : 0);
     assert.deepEqual(overLimit, durationSeconds <= 20 ? [] : [durationSeconds]);
@@ -338,7 +340,7 @@ test('14s and 20s videos deliver; 21s and 28s settle actual use but are withheld
   }
   result = { url: 'https://cdn.example/avatar.mp4', durationSeconds: 12 };
 });
-test('completed video longer than reserved time is quarantined without delivery', async () => {
+test('completed 31-second job releases the hold, is not charged, and replay does not regenerate', async () => {
   result = { url: 'https://cdn.example/avatar.mp4', durationSeconds: 31 };
   let warned = false;
   const c = ctx();
@@ -348,12 +350,15 @@ test('completed video longer than reserved time is quarantined without delivery'
   assert.equal(await sendAvatarReply(c, 'Здравей', {
     onPending: () => { warned = true; },
   }), false);
-  assert.equal(warned, true);
+  assert.equal(warned, false);
   assert.equal(c.sent.videos, 0);
-  assert.equal(state.get(request).status, 'submitted');
+  assert.equal(state.get(request).status, 'withheld');
+  assert.equal(state.get(request).duration_seconds, 31);
+  assert.equal(state.get(request).video_url, null);
   assert.equal(providerCalls, before, 'reconciling a completed job must not issue another provider POST');
-  // Discard this isolated fixture so later test cases start independently.
-  state.delete(request);
+  assert.equal(await sendAvatarReply(ctx(c.update.update_id), 'Повторение.'), false);
+  assert.equal(providerCalls, before, 'a simulated restart/replay must not submit another paid job');
+  assert.equal(state.get(request).status, 'withheld');
   result = { url: 'https://cdn.example/avatar.mp4', durationSeconds: 12 };
 });
 test('Telegram video failure logs delivery stage and leaves settled accounting and next request intact', async () => {

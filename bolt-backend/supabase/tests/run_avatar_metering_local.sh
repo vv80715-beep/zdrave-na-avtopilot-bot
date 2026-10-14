@@ -43,6 +43,7 @@ INSERT INTO public.avatar_addon_balances(telegram_user_id,purchased_seconds,used
  VALUES(920000001,100,12);
 SQL
 sql -f "$dir/../migrations/20261001120000_avatar_addon_reservations.sql"
+sql -f "$dir/../migrations/20261014190000_avatar_withheld_result_reconciliation.sql"
 sql <<'SQL'
 DO $$ BEGIN
  IF NOT EXISTS(SELECT 1 FROM public.avatar_generation_reservations

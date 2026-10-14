@@ -96,7 +96,7 @@ async function sendAvatarReply(ctx, replyText, opts = {}) {
       } else {
         trace.stage = 'allowance';
         const allowance = await meterAvatar('allowance', userId, requestId);
-        if (['settled', 'failed', 'submitting', 'uncertain'].includes(allowance.status)) return false;
+         if (['settled', 'withheld', 'failed', 'submitting', 'uncertain'].includes(allowance.status)) return false;
         if (allowance.status === 'exhausted') { trace.reason = 'total_quota_exhausted'; opts.onQuotaExceeded?.(); return false; }
         if (allowance.status !== 'eligible' && allowance.status !== 'reserved') return false;
         if ((allowance.status === 'eligible' && allowance.available_seconds < AVATAR_HOLD_SECONDS) ||
@@ -114,7 +114,7 @@ async function sendAvatarReply(ctx, replyText, opts = {}) {
       if (error?.code === 'avatar_pending_reconciliation') opts.onPending?.();
       throw error;
     }
-    if (reservation.status === 'settled' || reservation.status === 'failed' ||
+    if (reservation.status === 'settled' || reservation.status === 'withheld' || reservation.status === 'failed' ||
         reservation.status === 'submitting' || reservation.status === 'uncertain') return false;
     let videoId = reservation.video_id;
     if (reservation.status === 'reserved') {
@@ -190,13 +190,42 @@ async function sendAvatarReply(ctx, replyText, opts = {}) {
       }
       return false;
     }
-    // The text-to-video endpoint has no verified duration bound before its
-    // paid POST. A video above 30 seconds therefore cannot be reconciled
-    // automatically: retain the submitted hold for manual review, never debit
-    // excess available seconds and never deliver an unaccounted paid video.
+    // HeyGen's reported duration is authoritative only after a completed status.
+    // Missing/invalid duration stays submitted for later reconciliation; never
+    // release an ambiguous job or fabricate a duration.
     trace.stage = 'duration_validation';
     if (!video || !Number.isInteger(video.durationSeconds) ||
-        video.durationSeconds > reservation.hold_seconds) {
+        video.durationSeconds <= 0 || video.durationSeconds > 600) {
+      opts.onPending?.();
+      return false;
+    }
+    // A video above the delivery cap is a confirmed provider success but an
+    // undelivered customer outcome. Store that fact and release only its hold;
+    // do not create a customer usage event or charge included/add-on minutes.
+    if (video.durationSeconds > MAX_DELIVERED_AVATAR_SECONDS) {
+      let withheld;
+      try {
+        trace.stage = 'withheld_reconciliation';
+        withheld = await meterAvatar('withhold', userId, activeRequestId, {
+          video_id: videoId,
+          duration_seconds: video.durationSeconds,
+        });
+      } catch (error) {
+        opts.onPending?.();
+        throw error;
+      }
+      if (withheld.status !== 'withheld' ||
+          withheld.duration_seconds !== video.durationSeconds ||
+          withheld.video_id !== videoId) {
+        opts.onPending?.();
+        return false;
+      }
+      trace.stage = 'duration_validation';
+      trace.reason = 'video_over_delivery_limit';
+      opts.onDurationExceeded?.(video.durationSeconds);
+      return false;
+    }
+    if (video.durationSeconds > reservation.hold_seconds) {
       opts.onPending?.();
       return false;
     }
@@ -216,12 +245,6 @@ async function sendAvatarReply(ctx, replyText, opts = {}) {
         settled.video_url !== video.url) return false;
     trace.stage = 'delivery_authorization';
     if (!credits.allowed) return false;
-    if (video.durationSeconds > MAX_DELIVERED_AVATAR_SECONDS) {
-      trace.stage = 'duration_validation';
-      trace.reason = 'video_over_delivery_limit';
-      opts.onDurationExceeded?.(video.durationSeconds);
-      return false;
-    }
     trace.stage = 'telegram_video';
     await ctx.replyWithVideo(
       { url: video.url },

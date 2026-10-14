@@ -280,3 +280,57 @@ SELECT pg_temp.ok((public.avatar_owner_meter(900000021,'tg:900000021:21001','res
 SELECT pg_temp.ok((SELECT sum(included_seconds_charged)=1800 AND sum(addon_seconds_charged)=0
  FROM public.avatar_usage_events WHERE telegram_user_id=900000021),
   'owner reservation cannot spend customer allowance or add-ons');
+
+-- A confirmed 45-second render is recorded as provider-complete but withheld:
+-- neither the included ledger nor purchased add-on balance is charged.
+INSERT INTO public.entitlements VALUES
+(900000030,'monthly','active','paid',now()-interval '1 day',now()-interval '1 day',now()+interval '29 days',now()+interval '29 days');
+INSERT INTO public.avatar_usage_events
+ (telegram_user_id,request_id,duration_seconds,period_start,period_end,included_seconds_charged,addon_seconds_charged)
+ SELECT telegram_user_id,'overrun-prior-usage',1785,current_period_start,current_period_end,1785,0
+ FROM public.entitlements WHERE telegram_user_id=900000030;
+INSERT INTO public.avatar_addon_balances(telegram_user_id,purchased_seconds,used_seconds)
+ VALUES(900000030,30,5);
+SELECT pg_temp.ok((public.avatar_reserve(900000030,'tg:900000030:30001')->>'status')='reserved',
+  '30-second overrun reservation succeeds across included and add-on funds');
+SELECT pg_temp.ok((SELECT held_included_seconds=15 AND held_addon_seconds=15
+ FROM public.avatar_generation_reservations WHERE request_id='tg:900000030:30001'),
+  'overrun hold preserves included-first funding split');
+SELECT public.avatar_transition(900000030,'tg:900000030:30001','begin');
+SELECT public.avatar_transition(900000030,'tg:900000030:30001','job','video_30000001');
+SELECT pg_temp.ok((public.avatar_withhold(900000030,'tg:900000030:30001','video_30000001',45)->>'status')='withheld',
+  'confirmed 45-second success is recorded as withheld, not failed or settled');
+SELECT pg_temp.ok((SELECT status='withheld' AND duration_seconds=45 AND video_url IS NULL
+ FROM public.avatar_generation_reservations WHERE request_id='tg:900000030:30001'),
+  'withheld row retains factual provider duration without a deliverable URL');
+SELECT pg_temp.ok((SELECT count(*)=0 FROM public.avatar_usage_events WHERE request_id='tg:900000030:30001'),
+  'undelivered render has no customer usage debit');
+SELECT pg_temp.ok((SELECT used_seconds=5 FROM public.avatar_addon_balances WHERE telegram_user_id=900000030),
+  'undelivered render does not consume purchased add-on minutes');
+SELECT pg_temp.ok((public.avatar_allowance(900000030,'tg:900000030:30002')->>'available_seconds')::int=40,
+  'withheld completion releases both included and add-on reservation funds');
+SELECT pg_temp.ok((public.avatar_pending(900000030)->>'status')='none',
+  'withheld completion no longer blocks later work');
+SELECT pg_temp.ok((public.avatar_withhold(900000030,'tg:900000030:30001','video_30000001',45)->>'status')='withheld',
+  'duplicate withheld reconciliation is idempotent');
+DO $$ BEGIN
+  PERFORM public.avatar_withhold(900000030,'tg:900000030:30001','video_30000001',46);
+  RAISE EXCEPTION 'mismatched duplicate duration accepted';
+EXCEPTION WHEN OTHERS THEN
+  IF SQLERRM='mismatched duplicate duration accepted' THEN RAISE; END IF;
+END $$;
+
+-- Owner generations use the same confirmed-result cleanup but remain outside
+-- the customer included/add-on ledger.
+SELECT pg_temp.ok((public.avatar_owner_meter(900000021,'tg:900000021:21002','reserve')->>'status')='reserved',
+  'owner can reserve a separate generation after a terminal prior request');
+SELECT public.avatar_owner_meter(900000021,'tg:900000021:21002','begin');
+SELECT public.avatar_owner_meter(900000021,'tg:900000021:21002','job','video_owner_21002');
+SELECT pg_temp.ok((public.avatar_owner_withhold(900000021,'tg:900000021:21002','video_owner_21002',31)->>'status')='withheld',
+  'owner overlong render is terminal without customer charge');
+SELECT pg_temp.ok((SELECT status='withheld' AND duration_seconds=31
+ FROM public.avatar_owner_generations WHERE request_id='tg:900000021:21002'),
+  'owner row retains actual overlong duration');
+SELECT pg_temp.ok((SELECT sum(included_seconds_charged)=1800 AND sum(addon_seconds_charged)=0
+ FROM public.avatar_usage_events WHERE telegram_user_id=900000021),
+  'owner withheld render leaves customer included and add-on usage unchanged');
