@@ -251,6 +251,13 @@ function createAskEliHarness(readers, options = {}) {
     OWNER_NAME: 'Данаил',
     OWNER_MEMORY,
     formatOwnerPersonalMemory: require('../brain/ownerMemorySummary').formatOwnerPersonalMemory,
+    getOwnerDossierEntries: () => [],
+    applyOwnerDossierMemoryCommand: () => null,
+    detectOwnerDossierQuestion: () => null,
+    answerOwnerDossierQuestion: () => 'MOCK OWNER DOSSIER ANSWER',
+    formatOwnerDossierSummary: () => '',
+    buildOwnerDossierPrompt: () => '',
+    clearOwnerDossier: () => true,
     formatFullMemory: (userId) => {
       memoryReads.push(['formatFullMemory', userId]);
       return `CUSTOMER_STORED_FACTS:${userId}`;

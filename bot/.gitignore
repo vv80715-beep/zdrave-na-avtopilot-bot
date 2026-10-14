@@ -9,6 +9,7 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 relationship_memory.json
+owner_dossier.json
 avatar_mode.json
 avatar_claims.json
 entitlements.json

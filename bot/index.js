@@ -64,6 +64,14 @@ const {
   detectOwnerFitnessMemoryCommand,
   saveOwnerFitnessGoal,
 } = require('./ownerFitnessMemory');
+const {
+  applyOwnerDossierMemoryCommand,
+  detectOwnerDossierQuestion,
+  answerOwnerDossierQuestion,
+  formatOwnerDossierSummary,
+  buildOwnerDossierPrompt,
+  clearOwnerDossier,
+} = require('./ownerDossier');
 
 const eliMemoryClient = createEliMemoryClient();
 const universalMemoryService = createUniversalMemoryService({
@@ -326,6 +334,7 @@ async function askEli(ctx, question, opts = {}) {
   if (!status) return; // expired trial — static message already sent
 
   const owner = isOwner(ctx);
+  const ownerDossierQuestion = owner ? detectOwnerDossierQuestion(question) : null;
   const ownerFitnessCommand = owner
     ? detectOwnerFitnessMemoryCommand(question)
     : null;
@@ -531,7 +540,9 @@ async function askEli(ctx, question, opts = {}) {
   // verified records instead of a model guess.
   const memCmd = detectMemoryCommand(question);
   if (memCmd) {
-    const reply = applyMemoryCommand(ctx.from.id, memCmd);
+    const dossierReply = owner ? applyOwnerDossierMemoryCommand(ctx.from.id, memCmd) : null;
+    if (owner && memCmd.all) clearOwnerDossier(ctx.from.id);
+    const reply = dossierReply || applyMemoryCommand(ctx.from.id, memCmd);
     if (reply) {
       await deliverDeterministic(reply);
       addConversation(ctx.from.id, 'user', question);
@@ -540,12 +551,22 @@ async function askEli(ctx, question, opts = {}) {
     }
   }
 
+  if (owner && ownerDossierQuestion) {
+    await deliverDeterministic(answerOwnerDossierQuestion(ctx.from.id, ownerDossierQuestion));
+    return;
+  }
+
   // If the user explicitly asks what Eli knows about them ("Какво знаеш за
   // мен?", "Покажи ми профила", "What do you know about me?"), answer straight
   // from stored data — never let the model invent or paraphrase it.
   if (isProfileQuery(question)) {
     if (owner) {
-      const ownerProfileAnswer = formatOwnerPersonalMemory(v22OwnerContext);
+      const ownerProfileAnswer = [
+        formatOwnerPersonalMemory({
+          ...v22OwnerContext,
+        }),
+        formatOwnerDossierSummary(ctx.from.id),
+      ].filter(Boolean).join('\n\n');
       await deliverDeterministic(ownerProfileAnswer);
       return;
     }
@@ -611,7 +632,8 @@ async function askEli(ctx, question, opts = {}) {
   let systemContent = SYSTEM_PROMPT;
   let priorMessages = [];
   if (owner) {
-    systemContent = `${OWNER_MEMORY}\n\n${SYSTEM_PROMPT}`;
+    const ownerDossierPrompt = buildOwnerDossierPrompt(ctx.from.id, question);
+    systemContent = `${ownerDossierPrompt ? `${ownerDossierPrompt}\n\n` : ''}${OWNER_MEMORY}\n\n${SYSTEM_PROMPT}`;
     // Full conversation turns remain RAM-only; explicitly captured long-term
     // facts live separately in relationship_memory.json.
     priorMessages = ownerRecentTurns(ctx.from.id);
