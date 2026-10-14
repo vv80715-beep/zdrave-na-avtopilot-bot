@@ -11,7 +11,7 @@
 
 const { isHeyGenConfigured } = require('./heygenConfig');
 const { requestAvatarVideo, waitForVideoResult, capForAvatar } = require('./heygenService');
-const { isApprovedLookId } = require('./avatarLooks');
+const { LOOKS, isApprovedLookId } = require('./avatarLooks');
 const { checkFeatureCredits } = require('./credits');
 const { meterAvatar } = require('./avatarMeteringClient');
 const { isOwner } = require('./adminGuard');
@@ -59,8 +59,9 @@ async function sendAvatarReply(ctx, replyText, opts = {}) {
   if (!text) return false;
 
   // Context-aware Look: accept ONLY allowlisted Look IDs (server-side map in
-  // avatarLooks.js). Anything else → undefined → configured default avatar.
-  const lookId = isApprovedLookId(opts.lookId) ? opts.lookId : undefined;
+  // avatarLooks.js). Missing or invalid values use the approved night-city
+  // default Look, never the legacy configured avatar scene.
+  const lookId = isApprovedLookId(opts.lookId) ? opts.lookId : LOOKS.default;
   const requestId = `tg:${userId}:${updateId}`;
   inFlight.add(userId);
   try {

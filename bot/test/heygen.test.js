@@ -17,6 +17,7 @@ process.env.AVATAR_CLAIMS_PATH = path.join(tmp, 'avatar_claims.json');
 const { capForAvatar, requestAvatarVideo, waitForVideoResult, MAX_AVATAR_TEXT_CHARS } = require('../heygenService');
 const { getMode, setMode, isAvatarMode } = require('../avatarModeStorage');
 const { checkAvatarCredits, sendAvatarReply } = require('../avatarService');
+const { LOOKS } = require('../avatarLooks');
 
 // ── capForAvatar (cost control) ──────────────────────────────────────────────
 
@@ -142,7 +143,7 @@ test('original text/VOICE_ID generation and V1 status charge rounded actual dura
       assert.strictEqual(body.video_inputs[0].voice.type, 'text');
       assert.strictEqual(body.video_inputs[0].voice.input_text, 'Здравей, приятелю!');
       assert.strictEqual(body.video_inputs[0].voice.voice_id, 'offline-voice-id');
-      assert.strictEqual(body.video_inputs[0].character.avatar_id, 'offline-look-id');
+      assert.strictEqual(body.video_inputs[0].character.avatar_id, LOOKS.calm);
       assert.ok(!JSON.stringify(body).includes('audio_asset_id'));
       return { ok: true, json: async () => ({ data: { video_id: 'video_12345678' } }) };
     }
@@ -152,7 +153,7 @@ test('original text/VOICE_ID generation and V1 status charge rounded actual dura
     } }) };
   };
   try {
-    const id = await requestAvatarVideo('Здравей, приятелю!', 'offline-look-id');
+    const id = await requestAvatarVideo('Здравей, приятелю!', LOOKS.calm);
     assert.strictEqual(id, 'video_12345678');
     const result = await waitForVideoResult(id, { intervalMs: 1 });
     assert.deepStrictEqual(result, { url: 'https://cdn.example/avatar.mp4', durationSeconds: 12 });

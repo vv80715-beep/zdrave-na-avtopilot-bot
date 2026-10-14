@@ -56,6 +56,10 @@ test('/mode -> select Avatar -> как си invokes Avatar, not text delivery', 
     maybeHandleCommandText: async () => false,
     isOwner: () => true, touchConversationState: () => 'continuing',
     getOwnerScopedEliV22Flags: owner => owner ? canaryFlags : disabledFlags,
+    ownerUniversalMemoryRuntime: {
+      prepareContext: async () => ({ flags: canaryFlags, facts: [], loaded: false }),
+      handle: async () => ({ handled: false }),
+    },
     buildOwnerV22Context: userId => {
       assert.equal(String(userId), String(ctx.from.id));
       return ownerV22Context;
@@ -68,10 +72,12 @@ test('/mode -> select Avatar -> как си invokes Avatar, not text delivery', 
       rememberExchange: () => {},
     },
     isProfileQuery: () => false,
+    detectExplicitPreferenceCommand: () => null,
     detectOwnerFitnessMemoryCommand: () => null,
     saveOwnerFitnessGoal: () => ({ ok: false, reason: 'invalid' }),
     getOwnerRelationshipMemoryCaptureEnabled: () => false,
     detectMemoryCommand: () => null,
+    isExplicitMemoryCue: () => false,
     resolveLogQuery: () => null,
     extractHealthEvents: () => [], ownerRecentTurns: () => [],
     ownerRememberTurn: () => {}, conversationFlowNote: () => '',

@@ -132,15 +132,19 @@ test('angry/tense Bulgarian wording resolves to calm', () => {
 test('grief/sadness wording resolves to deep_support (beats calm)', () => {
   assert.equal(classifyUserContext('Много ми е тъжно и се чувствам самотна'), 'deep_support');
   assert.equal(classifyUserContext('плаках цяла нощ и не издържам'), 'deep_support');
+  assert.equal(classifyUserContext('Тъжно ми е и съм напрегната'), 'deep_support');
 });
 
 test('motivation wording resolves to motivation', () => {
   assert.equal(classifyUserContext('Успях! Днес постигнах целта си!'), 'motivation');
   assert.equal(classifyUserContext('нямам мотивация да продължа'), 'motivation');
+  assert.equal(classifyUserContext('Много се радвам, че успях!'), 'motivation');
+  assert.equal(classifyUserContext('Толкова съм щастлива от тази новина!'), 'motivation');
 });
 
 test('plan/structure wording resolves to coach', () => {
   assert.equal(classifyUserContext('Дай ми план и програма за седмицата'), 'coach');
+  assert.equal(classifyUserContext('Ядосана съм, дай ми план за разговора'), 'calm');
 });
 
 test('substring/topic mentions do NOT hijack the Look (word boundaries + intent gate)', () => {
@@ -183,6 +187,19 @@ test('arbitrary IDs are rejected by the allowlist', () => {
   assert.ok(!isApprovedLookId('deadbeefdeadbeefdeadbeefdeadbeef'));
   assert.ok(!isApprovedLookId(''));
   assert.ok(!isApprovedLookId(null));
+});
+
+test('missing or invalid Look IDs fall back to the approved default Look', async () => {
+  heygenCalls = [];
+  heygenShouldFail = false;
+  for (const uid of [90004, 90005]) activatePlan(uid, 'monthly');
+
+  assert.equal(
+    await sendAvatarReply(fakeCtx(90004), 'Проверка.', { lookId: 'not-an-approved-look' }),
+    true
+  );
+  assert.equal(await sendAvatarReply(fakeCtx(90005), 'Проверка.'), true);
+  assert.deepEqual(heygenCalls.map((call) => call.lookId), [LOOKS.default, LOOKS.default]);
 });
 
 test('a clear context switch changes the Look immediately (no debounce trap)', () => {
@@ -252,12 +269,12 @@ test('provider submission failure: no waiting message or video, caller falls bac
   heygenShouldFail = false;
 });
 
-test('unapproved lookId is discarded server-side (falls to configured default)', async () => {
+test('unapproved lookId uses the approved night-city default Look', async () => {
   heygenCalls = [];
   const uid = 90005;
   activatePlan(uid, 'monthly');
   const ctx = fakeCtx(uid);
   const ok = await sendAvatarReply(ctx, 'Здравей!', { lookId: 'evil-injected-id' });
   assert.equal(ok, true);
-  assert.equal(heygenCalls[0].lookId, undefined);
+  assert.equal(heygenCalls[0].lookId, LOOKS.default);
 });
