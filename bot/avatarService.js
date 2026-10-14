@@ -28,6 +28,7 @@ const inFlight = new Set();
 // Static waiting notice shown only when a real avatar generation is starting.
 const WAITING_MESSAGE = '🎬 Ели подготвя видео отговора си… Моля, изчакай малко. ✨';
 const AVATAR_HOLD_SECONDS = 30;
+const MAX_DELIVERED_AVATAR_SECONDS = 20;
 
 // Sends Eli's reply as a HeyGen avatar video to the same chat.
 // Returns true when a video was sent; false when it fell back (caller's text
@@ -215,6 +216,12 @@ async function sendAvatarReply(ctx, replyText, opts = {}) {
         settled.video_url !== video.url) return false;
     trace.stage = 'delivery_authorization';
     if (!credits.allowed) return false;
+    if (video.durationSeconds > MAX_DELIVERED_AVATAR_SECONDS) {
+      trace.stage = 'duration_validation';
+      trace.reason = 'video_over_delivery_limit';
+      opts.onDurationExceeded?.(video.durationSeconds);
+      return false;
+    }
     trace.stage = 'telegram_video';
     await ctx.replyWithVideo(
       { url: video.url },

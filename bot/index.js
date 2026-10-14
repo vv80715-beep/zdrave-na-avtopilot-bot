@@ -647,12 +647,11 @@ async function askEli(ctx, question, opts = {}) {
   // generation time, before the last-resort provider text-length cap.
   if (avatarMode) {
     systemContent +=
-      '\n\nВАЖНО ЗА ВИДЕО АВАТАРА: Напиши кратък естествен говорим текст на български, ' +
-      'обикновено за около 8–15 секунди (ориентир 20–40 думи). Само когато е ' +
-      'наистина необходимо, до около 20 секунди. Не повтаряй въпроса, не добавяй ' +
-      'представяне, пълнеж или излишни обяснения. Дай една основна смислена идея ' +
-      'и една полезна следваща стъпка. Бъди топла, лична и интересна, без роботизиран ' +
-      'тон или изкуствено отсичане. Максимална стойност в минимално нужното време.' +
+      '\n\nВАЖНО ЗА ВИДЕО АВАТАРА: Напиши естествен говорим текст на български, ' +
+      'обикновено за 8–15 секунди и ориентировъчно 20–22 думи. Изрази една основна ' +
+      'мисъл и една конкретна следваща стъпка; без подробен списък, повторения, ' +
+      'представяне или пълнеж. Използвай кратки, завършени изречения и запази топлия ' +
+      'естествен тон и обичайната скорост на говор. Не съкращавай дума или изречение.' +
       // Same AI call also classifies the conversation context for the avatar
       // Look (one constrained tag, stripped server-side — never user-visible).
       LOOK_PROMPT_NOTE;
@@ -722,16 +721,20 @@ async function askEli(ctx, question, opts = {}) {
       let avatarTimeExhausted = false;
       let pendingAvatar = false;
       let insufficientAvatarTime = false;
+      let avatarDurationExceeded = false;
       const ok = await sendAvatarReply(ctx, finalAnswer, {
         lookId, onQuotaExceeded: () => { avatarTimeExhausted = true; },
         onPending: () => { pendingAvatar = true; },
         onInsufficientTime: () => { insufficientAvatarTime = true; },
+        onDurationExceeded: () => { avatarDurationExceeded = true; },
       });
       if (!ok) {
         await ctx.reply(avatarTimeExhausted
           ? `${finalAnswer}\n\n🎬 Общото налично време за видео аватара (включено и допълнително закупено) е изчерпано. Давам ти отговора с текст.`
           : insufficientAvatarTime
             ? `${finalAnswer}\n\n🎬 Общото оставащо време за видео аватара не стига за този видеоотговор. Давам ти отговора с текст, без да отнемам минути.`
+            : avatarDurationExceeded
+              ? `${finalAnswer}\n\n🎬 Готовото видео надхвърли лимита от 20 секунди, затова не го изпращам. Отчитам реалната продължителност и ти давам пълния отговор с текст; няма да стартирам второ видео автоматично.`
           : pendingAvatar
             ? `${finalAnswer}\n\n🎬 Предишно видео все още се проверява. Няма да започвам ново, докато състоянието му не е потвърдено.`
           : finalAnswer);

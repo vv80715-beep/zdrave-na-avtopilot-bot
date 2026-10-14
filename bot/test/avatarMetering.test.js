@@ -65,13 +65,12 @@ test('fallback wording describes total funds without promising next-period deliv
   assert.match(source, /Общото оставащо време за видео аватара/);
   assert.doesNotMatch(source, /Включените минути за видео аватара|до началото на следващия период/);
 });
-test('Avatar-only script prompt requests 8–15 seconds, an idea and actionable step', () => {
+test('Avatar-only script prompt requests 8–15 seconds and a concise idea with one next step', () => {
   const index = fs.readFileSync(require.resolve('../index'), 'utf8');
   assert.match(index, /8–15 секунди/);
-  assert.match(index, /20 секунди/);
-  assert.match(index, /необходима|наистина необходимо/);
-  assert.match(index, /една основна смислена идея/);
-  assert.match(index, /една полезна следваща стъпка/);
+  assert.match(index, /20–22 думи/);
+  assert.match(index, /една основна/);
+  assert.match(index, /една конкретна следваща стъпка/);
   assert.match(index, /max_tokens: avatarMode \? 125 : voiceMode \? 300/);
 });
 
@@ -314,18 +313,45 @@ test('submitted job is accounted after plan expiry but cannot deliver an expired
   assert.equal(state.get(request).status, 'settled');
   entitlementAllowed = true;
 });
+test('14s and 20s videos deliver; 21s and 28s settle actual use but are withheld without retry', async () => {
+  for (const durationSeconds of [14, 20, 21, 28]) {
+    result = { url: 'https://cdn.example/avatar.mp4', durationSeconds };
+    const c = ctx();
+    const request = `tg:900000001:${c.update.update_id}`;
+    const before = providerCalls;
+    const overLimit = [];
+    const delivered = await sendAvatarReply(c, 'Кратък пълен отговор.', {
+      onDurationExceeded: (seconds) => overLimit.push(seconds),
+    });
+
+    assert.equal(delivered, durationSeconds <= 20);
+    assert.equal(state.get(request).status, 'settled');
+    assert.equal(state.get(request).duration_seconds, durationSeconds);
+    assert.equal(c.sent.videos, durationSeconds <= 20 ? 1 : 0);
+    assert.deepEqual(overLimit, durationSeconds <= 20 ? [] : [durationSeconds]);
+    assert.equal(providerCalls, before + 1);
+
+    if (durationSeconds > 20) {
+      assert.equal(await sendAvatarReply(ctx(c.update.update_id), 'Повторение.'), false);
+      assert.equal(providerCalls, before + 1, 'a withheld paid job must not be generated twice');
+    }
+  }
+  result = { url: 'https://cdn.example/avatar.mp4', durationSeconds: 12 };
+});
 test('completed video longer than reserved time is quarantined without delivery', async () => {
   result = { url: 'https://cdn.example/avatar.mp4', durationSeconds: 31 };
   let warned = false;
   const c = ctx();
   const request = `tg:900000001:${c.update.update_id}`;
   state.set(request, { status: 'submitted', video_id: 'video_12345678', hold_seconds: 30 });
+  const before = providerCalls;
   assert.equal(await sendAvatarReply(c, 'Здравей', {
     onPending: () => { warned = true; },
   }), false);
   assert.equal(warned, true);
   assert.equal(c.sent.videos, 0);
   assert.equal(state.get(request).status, 'submitted');
+  assert.equal(providerCalls, before, 'reconciling a completed job must not issue another provider POST');
   // Discard this isolated fixture so later test cases start independently.
   state.delete(request);
   result = { url: 'https://cdn.example/avatar.mp4', durationSeconds: 12 };

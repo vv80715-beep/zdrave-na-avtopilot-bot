@@ -16,7 +16,7 @@ test('/mode -> select Avatar -> как си invokes Avatar, not text delivery', 
   const commands = new Map(), hears = new Map(), handlers = new Map();
   const modes = new Map();
   const status = { canChat: true, plan: 'owner', allowedModes: ['text', 'voice', 'avatar'] };
-  let avatars = 0, voices = 0;
+  let avatars = 0, voices = 0, triggerOverlong = false;
   const replies = [];
   const canaryFlags = {
     aiBrain: true,
@@ -87,7 +87,14 @@ test('/mode -> select Avatar -> как си invokes Avatar, not text delivery', 
     openai: { chat: { completions: { create: async () => ({
       choices: [{ message: { content: 'Добре съм.' } }],
     }) } } },
-    sendAvatarReply: async () => { avatars++; return true; },
+    sendAvatarReply: async (_ctx, _text, opts) => {
+      avatars++;
+      if (triggerOverlong) {
+        opts.onDurationExceeded?.(28);
+        return false;
+      }
+      return true;
+    },
     sendVoiceReply: async () => { voices++; return true; },
     console: { error: (...args) => assert.fail(args.join(' ')) },
   };
@@ -110,4 +117,12 @@ test('/mode -> select Avatar -> как си invokes Avatar, not text delivery', 
   assert.deepEqual(v22Inputs.at(-1).profile, ownerV22Context.profile);
   assert.deepEqual(v22Inputs.at(-1).longTermFacts, ownerV22Context.longTermFacts);
   assert.deepEqual(replies, [], 'normal message must not use text delivery');
+
+  triggerOverlong = true;
+  await handlers.get('text')(ctx);
+  assert.equal(avatars, 2);
+  assert.equal(voices, 0);
+  assert.match(replies.at(-1), /^Добре съм\./, 'the existing AI answer remains the text fallback');
+  assert.match(replies.at(-1), /надхвърли лимита от 20 секунди/);
+  assert.match(replies.at(-1), /няма да стартирам второ видео автоматично/);
 });

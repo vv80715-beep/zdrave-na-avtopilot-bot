@@ -14,7 +14,13 @@ process.env.AVATAR_MODE_PATH = path.join(tmp, 'avatar_mode.json');
 process.env.ENTITLEMENTS_PATH = path.join(tmp, 'entitlements.json');
 process.env.AVATAR_CLAIMS_PATH = path.join(tmp, 'avatar_claims.json');
 
-const { capForAvatar, requestAvatarVideo, waitForVideoResult, MAX_AVATAR_TEXT_CHARS } = require('../heygenService');
+const {
+  capForAvatar,
+  requestAvatarVideo,
+  waitForVideoResult,
+  MAX_AVATAR_TEXT_CHARS,
+  MAX_AVATAR_WORDS,
+} = require('../heygenService');
 const { getMode, setMode, isAvatarMode } = require('../avatarModeStorage');
 const { checkAvatarCredits, sendAvatarReply } = require('../avatarService');
 const { LOOKS } = require('../avatarLooks');
@@ -29,14 +35,29 @@ test('short Bulgarian text passes through unchanged', () => {
 test('long text is capped under the limit', () => {
   const long = 'Едно дълго изречение за здравето и съня. '.repeat(30);
   const capped = capForAvatar(long);
-  assert.ok(capped.length <= MAX_AVATAR_TEXT_CHARS + 1);
+  assert.ok(capped.length <= MAX_AVATAR_TEXT_CHARS);
+  assert.ok(capped.split(/\s+/u).length <= MAX_AVATAR_WORDS);
 });
 
-test('capping prefers a sentence boundary', () => {
+test('long Bulgarian answers keep only complete sentences within word and character limits', () => {
   const long =
-    'Първо изречение за водата. Второ изречение за съня. ' + 'х'.repeat(400);
+    'Пази умерено темпо и следи дишането си. ' +
+    'Започни с три серии по десет повторения и почивай минута между тях. ' +
+    'Добавяй тежест постепенно всяка седмица. [LOOK:coach]';
   const capped = capForAvatar(long);
-  assert.ok(capped.endsWith('.') || capped.endsWith('…'));
+  assert.equal(
+    capped,
+    'Пази умерено темпо и следи дишането си. Започни с три серии по десет повторения и почивай минута между тях.'
+  );
+  assert.ok(capped.length <= MAX_AVATAR_TEXT_CHARS);
+  assert.ok(capped.split(/\s+/u).length <= MAX_AVATAR_WORDS);
+  assert.ok(/[.!?]$/u.test(capped));
+  assert.ok(!capped.includes('LOOK'));
+});
+
+test('an over-limit single sentence fails closed instead of cutting off Bulgarian words', () => {
+  const overlong = `${'Започни с леки упражнения и следи внимателно дишането си '.repeat(4)}утре.`;
+  assert.equal(capForAvatar(overlong), '');
 });
 
 test('empty input stays empty', () => {
@@ -158,6 +179,47 @@ test('original text/VOICE_ID generation and V1 status charge rounded actual dura
     const result = await waitForVideoResult(id, { intervalMs: 1 });
     assert.deepStrictEqual(result, { url: 'https://cdn.example/avatar.mp4', durationSeconds: 12 });
     assert.strictEqual(seen.length, 2, 'no audio or other provider calls');
+  } finally {
+    global.fetch = originalFetch;
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test('bounded Bulgarian coach script and selected Look reach the mocked HeyGen payload', async () => {
+  const originalFetch = global.fetch;
+  const saved = ['HEYGEN_API_KEY', 'HEYGEN_AVATAR_ID', 'HEYGEN_VOICE_ID']
+    .map((key) => [key, process.env[key]]);
+  process.env.HEYGEN_API_KEY = 'mock-only-key';
+  process.env.HEYGEN_AVATAR_ID = 'mock-avatar';
+  process.env.HEYGEN_VOICE_ID = 'mock-bulgarian-voice';
+  const plan = [
+    'Пази умерено темпо и следи дишането си.',
+    'Започни с три серии по десет повторения и почивай минута между тях.',
+    'Добавяй тежест постепенно всяка седмица.',
+    'Първо загрей добре, а при болка прекрати упражнението.',
+  ].join(' ');
+  const script = capForAvatar(`${plan} [LOOK:coach]`);
+  let payload;
+  let calls = 0;
+  global.fetch = async (url, options) => {
+    calls++;
+    assert.equal(url, 'https://api.heygen.com/v2/video/generate');
+    payload = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ data: { video_id: 'mock-video' } }) };
+  };
+  try {
+    await requestAvatarVideo(script, LOOKS.coach);
+    const sent = payload.video_inputs[0];
+    assert.equal(sent.character.avatar_id, LOOKS.coach);
+    assert.equal(sent.voice.voice_id, 'mock-bulgarian-voice');
+    assert.equal(sent.voice.input_text, script);
+    assert.ok(script.length <= MAX_AVATAR_TEXT_CHARS);
+    assert.ok(script.split(/\s+/u).length <= MAX_AVATAR_WORDS);
+    assert.ok(!JSON.stringify(payload).includes('LOOK'));
+    assert.equal(calls, 1);
   } finally {
     global.fetch = originalFetch;
     for (const [key, value] of saved) {

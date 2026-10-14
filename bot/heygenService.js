@@ -18,25 +18,35 @@ const { providerReason } = require('./avatarDiagnostics');
 
 const HEYGEN_BASE = 'https://api.heygen.com';
 
-// Cost control: hard cap on the text length sent to HeyGen, regardless of what
-// the LLM produced. Truncation happens on a sentence boundary when possible.
-const MAX_AVATAR_TEXT_CHARS = 350;
+// Avatar-only script limits. Keep complete Bulgarian sentences; if an
+// over-limit answer has no safe sentence boundary, skip video rather than
+// submitting an ugly or semantically incomplete fragment.
+const MAX_AVATAR_TEXT_CHARS = 180;
+const MAX_AVATAR_WORDS = 22;
 
-function capForAvatar(text, maxChars = MAX_AVATAR_TEXT_CHARS) {
-  // Internal [LOOK:...] service tags must never be spoken by the avatar.
-  const t = stripLookTags(text || '').trim();
-  if (t.length <= maxChars) return t;
-  const slice = t.slice(0, maxChars);
-  // Prefer to cut at the last sentence end inside the window.
-  const lastStop = Math.max(
-    slice.lastIndexOf('.'),
-    slice.lastIndexOf('!'),
-    slice.lastIndexOf('?')
-  );
-  if (lastStop > maxChars * 0.4) return slice.slice(0, lastStop + 1).trim();
-  // Otherwise cut at the last space and add an ellipsis.
-  const lastSpace = slice.lastIndexOf(' ');
-  return `${slice.slice(0, lastSpace > 0 ? lastSpace : maxChars).trim()}…`;
+function countWords(text) {
+  return (String(text || '').match(/\S+/gu) || []).length;
+}
+
+function capForAvatar(text, maxChars = MAX_AVATAR_TEXT_CHARS, maxWords = MAX_AVATAR_WORDS) {
+  const normalized = stripLookTags(text || '').replace(/\s+/gu, ' ').trim();
+  if (!normalized) return '';
+  const fits = (value) => value.length <= maxChars && countWords(value) <= maxWords;
+
+  // Preserve a complete short reply exactly, apart from whitespace/tag cleanup.
+  if (fits(normalized)) return normalized;
+
+  // Split only after terminal punctuation followed by whitespace. This avoids
+  // treating decimal numbers or abbreviations as sentence boundaries.
+  const sentences = normalized.split(/(?<=[.!?])\s+/u);
+  let result = '';
+  for (const sentence of sentences) {
+    if (!/[.!?]$/u.test(sentence)) break;
+    const candidate = result ? `${result} ${sentence}` : sentence;
+    if (!fits(candidate)) break;
+    result = candidate;
+  }
+  return result;
 }
 
 // Per-request hard deadline so a hung connection can never stall the polling
@@ -171,4 +181,5 @@ module.exports = {
   waitForVideoResult,
   capForAvatar,
   MAX_AVATAR_TEXT_CHARS,
+  MAX_AVATAR_WORDS,
 };
