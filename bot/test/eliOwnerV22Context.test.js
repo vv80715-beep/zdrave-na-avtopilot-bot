@@ -1,12 +1,20 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const vm = require('node:vm');
 
 const OWNER_ID = 'v22-owner-fixture';
 process.env.OWNER_TELEGRAM_ID = OWNER_ID;
+const previousDossierPath = process.env.OWNER_DOSSIER_PATH;
+const dossierTestDir = fs.mkdtempSync(path.join(os.tmpdir(), 'eli-dossier-integration-'));
+const dossierTestPath = path.join(dossierTestDir, 'owner_dossier.json');
+process.env.OWNER_DOSSIER_PATH = dossierTestPath;
 
 const { isOwner } = require('../adminGuard');
+const ownerDossier = require('../ownerDossier');
+const { detectMemoryCommand } = require('../relationshipMemory');
 const { buildOwnerV22Context } = require('../brain/ownerV22Context');
 const { createAskEliAdapter } = require('../brain/askEliAdapter');
 const { getOwnerScopedEliV22Flags } = require('../brain/featureFlags');
@@ -21,6 +29,12 @@ const {
   createUnknownHealthProfile,
   getKnownProfileEntries,
 } = require('../brain/unifiedHealthProfile');
+
+test.after(() => {
+  fs.rmSync(dossierTestDir, { recursive: true, force: true });
+  if (previousDossierPath === undefined) delete process.env.OWNER_DOSSIER_PATH;
+  else process.env.OWNER_DOSSIER_PATH = previousDossierPath;
+});
 
 const ALL_ENV_FLAGS_ON = {
   ELI_V2_2_OWNER_CANARY_ENABLED: 'true',
@@ -204,6 +218,9 @@ function createAskEliHarness(readers, options = {}) {
   const avatarCalls = [];
   const voiceCalls = [];
   const memoryReads = [];
+  const consoleLogs = [];
+  const dossierDeps = options.ownerDossierDeps || {};
+  const testFlags = options.featureFlags;
   let storedMode = 'text';
   let helperCalls = 0;
   const adapter = {
@@ -228,11 +245,11 @@ function createAskEliHarness(readers, options = {}) {
     gateChat: async () => ({ canChat: true, plan: 'owner', allowedModes: ['text', 'voice', 'avatar'], notice: null }),
     isOwner,
     getOwnerScopedEliV22Flags: (owner) =>
-      getOwnerScopedEliV22Flags(owner, { env: ALL_ENV_FLAGS_ON }),
+      testFlags || getOwnerScopedEliV22Flags(owner, { env: ALL_ENV_FLAGS_ON }),
     ownerUniversalMemoryRuntime: {
       handle: async () => ({ handled: false }),
       prepareContext: async ({ isOwner }) => ({
-        flags: getOwnerScopedEliV22Flags(isOwner, { env: ALL_ENV_FLAGS_ON }),
+        flags: testFlags || getOwnerScopedEliV22Flags(isOwner, { env: ALL_ENV_FLAGS_ON }),
         facts: isOwner ? options.durableFacts || [] : [],
       }),
     },
@@ -251,13 +268,13 @@ function createAskEliHarness(readers, options = {}) {
     OWNER_NAME: 'Данаил',
     OWNER_MEMORY,
     formatOwnerPersonalMemory: require('../brain/ownerMemorySummary').formatOwnerPersonalMemory,
-    getOwnerDossierEntries: () => [],
-    applyOwnerDossierMemoryCommand: () => null,
-    detectOwnerDossierQuestion: () => null,
-    answerOwnerDossierQuestion: () => 'MOCK OWNER DOSSIER ANSWER',
-    formatOwnerDossierSummary: () => '',
-    buildOwnerDossierPrompt: () => '',
-    clearOwnerDossier: () => true,
+     getOwnerDossierEntries: dossierDeps.getOwnerDossierEntries || (() => []),
+     applyOwnerDossierMemoryCommand: dossierDeps.applyOwnerDossierMemoryCommand || (() => null),
+     detectOwnerDossierQuestion: dossierDeps.detectOwnerDossierQuestion || (() => null),
+     answerOwnerDossierQuestion: dossierDeps.answerOwnerDossierQuestion || (() => 'MOCK OWNER DOSSIER ANSWER'),
+     formatOwnerDossierSummary: dossierDeps.formatOwnerDossierSummary || (() => ''),
+     buildOwnerDossierPrompt: dossierDeps.buildOwnerDossierPrompt || (() => ''),
+     clearOwnerDossier: dossierDeps.clearOwnerDossier || (() => true),
     formatFullMemory: (userId) => {
       memoryReads.push(['formatFullMemory', userId]);
       return `CUSTOMER_STORED_FACTS:${userId}`;
@@ -270,7 +287,8 @@ function createAskEliHarness(readers, options = {}) {
       options.saveOwnerFitnessGoal || (() => ({ ok: false, reason: 'invalid' })),
     detectExplicitPreferenceCommand: () => null,
     saveExplicitPreference: () => ({ ok: false, reason: 'invalid' }),
-    detectMemoryCommand: () => null,
+     detectMemoryCommand: options.detectMemoryCommand || (() => null),
+     applyMemoryCommand: () => null,
     isExplicitMemoryCue: () => false,
     saveExplicitRelationshipMemory: () => ({ ok: false, reason: 'unsupported' }),
     rememberFromMessage: (userId) => memoryReads.push(['rememberFromMessage', userId]),
@@ -293,11 +311,13 @@ function createAskEliHarness(readers, options = {}) {
     resolveLookId: () => undefined,
     LOOK_PROMPT_NOTE: 'MOCK_AVATAR_NOTE',
     console: {
+       log: (...args) => consoleLogs.push(args.join(' ')),
       error: (...args) => {
+         consoleLogs.push(args.join(' '));
         if (options.onConsoleError) options.onConsoleError(...args);
         else assert.fail(args.join(' '));
       },
-      warn: () => {},
+       warn: (...args) => consoleLogs.push(args.join(' ')),
     },
   };
   vm.runInNewContext(source.slice(start, end), sandbox);
@@ -337,7 +357,7 @@ function createAskEliHarness(readers, options = {}) {
     };
   }
 
-  return { run, helperCallCount: () => helperCalls, memoryReads, adapterCalls };
+  return { run, helperCallCount: () => helperCalls, memoryReads, adapterCalls, llmCalls, consoleLogs };
 }
 
 test('real askEli owner path loads profile/facts into all channels; customers keep the legacy path', async () => {
@@ -401,6 +421,163 @@ test('real askEli owner path loads profile/facts into all channels; customers ke
       .map(([, userId]) => userId),
     [OWNER_ID, OWNER_ID, OWNER_ID, 'customer-fixture'],
     'customer relationship capture remains on its existing per-user path'
+  );
+});
+
+test('private dossier answers stay owner-only across Text, Voice, and Avatar without V2.2 or provider calls', async () => {
+  const markers = {
+    mission: 'SYNTHETIC_PRIVATE_MISSION_MARKER',
+    motivation: 'SYNTHETIC_PRIVATE_MOTIVATION_MARKER',
+    goal: 'SYNTHETIC_PRIVATE_GOAL_MARKER',
+  };
+  fs.writeFileSync(dossierTestPath, JSON.stringify({
+    schemaVersion: 1,
+    facts: [
+      { id: 'business-mission', category: 'plans', value: markers.mission },
+      { id: 'motivation', category: 'motivation', value: markers.motivation },
+      { id: 'financial-dream', category: 'goals', value: markers.goal },
+    ],
+  }), { encoding: 'utf8', mode: 0o600 });
+
+  const promptReads = [];
+  const dossierDeps = {
+    ...ownerDossier,
+    buildOwnerDossierPrompt: (userId, question) => {
+      promptReads.push(String(userId));
+      return ownerDossier.buildOwnerDossierPrompt(userId, question);
+    },
+  };
+  const harness = createAskEliHarness(fixtureReaders(), {
+    ownerDossierDeps: dossierDeps,
+    detectMemoryCommand,
+    featureFlags: OFF_FLAGS,
+  });
+  const status = {
+    canChat: true,
+    plan: 'owner',
+    allowedModes: ['text', 'voice', 'avatar'],
+    notice: null,
+  };
+  const questions = [
+    ['Каква е мисията ти?', markers.mission],
+    ['Защо създадох Ели?', markers.motivation],
+    ['Какви са целите ми?', markers.goal],
+  ];
+
+  for (const [question, expected] of questions) {
+    for (const mode of ['text', 'voice', 'avatar']) {
+      const result = await harness.run(OWNER_ID, mode, status, question);
+      assert.equal(result.llmCall, undefined, 'dossier facts are answered deterministically');
+      const deliveries = [
+        ...result.ctx.replyCalls,
+        ...result.voiceCalls,
+        ...result.avatarCalls,
+      ];
+      assert.equal(deliveries.length, 1, `${mode} must deliver exactly once`);
+      assert.match(deliveries[0], new RegExp(expected));
+      assert.equal(result.ctx.replyCalls.length, mode === 'text' ? 1 : 0);
+      assert.equal(result.voiceCalls.length, mode === 'voice' ? 1 : 0);
+      assert.equal(result.avatarCalls.length, mode === 'avatar' ? 1 : 0);
+    }
+  }
+
+  const ownerPrompt = await harness.run(
+    OWNER_ID,
+    'text',
+    status,
+    'Как да продължа с бизнеса си?'
+  );
+  assert.match(ownerPrompt.llmCall.messages[0].content, new RegExp(markers.motivation));
+  assert.deepEqual(promptReads, [OWNER_ID]);
+
+  const customerStatus = {
+    canChat: true,
+    plan: 'premium',
+    allowedModes: ['text', 'voice', 'avatar'],
+    notice: null,
+  };
+  for (const userId of ['customer-fixture', `${OWNER_ID}-lookalike`]) {
+    for (const [question] of questions) {
+      for (const mode of ['text', 'voice', 'avatar']) {
+        const result = await harness.run(userId, mode, customerStatus, question);
+        assert.ok(result.llmCall, 'non-owners stay on their own customer reply path');
+        assert.doesNotMatch(result.llmCall.messages[0].content, /SYNTHETIC_PRIVATE_/);
+        const deliveries = [
+          ...result.ctx.replyCalls,
+          ...result.voiceCalls,
+          ...result.avatarCalls,
+        ];
+        assert.equal(deliveries.length, 1);
+        assert.doesNotMatch(deliveries[0], /SYNTHETIC_PRIVATE_/);
+      }
+    }
+  }
+  assert.deepEqual(promptReads, [OWNER_ID], 'customer IDs never reach dossier prompt reads');
+  assert.doesNotMatch(harness.consoleLogs.join('\n'), /SYNTHETIC_PRIVATE_/);
+});
+
+test('real askEli owner commands correct and delete only the private synthetic dossier entry', async () => {
+  const originalValue = 'SYNTHETIC_ORIGINAL_GOAL_MARKER';
+  const correctedValue = 'Synthetic_corrected_goal_marker';
+  fs.writeFileSync(dossierTestPath, JSON.stringify({
+    schemaVersion: 1,
+    facts: [
+      { id: 'financial-dream', category: 'goals', value: originalValue },
+      { id: 'business-mission', category: 'plans', value: 'SYNTHETIC_UNCHANGED_MISSION' },
+    ],
+  }), { encoding: 'utf8', mode: 0o600 });
+  const harness = createAskEliHarness(fixtureReaders(), {
+    ownerDossierDeps: ownerDossier,
+    detectMemoryCommand,
+    featureFlags: OFF_FLAGS,
+  });
+  const status = {
+    canChat: true,
+    plan: 'owner',
+    allowedModes: ['text', 'voice', 'avatar'],
+    notice: null,
+  };
+
+  const corrected = await harness.run(
+    OWNER_ID,
+    'text',
+    status,
+    `Промени финансовата ми мечта на ${correctedValue}`
+  );
+  assert.match(corrected.ctx.replyCalls.join(' '), /Обнових и проверих/);
+  assert.equal(
+    ownerDossier.getOwnerDossierEntries(OWNER_ID).find((entry) => entry.id === 'financial-dream').value,
+    correctedValue
+  );
+
+  const denied = await harness.run(
+    `${OWNER_ID}-lookalike`,
+    'text',
+    status,
+    'Изтрий финансовата ми мечта'
+  );
+  assert.ok(denied.llmCall);
+  assert.equal(
+    ownerDossier.getOwnerDossierEntries(OWNER_ID).find((entry) => entry.id === 'financial-dream').value,
+    correctedValue,
+    'a lookalike Telegram ID cannot mutate the owner dossier'
+  );
+
+  const deleted = await harness.run(
+    OWNER_ID,
+    'text',
+    status,
+    'Забрави финансовата ми мечта'
+  );
+  assert.match(deleted.ctx.replyCalls.join(' '), /Изтрих и проверих/);
+  assert.equal(
+    ownerDossier.getOwnerDossierEntries(OWNER_ID).some((entry) => entry.id === 'financial-dream'),
+    false
+  );
+  assert.equal(
+    ownerDossier.getOwnerDossierEntries(OWNER_ID).some((entry) => entry.id === 'business-mission'),
+    true,
+    'deletion leaves unrelated dossier entries untouched'
   );
 });
 

@@ -422,6 +422,19 @@ async function askEli(ctx, question, opts = {}) {
     }
     await replyWithMarkdownSafe(ctx, full);
   };
+  const deliverOwnerDossierAnswer = async (text) => {
+    if (avatarMode) {
+      try {
+        const category = chooseLookCategory(question, 'neutral');
+        const lookId = resolveLookId(ctx.from.id, category);
+        if (await sendAvatarReply(ctx, withNotice(text), { lookId })) return;
+      } catch {
+        // A private-memory answer must still have a safe text fallback, without
+        // logging the answer or any provider response.
+      }
+    }
+    await deliverDeterministic(text);
+  };
 
   // Universal long-term memory is owner-only and remains inert unless both
   // durable flags are explicitly enabled and the approved backend health
@@ -552,7 +565,9 @@ async function askEli(ctx, question, opts = {}) {
   }
 
   if (owner && ownerDossierQuestion) {
-    await deliverDeterministic(answerOwnerDossierQuestion(ctx.from.id, ownerDossierQuestion));
+    await deliverOwnerDossierAnswer(
+      answerOwnerDossierQuestion(ctx.from.id, ownerDossierQuestion)
+    );
     return;
   }
 
