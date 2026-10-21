@@ -1,8 +1,52 @@
+const { Markup } = require('telegraf');
+
 const BUY_PAYLOADS = Object.freeze({
   buy_seven_day: 'seven_day',
   buy_monthly: 'monthly',
   buy_yearly: 'yearly',
 });
+
+function createMiniAppStartMarkup(env = process.env) {
+  if (
+    env.ELI_MINI_APP_START_BUTTON_ENABLED !== 'true' ||
+    env.ELI_MINI_APP_STAGE !== 'staging' ||
+    env.NODE_ENV === 'production'
+  ) {
+    return undefined;
+  }
+
+  const rawUrl = String(env.ELI_MINI_APP_URL || '').trim();
+  try {
+    const url = new URL(rawUrl);
+    const hostname = url.hostname.toLowerCase();
+    const reservedHost =
+      !hostname.includes('.') ||
+      hostname === 'localhost' ||
+      hostname.endsWith('.localhost') ||
+      hostname.endsWith('.local') ||
+      hostname.endsWith('.internal') ||
+      hostname.endsWith('.test') ||
+      hostname.endsWith('.invalid') ||
+      hostname.endsWith('.example') ||
+      hostname.startsWith('[') ||
+      /^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname);
+
+    if (
+      url.protocol !== 'https:' ||
+      url.username ||
+      url.password ||
+      reservedHost
+    ) {
+      return undefined;
+    }
+
+    return Markup.inlineKeyboard([
+      [Markup.button.webApp('Отвори Ели', url.toString())],
+    ]);
+  } catch {
+    return undefined;
+  }
+}
 
 const HELP_TEXT =
   `Ето всички команди:\n\n` +
@@ -34,7 +78,14 @@ const HELP_TEXT =
   `🪪 /whoami — Виж твоите данни\n` +
   `🏓 /ping — Провери дали ботът работи`;
 
-function register(bot, { ensureUser, isOwner, ownerName, purchasePlan, refreshPaymentComplete }) {
+function register(bot, {
+  ensureUser,
+  isOwner,
+  ownerName,
+  purchasePlan,
+  refreshPaymentComplete,
+  miniAppStartMarkup = () => createMiniAppStartMarkup(),
+}) {
   // Register after session and before stage: active wizards cannot swallow these
   // commands. Do not erase other session state or conversation memory.
   const leaveScene = (ctx) => {
@@ -55,9 +106,12 @@ function register(bot, { ensureUser, isOwner, ownerName, purchasePlan, refreshPa
       return refreshPaymentComplete(ctx);
     }
     ensureUser(ctx.from.id);
+    const replyMarkup =
+      ctx.chat?.type === 'private' ? miniAppStartMarkup() : undefined;
     return ctx.reply(isOwner(ctx)
       ? `Здравей, ${ownerName}! 👑 Радвам се да те видя.`
-      : `Здравей, ${ctx.from.first_name || 'приятелю'}! 👋 Аз съм Ели. Пиши ми или виж /help.`);
+      : `Здравей, ${ctx.from.first_name || 'приятелю'}! 👋 Аз съм Ели. Пиши ми или виж /help.`,
+    replyMarkup);
   });
 
   bot.help((ctx) => {
@@ -66,4 +120,9 @@ function register(bot, { ensureUser, isOwner, ownerName, purchasePlan, refreshPa
   });
 }
 
-module.exports = { register, BUY_PAYLOADS, HELP_TEXT };
+module.exports = {
+  register,
+  BUY_PAYLOADS,
+  HELP_TEXT,
+  createMiniAppStartMarkup,
+};

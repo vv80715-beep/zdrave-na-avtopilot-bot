@@ -4,7 +4,7 @@ const { Telegraf, Telegram, Scenes, session } = require('telegraf');
 const startCommands = require('../commands/start');
 const plans = require('../commands/plans');
 
-function harness({ failPurchase = false } = {}) {
+function harness({ failPurchase = false, miniAppEnv } = {}) {
   const bot = new Telegraf('123:offline');
   bot.botInfo = { id: 999, is_bot: true, first_name: 'Eli', username: 'EliTestBot' };
   const sent = [];
@@ -36,6 +36,8 @@ function harness({ failPurchase = false } = {}) {
     isOwner: (ctx) => ctx.from.id === 12345,
     ownerName: 'Собственик',
     purchasePlan: (ctx, planId) => plans.sendPurchaseLink(ctx, planId, client),
+    miniAppStartMarkup: () =>
+      miniAppEnv ? startCommands.createMiniAppStartMarkup(miniAppEnv) : undefined,
     refreshPaymentComplete: async (ctx) => {
       refreshes.push(ctx.from.id);
       return ctx.reply('Плащането е проверено.');
@@ -79,6 +81,49 @@ test('normal /start is one short welcome, owner personalized; /help is full and 
     assert.ok(help[0].data.text.includes(cmd));
   }
   assert.deepEqual(h.purchases, []);
+});
+
+test('Mini App /start button stays off by default and requires an explicit HTTPS URL', async () => {
+  assert.equal(startCommands.createMiniAppStartMarkup({}), undefined);
+  assert.equal(startCommands.createMiniAppStartMarkup({
+    ELI_MINI_APP_START_BUTTON_ENABLED: 'true',
+    ELI_MINI_APP_STAGE: 'staging',
+    ELI_MINI_APP_URL: 'http://eli.example.org/',
+  }), undefined);
+  assert.equal(startCommands.createMiniAppStartMarkup({
+    ELI_MINI_APP_START_BUTTON_ENABLED: 'true',
+    ELI_MINI_APP_STAGE: 'staging',
+    ELI_MINI_APP_URL: 'https://localhost/',
+  }), undefined);
+  assert.equal(startCommands.createMiniAppStartMarkup({
+    ELI_MINI_APP_START_BUTTON_ENABLED: 'true',
+    ELI_MINI_APP_STAGE: 'staging',
+    NODE_ENV: 'production',
+    ELI_MINI_APP_URL: 'https://eli.replit.app/',
+  }), undefined);
+
+  const h = harness({
+    miniAppEnv: {
+      ELI_MINI_APP_START_BUTTON_ENABLED: 'true',
+      ELI_MINI_APP_STAGE: 'staging',
+      ELI_MINI_APP_URL: 'https://eli.replit.app/mini',
+    },
+  });
+  const start = await h.send('/start');
+  const button = start[0].data.reply_markup.inline_keyboard[0][0];
+  assert.equal(button.text, 'Отвори Ели');
+  assert.deepEqual(button.web_app, { url: 'https://eli.replit.app/mini' });
+
+  const purchase = await h.send('/start buy_monthly');
+  assert.equal(purchase[0].data.reply_markup.inline_keyboard[0][0].text, 'Confirm payment');
+  assert.equal(purchase[0].data.reply_markup.inline_keyboard[0][0].web_app, undefined);
+
+  const paymentComplete = await h.send('/start payment_complete');
+  assert.equal(paymentComplete[0].data.text, 'Плащането е проверено.');
+  assert.equal(paymentComplete[0].data.reply_markup, undefined);
+
+  const group = await h.send('/start', { chat: -100002, type: 'supergroup' });
+  assert.equal(group[0].data.reply_markup, undefined);
 });
 
 test('all website buy deep links use trusted private Telegram identity, one URL only, no trial', async () => {

@@ -10,18 +10,17 @@ import {
   Clock3,
   HeartPulse,
   Leaf,
-  LockKeyhole,
   MessageCircle,
   Moon,
   NotebookTabs,
-  ScanLine,
   Send,
   Sparkles,
   Sun,
-  TextCursorInput,
+  Video,
 } from 'lucide-react';
 import { Route, Switch, Link, useLocation, Router as WouterRouter } from 'wouter';
 import { translate, type Language, type TranslationKey } from './i18n';
+import { connectTelegramWebApp } from './telegramWebApp';
 
 type LanguageContextValue = {
   language: Language;
@@ -155,6 +154,7 @@ function EliAvatar({
 
 function Home() {
   const { t } = useLanguage();
+  const [modeNotice, setModeNotice] = useState<TranslationKey | null>(null);
   return (
     <main className="page-wrap">
       <section className="home-grid">
@@ -163,12 +163,23 @@ function Home() {
           <h1>{t('heroTitleFirst')}<span>{t('heroTitleSecond')}</span></h1>
           <p className="welcome-greeting" data-testid="text-welcome-greeting">{t('greeting')}</p>
           <p>{t('homeDescription')}</p>
-          <div className="hero-actions">
-            <Link href="/chat" className="primary-button" data-testid="button-start-chat">
-              {t('startChat')} <ArrowRight size={16} />
+          <div className="hero-actions mode-action-grid" role="group" aria-label={t('modeActionsAria')}>
+            <Link href="/chat" className="mode-action mode-action-primary" data-testid="button-home-mode-text">
+              <MessageCircle className="mode-action-icon" size={18} />
+              <span className="mode-action-copy"><strong>{t('actionText')}</strong><small>{t('actionTextHint')}</small></span>
+              <ArrowRight className="mode-action-arrow" size={15} />
             </Link>
-            <span className="quiet-note">{t('quietNote')}</span>
+            <button className="mode-action" type="button" data-testid="button-home-mode-voice" onClick={() => setModeNotice('modeVoiceNotice')}>
+              <AudioLines className="mode-action-icon" size={18} />
+              <span className="mode-action-copy"><strong>{t('actionVoice')}</strong><small>{t('actionVoiceHint')}</small></span>
+            </button>
+            <button className="mode-action" type="button" data-testid="button-home-mode-avatar" onClick={() => setModeNotice('modeAvatarNotice')}>
+              <Video className="mode-action-icon" size={18} />
+              <span className="mode-action-copy"><strong>{t('actionAvatar')}</strong><small>{t('actionAvatarHint')}</small></span>
+            </button>
           </div>
+          {modeNotice && <p className="mode-action-status" role="status" aria-live="polite">{t(modeNotice)}</p>}
+          <p className="quiet-note">{t('quietNote')}</p>
         </div>
         <div className="orbit-stage animate-in delay-1" aria-label={t('orbitAlt')} data-testid="visual-orbit">
           <div className="orbit one" /><div className="orbit two" /><div className="orbit three" />
@@ -222,7 +233,6 @@ function Chat() {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [scenariosOpen, setScenariosOpen] = useState(false);
   const [localMessage, setLocalMessage] = useState('');
-  const [selectedMode, setSelectedMode] = useState<'text' | 'voice' | 'avatar'>('text');
   const [quickAction, setQuickAction] = useState<'plan' | 'tip' | 'report' | null>(null);
   const conversationRef = useRef<HTMLDivElement>(null);
   const hasMountedConversation = useRef(false);
@@ -241,12 +251,6 @@ function Chat() {
     tip: { titleKey: 'quickTipTitle', textKey: 'quickTipText' },
     report: { titleKey: 'quickReportTitle', textKey: 'quickReportText' },
   } as const;
-
-  const modes = [
-    { id: 'text' as const, labelKey: 'modeText', noticeKey: 'modeTextNotice', Icon: TextCursorInput },
-    { id: 'voice' as const, labelKey: 'modeVoice', noticeKey: 'modeVoiceNotice', Icon: AudioLines },
-    { id: 'avatar' as const, labelKey: 'modeAvatar', noticeKey: 'modeAvatarNotice', Icon: ScanLine },
-  ] as const;
 
   function submitDemoMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -271,19 +275,22 @@ function Chat() {
             <div className="coach-ident"><EliAvatar className="coach-avatar" alt={t('avatarChatAlt')} testId="image-eli-chat" /><span><strong>{t('eliName')}</strong><small>{t('coachSubtitle')}</small></span></div>
             <span className="local-chip"><i className="prototype-dot" /> {t('localDemo')}</span>
           </div>
+          <div className="chat-mode-actions" role="group" aria-label={t('modeActionsAria')}>
+            <button type="button" data-testid="button-chat-mode-text" onClick={() => setNotice('modeTextNotice')}>
+              <MessageCircle size={15} /><span>{t('actionText')}</span>
+            </button>
+            <button type="button" data-testid="button-chat-mode-voice" onClick={() => setNotice('modeVoiceNotice')}>
+              <AudioLines size={15} /><span>{t('actionVoice')}</span>
+            </button>
+            <button type="button" data-testid="button-chat-mode-avatar" onClick={() => setNotice('modeAvatarNotice')}>
+              <Video size={15} /><span>{t('actionAvatar')}</span>
+            </button>
+          </div>
+          <p className="mode-disclosure">{t('modeDemoDisclosure')}</p>
           <button className="chat-tools-toggle" type="button" aria-expanded={toolsOpen} aria-controls="chat-tools" onClick={() => setToolsOpen((open) => !open)}>
             <span>{t('chatTools')}</span><ChevronDown size={14} className={toolsOpen ? 'is-open' : ''} />
           </button>
           {toolsOpen && <div className="chat-tools" id="chat-tools">
-          <div className="mode-picker" role="group" aria-label={t('modesAria')}>
-            {modes.map(({ id, labelKey, noticeKey, Icon }) => (
-              <button key={id} type="button" className={`mode-button${selectedMode === id ? ' active' : ''}`} aria-pressed={selectedMode === id} data-testid={`button-mode-${id}`} onClick={() => { setSelectedMode(id); setNotice(noticeKey); }}>
-                {id === 'text' ? <Icon size={14} /> : <LockKeyhole size={13} />}
-                <span>{t(labelKey)}</span><small>{t(id === 'text' ? 'demoShort' : 'locked')}</small>
-              </button>
-            ))}
-          </div>
-          <p className="mode-disclosure">{t('modeDemoDisclosure')}</p>
           <button className="scenario-toggle" type="button" aria-label={t('scenarioControlAria')} aria-expanded={scenariosOpen} aria-controls="demo-scenarios" onClick={() => setScenariosOpen((open) => !open)}>
             <span>{t('chooseExample')}</span><ChevronDown size={15} className={scenariosOpen ? 'is-open' : ''} />
           </button>
@@ -432,6 +439,7 @@ function Router() {
 }
 
 function App() {
+  useEffect(() => connectTelegramWebApp(), []);
   return (
     <LanguageProvider>
       <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
