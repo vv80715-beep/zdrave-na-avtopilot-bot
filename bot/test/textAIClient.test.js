@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const previousOwnerId = process.env.OWNER_TELEGRAM_ID;
 process.env.OWNER_TELEGRAM_ID = '900000001';
 const {
+  GEMINI_DEFAULT_MODEL,
   createGeminiClient,
   getProvider,
   getUsageSnapshot,
@@ -27,6 +28,7 @@ function response(text = 'Здравей!', usageMetadata = {}) {
 }
 
 test('provider defaults to OpenAI and the Gemini canary is owner-only', () => {
+  assert.equal(GEMINI_DEFAULT_MODEL, 'gemini-3.5-flash-lite');
   assert.equal(getProvider('900000001', {}), 'openai');
   assert.equal(
     getProvider('900000001', { GEMINI_OWNER_CANARY_ENABLED: 'true' }),

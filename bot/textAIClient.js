@@ -1,9 +1,13 @@
 const openai = require('./openaiClient');
 const { isOwnerId } = require('./adminGuard');
 
-const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash-lite';
+// Gemini's API currently lists 2.5 Flash-Lite but rejects new-user generation
+// with NOT_FOUND and directs callers to 3.5 Flash-Lite.
+const GEMINI_DEFAULT_MODEL = 'gemini-3.5-flash-lite';
 const MODEL_PRICES = {
   'gemini-2.5-flash-lite': { input: 0.1, output: 0.4 },
+  'gemini-3.5-flash-lite': { input: 0.3, output: 2.5 },
+  'gemini-3.1-flash-lite': { input: null, output: null },
   'gpt-4o-mini': { input: 0.15, output: 0.6 },
 };
 const USER_WINDOW_MS = 60_000;
@@ -139,7 +143,7 @@ function createGeminiClient({ apiKey, model, userId, fetchFn = global.fetch, log
           const promptTokens = Number(data?.usageMetadata?.promptTokenCount) || 0;
           const outputTokens = Number(data?.usageMetadata?.candidatesTokenCount) || 0;
           const prices = MODEL_PRICES[modelName];
-          const estimatedUsd = prices
+          const estimatedUsd = prices && Number.isFinite(prices.input) && Number.isFinite(prices.output)
             ? (promptTokens * prices.input + outputTokens * prices.output) / 1_000_000
             : null;
           usage.requests += 1;
@@ -183,7 +187,7 @@ function getTextAIClient(userId, env = process.env) {
             const promptTokens = Number(result?.usage?.prompt_tokens) || 0;
             const outputTokens = Number(result?.usage?.completion_tokens) || 0;
             const cachedTokens = Number(result?.usage?.prompt_tokens_details?.cached_tokens) || 0;
-            const estimatedUsd = prices
+            const estimatedUsd = prices && Number.isFinite(prices.input) && Number.isFinite(prices.output)
               ? ((promptTokens - cachedTokens) * prices.input +
                 cachedTokens * prices.input * 0.5 +
                 outputTokens * prices.output) / 1_000_000
@@ -214,6 +218,7 @@ function getUsageSnapshot() {
 }
 
 module.exports = {
+  GEMINI_DEFAULT_MODEL,
   createGeminiClient,
   getProvider,
   getTextAIClient,
