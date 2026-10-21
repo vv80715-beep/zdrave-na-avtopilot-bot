@@ -67,6 +67,41 @@ function Layout({ children }: { children: ReactNode }) {
   );
 }
 
+const eliAvatarSrc = `${import.meta.env.BASE_URL}eli-avatar.png`;
+
+function EliAvatar({
+  className,
+  fallbackClassName,
+  alt,
+  testId,
+}: {
+  className: string;
+  fallbackClassName?: string;
+  alt: string;
+  testId: string;
+}) {
+  const [loaded, setLoaded] = useState(false);
+
+  return (
+    <span
+      className={`eli-avatar-slot ${className}${loaded ? ' is-loaded' : ''}`}
+      role="img"
+      aria-label={loaded ? alt : 'Знак Е'}
+      data-testid={testId}
+    >
+      {!loaded && <span className={`eli-avatar-fallback${fallbackClassName ? ` ${fallbackClassName}` : ''}`} aria-hidden="true">Е</span>}
+      <img
+        className={`eli-avatar-image${loaded ? ' is-loaded' : ''}`}
+        src={eliAvatarSrc}
+        alt=""
+        aria-hidden="true"
+        onLoad={() => setLoaded(true)}
+        onError={() => setLoaded(false)}
+      />
+    </span>
+  );
+}
+
 function Home() {
   return (
     <main className="page-wrap">
@@ -87,7 +122,9 @@ function Home() {
           <div className="orbit one" /><div className="orbit two" /><div className="orbit three" />
           <span className="orbit-node node-a" /><span className="orbit-node node-b" />
           <span className="orbit-label left">ритъм</span><span className="orbit-label right">баланс</span>
-          <div className="orbit-core"><span className="core-mark" aria-hidden="true">Е</span></div>
+          <div className="orbit-core">
+            <EliAvatar className="home-avatar-slot" fallbackClassName="core-mark" alt="Ели — HEALTH ON AUTOPILOT" testId="image-eli-home" />
+          </div>
           <div className="float-card metric"><small>дневен фокус</small><strong className="metric-value">+ малко движение</strong></div>
           <div className="float-card streak"><small>постоянство</small><strong>ден по ден</strong></div>
         </div>
@@ -174,7 +211,7 @@ function Chat() {
       <div className="chat-layout">
         <section className="panel chat-panel animate-in delay-1" aria-label="Демо чат">
           <div className="chat-top">
-            <div className="coach-ident"><span className="coach-avatar" aria-hidden="true">Е</span><span><strong>Ели</strong><small>Здраве на автопилот · пример</small></span></div>
+            <div className="coach-ident"><EliAvatar className="coach-avatar" alt="Аватар на Ели" testId="image-eli-chat" /><span><strong>Ели</strong><small>Здраве на автопилот · пример</small></span></div>
             <span className="local-chip"><i className="prototype-dot" /> само локално демо</span>
           </div>
           <div className="mode-picker" role="group" aria-label="Избор на демо режим">
@@ -264,7 +301,7 @@ function Profile() {
       <div className="profile-grid">
         <div className="profile-main">
           <section className="panel summary-panel animate-in delay-1" data-testid="content-example-profile">
-            <div className="user-row"><span className="initial-avatar">Е</span><span><h2>Твоят примерен профил</h2><p>Няма реален акаунт или запазени лични данни.</p></span></div>
+            <div className="user-row"><EliAvatar className="initial-avatar" alt="Аватар на Ели" testId="image-eli-profile" /><span><h2>Твоят примерен профил</h2><p>Няма реален акаунт или запазени лични данни.</p></span></div>
             <span className="example-ribbon">примерни данни · не са личен резултат</span>
           </section>
           <section className="stats-row animate-in delay-1" aria-label="Примерни показатели">
