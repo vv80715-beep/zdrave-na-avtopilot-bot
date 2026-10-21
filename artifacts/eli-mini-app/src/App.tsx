@@ -219,13 +219,19 @@ function Chat() {
   const [draft, setDraft] = useState('');
   const [notice, setNotice] = useState<TranslationKey | null>(null);
   const [activeExample, setActiveExample] = useState<number | null>(null);
-  const [scenariosOpen, setScenariosOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(true);
+  const [scenariosOpen, setScenariosOpen] = useState(true);
   const [localMessage, setLocalMessage] = useState('');
   const [selectedMode, setSelectedMode] = useState<'text' | 'voice' | 'avatar'>('text');
   const [quickAction, setQuickAction] = useState<'plan' | 'tip' | 'report' | null>(null);
   const conversationRef = useRef<HTMLDivElement>(null);
+  const hasMountedConversation = useRef(false);
 
   useEffect(() => {
+    if (!hasMountedConversation.current) {
+      hasMountedConversation.current = true;
+      return;
+    }
     const conversation = conversationRef.current;
     if (conversation) conversation.scrollTo({ top: conversation.scrollHeight, behavior: 'smooth' });
   }, [activeExample, quickAction, localMessage, notice]);
@@ -265,6 +271,10 @@ function Chat() {
             <div className="coach-ident"><EliAvatar className="coach-avatar" alt={t('avatarChatAlt')} testId="image-eli-chat" /><span><strong>{t('eliName')}</strong><small>{t('coachSubtitle')}</small></span></div>
             <span className="local-chip"><i className="prototype-dot" /> {t('localDemo')}</span>
           </div>
+          <button className="chat-tools-toggle" type="button" aria-expanded={toolsOpen} aria-controls="chat-tools" onClick={() => setToolsOpen((open) => !open)}>
+            <span>{t('chatTools')}</span><ChevronDown size={14} className={toolsOpen ? 'is-open' : ''} />
+          </button>
+          {toolsOpen && <div className="chat-tools" id="chat-tools">
           <div className="mode-picker" role="group" aria-label={t('modesAria')}>
             {modes.map(({ id, labelKey, noticeKey, Icon }) => (
               <button key={id} type="button" className={`mode-button${selectedMode === id ? ' active' : ''}`} aria-pressed={selectedMode === id} data-testid={`button-mode-${id}`} onClick={() => { setSelectedMode(id); setNotice(noticeKey); }}>
@@ -280,7 +290,7 @@ function Chat() {
           {scenariosOpen && (
             <div className="scenario-list" id="demo-scenarios">
               {preparedExamples.map((example, index) => (
-                <button key={example.titleKey} type="button" className="prompt-button" onClick={() => { setActiveExample(index); setScenariosOpen(false); }} data-testid={`button-example-${index}`}>
+                <button key={example.titleKey} type="button" className="prompt-button" onClick={() => { setActiveExample(index); setScenariosOpen(false); setToolsOpen(false); }} data-testid={`button-example-${index}`}>
                   <span>{t(example.titleKey)}</span><ChevronRight size={14} />
                 </button>
               ))}
@@ -291,6 +301,7 @@ function Chat() {
             <button type="button" data-testid="button-quick-tip" onClick={() => setQuickAction('tip')}><Sparkles size={14} />{t('quickTip')}</button>
             <button type="button" data-testid="button-quick-report" onClick={() => setQuickAction('report')}><Activity size={14} />{t('quickReport')}</button>
           </div>
+          </div>}
           <div className="conversation" ref={conversationRef} aria-live="polite" data-testid="content-chat-example">
             <div className="date-divider">{t('dateDivider')}</div>
             <div className="message coach">
