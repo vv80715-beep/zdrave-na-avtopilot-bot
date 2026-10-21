@@ -34,7 +34,7 @@ const LanguageContext = createContext<LanguageContextValue | null>(null);
 function LanguageProvider({ children }: { children: ReactNode }) {
   const [language, setLanguage] = useState<Language>(() => {
     try {
-      return window.localStorage.getItem('eli-mini-app-language') === 'en' ? 'en' : 'bg';
+      return 'bg';
     } catch {
       return 'bg';
     }
