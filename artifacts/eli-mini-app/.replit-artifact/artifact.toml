@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Ели — Telegram Mini App Demo"
+description = "Изолиран, мобилно ориентиран демонстрационен прототип на Ели от „Здраве на автопилот“ с три навигируеми екрана и изцяло примерни локални данни. Не се свързва с Telegram, production бота или AI услуга."
+version = "1.0.0"
+id = "artifacts/eli-mini-app"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 21514
+
+[services.development]
+run = "pnpm --filter @workspace/eli-mini-app run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/eli-mini-app", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/eli-mini-app/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21514"
+BASE_PATH = "/"
