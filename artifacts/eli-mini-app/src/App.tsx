@@ -1,14 +1,16 @@
-import { createContext, useContext, useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import {
   Activity,
   ArrowRight,
   AudioLines,
   Check,
+  ChevronDown,
   ChevronRight,
   CircleHelp,
   Clock3,
   HeartPulse,
   Leaf,
+  LockKeyhole,
   MessageCircle,
   Moon,
   NotebookTabs,
@@ -217,9 +219,16 @@ function Chat() {
   const [draft, setDraft] = useState('');
   const [notice, setNotice] = useState<TranslationKey | null>(null);
   const [activeExample, setActiveExample] = useState<number | null>(null);
+  const [scenariosOpen, setScenariosOpen] = useState(false);
   const [localMessage, setLocalMessage] = useState('');
   const [selectedMode, setSelectedMode] = useState<'text' | 'voice' | 'avatar'>('text');
   const [quickAction, setQuickAction] = useState<'plan' | 'tip' | 'report' | null>(null);
+  const conversationRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const conversation = conversationRef.current;
+    if (conversation) conversation.scrollTo({ top: conversation.scrollHeight, behavior: 'smooth' });
+  }, [activeExample, quickAction, localMessage, notice]);
 
   const quickContent = {
     plan: { titleKey: 'quickPlanTitle', textKey: 'quickPlanText' },
@@ -245,8 +254,8 @@ function Chat() {
   }
 
   return (
-    <main className="page-wrap">
-      <div className="page-heading animate-in">
+    <main className="page-wrap chat-page">
+      <div className="page-heading chat-page-heading animate-in">
         <div><div className="eyebrow"><i className="eyebrow-line" /> {t('chatEyebrow')}</div><h1>{t('chatTitle')}</h1><p>{t('chatDescription')}</p></div>
         <span className="page-tag"><CircleHelp size={14} /> {t('preparedTag')}</span>
       </div>
@@ -259,35 +268,57 @@ function Chat() {
           <div className="mode-picker" role="group" aria-label={t('modesAria')}>
             {modes.map(({ id, labelKey, noticeKey, Icon }) => (
               <button key={id} type="button" className={`mode-button${selectedMode === id ? ' active' : ''}`} aria-pressed={selectedMode === id} data-testid={`button-mode-${id}`} onClick={() => { setSelectedMode(id); setNotice(noticeKey); }}>
-                <Icon size={14} /><span>{t(labelKey)}</span><small>{t('demoShort')}</small>
+                {id === 'text' ? <Icon size={14} /> : <LockKeyhole size={13} />}
+                <span>{t(labelKey)}</span><small>{t(id === 'text' ? 'demoShort' : 'locked')}</small>
               </button>
             ))}
           </div>
+          <button className="scenario-toggle" type="button" aria-label={t('scenarioControlAria')} aria-expanded={scenariosOpen} aria-controls="demo-scenarios" onClick={() => setScenariosOpen((open) => !open)}>
+            <span>{t('chooseExample')}</span><ChevronDown size={15} className={scenariosOpen ? 'is-open' : ''} />
+          </button>
+          {scenariosOpen && (
+            <div className="scenario-list" id="demo-scenarios">
+              {preparedExamples.map((example, index) => (
+                <button key={example.titleKey} type="button" className="prompt-button" onClick={() => { setActiveExample(index); setScenariosOpen(false); }} data-testid={`button-example-${index}`}>
+                  <span>{t(example.titleKey)}</span><ChevronRight size={14} />
+                </button>
+              ))}
+            </div>
+          )}
           <div className="quick-actions" aria-label={t('quickActionsAria')}>
             <button type="button" data-testid="button-quick-plan" onClick={() => setQuickAction('plan')}><NotebookTabs size={14} />{t('quickPlan')}</button>
             <button type="button" data-testid="button-quick-tip" onClick={() => setQuickAction('tip')}><Sparkles size={14} />{t('quickTip')}</button>
             <button type="button" data-testid="button-quick-report" onClick={() => setQuickAction('report')}><Activity size={14} />{t('quickReport')}</button>
           </div>
-          <div className="conversation" aria-live="polite" data-testid="content-chat-example">
+          <div className="conversation" ref={conversationRef} aria-live="polite" data-testid="content-chat-example">
             <div className="date-divider">{t('dateDivider')}</div>
             <div className="message coach">
-              <div className="message-label"><Sparkles size={11} /> {t('sampleText')}</div>
-              <div className="message-bubble">{t('openingMessage')}</div>
-              <span className="message-time">{t('sampleBeginning')}</span>
+              <EliAvatar className="message-avatar" alt={t('avatarChatAlt')} testId="image-eli-chat-message-1" />
+              <div className="coach-message-body">
+                <div className="message-label"><Sparkles size={11} /> {t('sampleText')}</div>
+                <div className="message-bubble">{t('openingMessage')}</div>
+                <span className="message-time">{t('sampleBeginning')}</span>
+              </div>
             </div>
             <div className="message user"><div className="message-bubble">{t('sampleUserMessage')}</div><span className="message-time">{t('sampleMessage')}</span></div>
             <div className="message coach">
-              <div className="message-label"><Sparkles size={11} /> {t('preparedReply')}</div>
-              <div className="message-bubble">{t('initialReply')}</div>
-              <div className="prepared-box"><strong>{t('staticExampleStrong')}</strong>{t('staticExampleBody')}</div>
+              <EliAvatar className="message-avatar" alt={t('avatarChatAlt')} testId="image-eli-chat-message-2" />
+              <div className="coach-message-body">
+                <div className="message-label"><Sparkles size={11} /> {t('preparedReply')}</div>
+                <div className="message-bubble">{t('initialReply')}</div>
+                <div className="prepared-box"><strong>{t('staticExampleStrong')}</strong>{t('staticExampleBody')}</div>
+              </div>
             </div>
             {activeExample !== null && (
               <>
                 <div className="message user"><div className="message-bubble">{t(preparedExamples[activeExample].promptKey)}</div><span className="message-time">{t('sampleAction')}</span></div>
                 <div className="message coach">
-                  <div className="message-label"><Sparkles size={11} /> {t('preparedLive')}</div>
-                  <div className="message-bubble">{t(preparedExamples[activeExample].textKey)}</div>
-                  <div className="prepared-box"><strong>{t('preparedContent')}</strong>{t('noAiRequest')}</div>
+                  <EliAvatar className="message-avatar" alt={t('avatarChatAlt')} testId="image-eli-chat-message-example" />
+                  <div className="coach-message-body">
+                    <div className="message-label"><Sparkles size={11} /> {t('preparedLive')}</div>
+                    <div className="message-bubble">{t(preparedExamples[activeExample].textKey)}</div>
+                    <div className="prepared-box"><strong>{t('preparedContent')}</strong>{t('noAiRequest')}</div>
+                  </div>
                 </div>
               </>
             )}
@@ -307,23 +338,7 @@ function Chat() {
           </form>
           <p className="composer-disclosure">{t('composerDisclosure')}</p>
         </section>
-        <aside className="chat-side animate-in delay-2">
-          <section className="panel side-card">
-            <div className="eyebrow"><i className="eyebrow-line" /> {t('chooseExample')}</div>
-            <h2 style={{ marginTop: 12 }}>{t('scenariosTitle')}</h2>
-            <p>{t('scenariosDescription')}</p>
-            <div className="prompt-list">
-              {preparedExamples.map((example, index) => (
-                <button key={example.titleKey} type="button" className="prompt-button" onClick={() => setActiveExample(index)} data-testid={`button-example-${index}`}>
-                  <span>{t(example.titleKey)}</span><ChevronRight size={14} />
-                </button>
-              ))}
-            </div>
-          </section>
-          <div className="chat-warning" data-testid="text-chat-disclosure">{t('chatWarning')}</div>
-        </aside>
       </div>
-      <p className="footer-note">{t('chatFooter')}</p>
     </main>
   );
 }

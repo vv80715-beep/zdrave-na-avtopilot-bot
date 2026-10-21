@@ -314,3 +314,50 @@ a { color: inherit; text-decoration: none; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* Compact, self-contained demo chat: only messages scroll, never the composer. */
+.chat-page { box-sizing: border-box; display: flex; flex-direction: column; height: calc(100dvh - 112px); min-height: 0; overflow: hidden; }
+.chat-page-heading { flex: 0 0 auto; margin-bottom: 16px; }
+.chat-page .chat-layout { display: flex; flex: 1 1 0; align-items: stretch; min-height: 0; }
+.chat-page .chat-panel { display: flex; flex: 1 1 0; flex-direction: column; width: 100%; height: 100%; min-height: 0; }
+.chat-page .conversation { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.message.coach { display: flex; align-items: flex-start; gap: 8px; max-width: 94%; }
+.coach-message-body { min-width: 0; flex: 1; }
+.message-avatar { width: 29px; height: 29px; margin-top: 2px; border-radius: 50%; border: 1px solid rgba(188,255,86,.32); background: #13291a; }
+.message-avatar .eli-avatar-image { object-fit: cover; object-position: 50% 34%; }
+.scenario-toggle { margin: 7px 12px 0; padding: 8px 10px; min-height: 34px; display: flex; align-items: center; justify-content: space-between; border: 1px solid rgba(170,205,158,.16); border-radius: 10px; color: #c3d2bc; background: rgba(5,15,9,.28); font: inherit; font-size: 11px; cursor: pointer; }
+.scenario-toggle svg { color: #c0ff5b; transition: transform .18s ease; }
+.scenario-toggle svg.is-open { transform: rotate(180deg); }
+.scenario-list { display: grid; gap: 5px; padding: 7px 12px 0; }
+.scenario-list .prompt-button { min-height: 38px; padding: 8px 10px; font-size: 10px; }
+.mode-button small { color: #a7b4a2; font-size: 9px; }
+.coach-ident small, .local-chip, .message-time, .composer-disclosure, .side-card p, .chat-warning { color: #a4b2a1; }
+.message-label { color: #a9c49d; }
+.composer input::placeholder { color: #9baa97; }
+
+@media (max-width: 760px) {
+  .chat-page { height: calc(100% - 54px); padding-top: 9px; padding-bottom: 8px; }
+  .chat-page-heading { flex-direction: row; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .chat-page-heading h1 { font-size: 28px; margin: 5px 0 2px; }
+  .chat-page-heading p, .chat-page-heading .page-tag { display: none; }
+  .chat-page .chat-layout { width: 100%; }
+  .chat-page .chat-panel { border-radius: 17px; }
+  .chat-page .chat-top { padding: 8px 11px; min-height: 49px; }
+  .chat-page .coach-avatar { width: 34px; height: 34px; }
+  .chat-page .mode-picker { padding: 7px 9px 0; gap: 5px; }
+  .chat-page .mode-button { flex: 1; min-height: 38px; padding: 6px 5px; gap: 4px; font-size: 10px; }
+  .chat-page .mode-button small { font-size: 8px; }
+  .chat-page .quick-actions { padding: 6px 9px; gap: 5px; }
+  .chat-page .quick-actions button { min-height: 36px; padding: 6px 8px; font-size: 9px; }
+  .chat-page .scenario-toggle { margin: 3px 9px 0; min-height: 32px; }
+  .chat-page .scenario-list { padding: 5px 9px 0; }
+  .chat-page .conversation { padding: 10px 9px; gap: 10px; }
+  .chat-page .message { font-size: 11px; line-height: 1.55; }
+  .chat-page .message-avatar { width: 26px; height: 26px; }
+  .chat-page .message-bubble { padding: 9px 11px; }
+  .chat-page .prepared-box { padding: 8px 10px; margin-top: 7px; font-size: 9px; }
+  .chat-page .composer { flex: 0 0 auto; padding: 8px 9px 5px; }
+  .chat-page .composer input { min-height: 44px; font-size: 16px; }
+  .chat-page .send-button { min-width: 44px; min-height: 44px; }
+  .chat-page .composer-disclosure { margin: 0 10px 7px; font-size: 9px; }
+}
