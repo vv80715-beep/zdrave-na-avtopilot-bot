@@ -273,6 +273,7 @@ function Chat() {
               </button>
             ))}
           </div>
+          <p className="mode-disclosure">{t('modeDemoDisclosure')}</p>
           <button className="scenario-toggle" type="button" aria-label={t('scenarioControlAria')} aria-expanded={scenariosOpen} aria-controls="demo-scenarios" onClick={() => setScenariosOpen((open) => !open)}>
             <span>{t('chooseExample')}</span><ChevronDown size={15} className={scenariosOpen ? 'is-open' : ''} />
           </button>
@@ -333,7 +334,7 @@ function Chat() {
             {notice && <div className="local-notice" role="status" data-testid="status-local-message">{t(notice)}</div>}
           </div>
           <form className="composer" onSubmit={submitDemoMessage}>
-            <input aria-label={t('inputAria')} placeholder={t('inputPlaceholder')} value={draft} onChange={(event) => setDraft(event.target.value)} data-testid="input-demo-message" />
+            <input aria-label={t('inputAria')} placeholder={t('inputPlaceholder')} enterKeyHint="send" autoComplete="off" value={draft} onChange={(event) => setDraft(event.target.value)} data-testid="input-demo-message" />
             <button className="send-button" type="submit" aria-label={t('sendAria')} data-testid="button-demo-send"><Send size={16} /></button>
           </form>
           <p className="composer-disclosure">{t('composerDisclosure')}</p>
