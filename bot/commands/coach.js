@@ -1,4 +1,4 @@
-const openai = require('../openaiClient');
+const { getTextAIClient, hasTextAIProvider } = require('../textAIClient');
 const { isOwner } = require('../adminGuard');
 const { gateChat } = require('../chatGate');
 const {
@@ -30,15 +30,15 @@ function clearScene(ctx) {
 
 async function run(ctx, generator, emptyMsg) {
   clearScene(ctx);
-  if (!openai) {
-    return ctx.reply('OpenAI не е конфигуриран. Моля, провери настройките на бота.');
-  }
   // Entitlement gate: an expired trial gets the static message — no AI call.
   const status = await gateChat(ctx);
   if (!status) return;
+  if (!hasTextAIProvider(ctx.from?.id)) {
+    return ctx.reply('Текстовият AI в момента не е конфигуриран. Опитай отново по-късно.');
+  }
   try {
     await ctx.sendChatAction('typing');
-    const text = await generator(ctx.from.id);
+    const text = await generator(ctx.from.id, getTextAIClient(ctx.from.id));
     if (!text) {
       return ctx.reply(emptyMsg || 'Не получих отговор. Опитай отново. 😊');
     }
@@ -52,21 +52,21 @@ async function run(ctx, generator, emptyMsg) {
 
 function register(bot) {
   bot.command('coach', (ctx) =>
-    run(ctx, (uid) => generateCoach(openai, uid, { persist: !isOwner(ctx) }))
+    run(ctx, (uid, client) => generateCoach(client, uid, { persist: !isOwner(ctx) }))
   );
 
   bot.command('motivate', (ctx) =>
-    run(ctx, (uid) => generateMotivate(openai, uid, { persist: !isOwner(ctx) }))
+    run(ctx, (uid, client) => generateMotivate(client, uid, { persist: !isOwner(ctx) }))
   );
 
   bot.command('nextstep', (ctx) =>
-    run(ctx, (uid) => generateNextStep(openai, uid))
+    run(ctx, (uid, client) => generateNextStep(client, uid))
   );
 
   bot.command('weeklyreview', (ctx) =>
     run(
       ctx,
-      (uid) => generateWeeklyReview(openai, uid),
+      (uid, client) => generateWeeklyReview(client, uid),
       'Все още нямаш достатъчно данни за седмичен преглед. Направи /checkin няколко дни и пробвай пак! 😊'
     )
   );

@@ -1,6 +1,6 @@
 const { getUser } = require('../storage');
 const { SYSTEM_PROMPT, stripLeadingGreeting } = require('../prompts');
-const openai = require('../openaiClient');
+const { getTextAIClient, hasTextAIProvider } = require('../textAIClient');
 const { addPlan } = require('../memoryStorage');
 const { isOwner } = require('../adminGuard');
 const { gateChat } = require('../chatGate');
@@ -62,15 +62,12 @@ function register(bot) {
       );
     }
 
-    if (!openai) {
-      return ctx.reply(
-        'OpenAI не е конфигуриран. Моля, провери настройките на бота.'
-      );
-    }
-
     // Entitlement gate: an expired trial gets the static message — no AI call.
     const status = await gateChat(ctx);
     if (!status) return;
+    if (!hasTextAIProvider(ctx.from?.id)) {
+      return ctx.reply('Текстовият AI в момента не е конфигуриран. Опитай отново по-късно.');
+    }
 
     await ctx.sendChatAction('typing');
     await ctx.reply(
@@ -78,7 +75,7 @@ function register(bot) {
     );
 
     try {
-      const completion = await openai.chat.completions.create({
+      const completion = await getTextAIClient(ctx.from?.id).chat.completions.create({
         model: 'gpt-4o-mini',
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },

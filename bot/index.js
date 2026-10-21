@@ -4,6 +4,7 @@ const express = require('express');
 const { Telegraf, Scenes, session, Markup } = require('telegraf');
 const { SYSTEM_PROMPT, conversationFlowNote, stripLeadingGreeting } = require('./prompts');
 const openai = require('./openaiClient');
+const { getTextAIClient, hasTextAIProvider } = require('./textAIClient');
 const { transcribeTelegramAudio, audioSuffix, looksLikeBulgarian } = require('./voiceTranscription');
 const { isOwner } = require('./adminGuard');
 const { OWNER_NAME, OWNER_MEMORY } = require('./ownerContext');
@@ -325,8 +326,8 @@ const eliV22Adapter = createAskEliAdapter();
 
 // opts.status: entitlement status from gateChat (computed if missing).
 async function askEli(ctx, question, opts = {}) {
-  if (!openai) {
-    await ctx.reply('OpenAI не е конфигуриран. Моля, провери настройките на бота.');
+  if (!hasTextAIProvider(ctx.from?.id)) {
+    await ctx.reply('Текстовият AI в момента не е конфигуриран. Опитай отново по-късно.');
     return;
   }
 
@@ -700,7 +701,7 @@ async function askEli(ctx, question, opts = {}) {
 
   try {
     await ctx.sendChatAction('typing');
-    const completion = await openai.chat.completions.create({
+    const completion = await getTextAIClient(ctx.from?.id).chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: systemContent },
@@ -861,7 +862,7 @@ bot.on('text', async (ctx) => {
   if (await maybeHandleCommandText(ctx, ctx.message.text)) return;
 
   // Graceful fallbacks when AI is unavailable.
-  if (!openai) {
+  if (!hasTextAIProvider(ctx.from?.id)) {
     if (isOwner(ctx)) {
       return ctx.reply(
         `В момента не мога да ползвам AI мозъка си. Опитай пак малко по-късно. 🙏`

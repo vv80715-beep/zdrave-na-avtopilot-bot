@@ -1,4 +1,4 @@
-const openai = require('./openaiClient');
+const { getTextAIClient, hasTextAIProvider } = require('./textAIClient');
 const { getAllUserIds } = require('./storage');
 const { getMemory, setLastCoachDate } = require('./memoryStorage');
 const { isOwnerId } = require('./adminGuard');
@@ -24,22 +24,22 @@ function sleep(ms) {
 
 // Send one automatic daily coaching message per user, at most once per day.
 async function runDailyCoaching(bot) {
-  if (!openai) return;
   const today = todayKey();
   const userIds = getAllUserIds();
 
   for (const userId of userIds) {
     if (isOwnerId(userId)) continue; // owner is never auto-coached
+    if (!hasTextAIProvider(userId)) continue;
 
     // Entitlement gate: users without active chat access (expired trial /
-    // expired plan) are skipped entirely — zero OpenAI cost after expiry.
+    // expired plan) are skipped entirely — zero text-AI cost after expiry.
     if (!(await resolveEntitlementStatus(userId)).canChat) continue;
 
     const memory = getMemory(userId);
     if (memory?.lastCoachDate === today) continue; // already coached today
 
     try {
-      const text = await generateCoach(openai, userId);
+      const text = await generateCoach(getTextAIClient(userId), userId);
       if (text) {
         await bot.telegram.sendMessage(
           userId,
