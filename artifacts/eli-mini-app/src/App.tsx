@@ -219,8 +219,8 @@ function Chat() {
   const [draft, setDraft] = useState('');
   const [notice, setNotice] = useState<TranslationKey | null>(null);
   const [activeExample, setActiveExample] = useState<number | null>(null);
-  const [toolsOpen, setToolsOpen] = useState(false);
-  const [scenariosOpen, setScenariosOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(true);
+  const [scenariosOpen, setScenariosOpen] = useState(true);
   const [localMessage, setLocalMessage] = useState('');
   const [selectedMode, setSelectedMode] = useState<'text' | 'voice' | 'avatar'>('text');
   const [quickAction, setQuickAction] = useState<'plan' | 'tip' | 'report' | null>(null);
