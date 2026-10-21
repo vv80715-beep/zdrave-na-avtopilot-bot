@@ -94,6 +94,8 @@ test('/mode -> select Avatar -> как си invokes Avatar, not text delivery', 
     openai: { chat: { completions: { create: async () => ({
       choices: [{ message: { content: 'Добре съм.' } }],
     }) } } },
+    hasTextAIProvider: () => true,
+    getTextAIClient: () => sandbox.openai,
     sendAvatarReply: async (_ctx, _text, opts) => {
       avatars++;
       if (triggerOverlong) {

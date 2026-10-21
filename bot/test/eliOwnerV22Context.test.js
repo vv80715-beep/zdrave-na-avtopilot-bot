@@ -242,6 +242,8 @@ function createAskEliHarness(readers, options = {}) {
         },
       },
     },
+    hasTextAIProvider: () => true,
+    getTextAIClient: () => sandbox.openai,
     gateChat: async () => ({ canChat: true, plan: 'owner', allowedModes: ['text', 'voice', 'avatar'], notice: null }),
     isOwner,
     getOwnerScopedEliV22Flags: (owner) =>
