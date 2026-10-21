@@ -34,7 +34,7 @@ const LanguageContext = createContext<LanguageContextValue | null>(null);
 function LanguageProvider({ children }: { children: ReactNode }) {
   const [language, setLanguage] = useState<Language>(() => {
     try {
-      return window.localStorage.getItem('eli-mini-app-language') === 'en' ? 'en' : 'bg';
+      return 'en';
     } catch {
       return 'bg';
     }
@@ -219,8 +219,8 @@ function Chat() {
   const [draft, setDraft] = useState('');
   const [notice, setNotice] = useState<TranslationKey | null>(null);
   const [activeExample, setActiveExample] = useState<number | null>(null);
-  const [toolsOpen, setToolsOpen] = useState(true);
-  const [scenariosOpen, setScenariosOpen] = useState(true);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [scenariosOpen, setScenariosOpen] = useState(false);
   const [localMessage, setLocalMessage] = useState('');
   const [selectedMode, setSelectedMode] = useState<'text' | 'voice' | 'avatar'>('text');
   const [quickAction, setQuickAction] = useState<'plan' | 'tip' | 'report' | null>(null);
