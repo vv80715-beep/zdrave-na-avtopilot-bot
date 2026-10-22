@@ -115,8 +115,9 @@ export async function getOwnerTextAiStatus(
 ): Promise<OwnerTextAiMode> {
   await ensureOwnerSession(initData, fetchFn);
   const response = await sameOriginRequest("/api/mini-app/text-ai/status", {
-    method: "GET",
-    headers: { Accept: "application/json" },
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({}),
   }, fetchFn);
   const body = await responseBody(response);
   if (!response.ok) throw new MiniAppStageError(safeErrorCode(body), response.status);

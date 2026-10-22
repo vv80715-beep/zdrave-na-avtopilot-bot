@@ -267,6 +267,7 @@ function Chat() {
   const [draft, setDraft] = useState('');
   const [notice, setNotice] = useState<TranslationKey | null>(null);
   const [stageError, setStageError] = useState<TranslationKey | null>(null);
+  const [stageErrorCanRetry, setStageErrorCanRetry] = useState(false);
   const [sending, setSending] = useState(false);
   const [stageMode, setStageMode] = useState<'local' | 'checking' | 'mock' | 'live' | 'unavailable'>('local');
   const [messages, setMessages] = useState<LocalChatMessage[]>([]);
@@ -275,6 +276,7 @@ function Chat() {
   const photoInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const nextMessageId = useRef(1);
+  const sendLock = useRef(false);
   const conversationRef = useRef<HTMLDivElement>(null);
   const hasMountedConversation = useRef(false);
   const telegram = window.Telegram?.WebApp;
@@ -295,11 +297,13 @@ function Chat() {
       if (current) {
         setStageMode(mode === 'test_ai' ? 'live' : 'mock');
         setStageError(null);
+        setStageErrorCanRetry(false);
       }
     }).catch((error) => {
       if (current) {
         setStageMode('unavailable');
         setStageError(stageErrorKey(error));
+        setStageErrorCanRetry(true);
       }
     });
     return () => { current = false; };
@@ -317,9 +321,9 @@ function Chat() {
   function stageErrorKey(error: unknown): TranslationKey {
     if (!(error instanceof MiniAppStageError)) return 'stageNetworkError';
     if (error.status === 404) return 'stageDisabledError';
-    if (error.status === 403) return 'stageOwnerError';
+    if (error.status === 401 || error.status === 403) return 'stageSessionError';
     if (error.status === 429) return 'stageRateLimitError';
-    if (error.status === 401 || error.code === 'telegram_auth_required') return 'stageSessionError';
+    if (error.code === 'telegram_auth_required') return 'stageSessionError';
     if (error.status === 503 || error.status === 502) return 'stageAiUnavailable';
     if (error.code === 'request_timeout') return 'stageTimeoutError';
     return 'stageNetworkError';
@@ -327,26 +331,63 @@ function Chat() {
 
   async function submitDemoMessage(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
-    if (sending) return;
+    if (sendLock.current || sending) return;
     if (!draft.trim() && !media.attachment) {
       setNotice('emptyDraftNotice');
       return;
     }
     const text = draft.trim();
     const attachment = media.attachment;
-    const sendText = canUseOwnerStage && Boolean(text) && (stageMode === 'mock' || stageMode === 'live');
+    const sendText = canUseOwnerStage && Boolean(text);
     setNotice(null);
     setStageError(null);
-    if (canUseOwnerStage && text && !sendText) {
-      setStageError(stageMode === 'checking' ? 'stageCheckingError' : 'stageAiUnavailable');
+    setStageErrorCanRetry(false);
+    if (sendText && stageMode === 'checking') {
+      setStageError('stageCheckingError');
+      setStageErrorCanRetry(true);
       return;
     }
     if (sendText) {
+      sendLock.current = true;
       setSending(true);
+      let phase: 'status' | 'mock' | 'live' = 'status';
       try {
-        const result = stageMode === 'live'
-          ? await sendOwnerTextAi(signedInitData, text, language)
-          : { ...(await sendOwnerDemoChat(signedInitData, text, language)), mode: 'mock' as const };
+        let mode: 'mock' | 'live';
+        if (stageMode === 'mock' || stageMode === 'live') {
+          mode = stageMode;
+        } else {
+          const checkedMode = await getOwnerTextAiStatus(signedInitData);
+          mode = checkedMode === 'test_ai' ? 'live' : 'mock';
+          setStageMode(mode);
+        }
+
+        let result: { reply: string; mode: 'mock' | 'test_ai' };
+        if (mode === 'live') {
+          phase = 'live';
+          try {
+            result = await sendOwnerTextAi(signedInitData, text, language);
+          } catch (error) {
+            if (!(error instanceof MiniAppStageError) || error.status !== 404) throw error;
+            // A 404 is safe to re-check: the guarded route rejects before any provider call.
+            phase = 'status';
+            const checkedMode = await getOwnerTextAiStatus(signedInitData);
+            mode = checkedMode === 'test_ai' ? 'live' : 'mock';
+            setStageMode(mode);
+            if (mode !== 'mock') throw error;
+            setNotice('stageSwitchedToMock');
+            phase = 'mock';
+            result = {
+              ...(await sendOwnerDemoChat(signedInitData, text, language)),
+              mode: 'mock',
+            };
+          }
+        } else {
+          phase = 'mock';
+          result = {
+            ...(await sendOwnerDemoChat(signedInitData, text, language)),
+            mode: 'mock',
+          };
+        }
         const deliveredAttachment = media.detachForMessage();
         setMessages((current) => [
           ...current,
@@ -360,17 +401,25 @@ function Chat() {
           },
         ]);
         setStageMode(result.mode === 'test_ai' ? 'live' : 'mock');
+        setStageError(null);
+        setStageErrorCanRetry(false);
         setDraft('');
         setAttachmentMenuOpen(false);
         if (attachment) setNotice('attachmentLocalNotice');
         media.clearError();
       } catch (error) {
         setStageError(stageErrorKey(error));
+        setStageErrorCanRetry(
+          phase === 'status' ||
+          (error instanceof MiniAppStageError && [401, 403, 404].includes(error.status)),
+        );
       } finally {
+        sendLock.current = false;
         setSending(false);
       }
       return;
     }
+    sendLock.current = true;
     const localAttachment = media.detachForMessage();
     setMessages((current) => [...current, {
       id: nextMessageId.current++,
@@ -383,6 +432,7 @@ function Chat() {
     setDraft('');
     setAttachmentMenuOpen(false);
     media.clearError();
+    sendLock.current = false;
   }
 
   return (
@@ -505,7 +555,7 @@ function Chat() {
           )}
           {media.errorKey && <p className="media-error" role="alert">{t(media.errorKey)}</p>}
           {sending && <div className="local-notice" role="status" aria-live="polite">{t('stageSending')}</div>}
-          {stageError && <div className="stage-error" role="alert" data-testid="status-stage-error"><span>{t(stageError)}</span><button type="button" onClick={() => void submitDemoMessage()} disabled={sending} data-testid="button-stage-retry">{t('retry')}</button></div>}
+          {stageError && <div className="stage-error" role="alert" data-testid="status-stage-error"><span>{t(stageError)}</span>{stageErrorCanRetry ? <button type="button" onClick={() => void submitDemoMessage()} disabled={sending || stageMode === 'checking'} data-testid="button-stage-retry">{t('retry')}</button> : <button type="button" onClick={() => { setStageError(null); setStageErrorCanRetry(false); }} data-testid="button-stage-dismiss">{t('dismiss')}</button>}</div>}
           <form className="composer" onSubmit={(event) => void submitDemoMessage(event)}>
             <div className="attachment-menu-wrap">
               <button
@@ -564,7 +614,7 @@ function Chat() {
               onChange={(event) => { setDraft(event.target.value); media.clearError(); }}
               data-testid="input-demo-message"
             />
-            <button className="send-button" type="submit" aria-label={t(canUseOwnerStage ? 'sendAriaStage' : 'sendAria')} data-testid="button-demo-send" disabled={sending || (!draft.trim() && !media.attachment)}>
+            <button className="send-button" type="submit" aria-label={t(canUseOwnerStage ? 'sendAriaStage' : 'sendAria')} data-testid="button-demo-send" disabled={sending || (canUseOwnerStage && stageMode === 'checking') || (!draft.trim() && !media.attachment)}>
               {sending ? <Clock3 size={16} /> : <Send size={16} />}
             </button>
           </form>

@@ -297,7 +297,9 @@ export function createMiniAppRouter(
 
   registerMiniAppMediaRoutes(router, requireOwnerSession, mediaEnabled, env, options.media);
 
-  router.get("/text-ai/status", requireOwnerSession, (_req, res) => {
+  // POST is intentional: browsers include Origin on same-origin POST requests,
+  // while same-origin GET requests commonly omit it and fail the router's CSRF check.
+  router.post("/text-ai/status", requireOwnerSession, (_req, res) => {
     if (!textAiEnabled) {
       res.json({ mode: "mock" });
       return;

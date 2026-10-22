@@ -486,8 +486,10 @@ test("text AI is 404 while disabled, requires owner session, and fails closed wi
     assert.equal((await disabled.request("/text-ai", { message: "synthetic" })).status, 401);
     const cookie = await ownerCookie(disabled);
     assert.equal((await disabled.request("/text-ai", { message: "synthetic" }, { cookie })).status, 404);
-    const status = await disabled.request("/text-ai/status", undefined, { cookie, method: "GET" });
+    const status = await disabled.request("/text-ai/status", {}, { cookie });
     assert.deepEqual(await status.json(), { mode: "mock" });
+    assert.equal((await disabled.request("/text-ai/status", undefined, { cookie, method: "GET" })).status, 404);
+    assert.equal((await disabled.request("/text-ai/status", {}, { cookie, origin: null })).status, 403);
     assert.equal(providerCalls, 0);
   } finally {
     await disabled.close();
@@ -500,7 +502,7 @@ test("text AI is 404 while disabled, requires owner session, and fails closed wi
   try {
     const cookie = await ownerCookie(missingKey);
     assert.equal((await missingKey.request("/text-ai", { message: "synthetic" }, { cookie })).status, 503);
-    assert.equal((await missingKey.request("/text-ai/status", undefined, { cookie, method: "GET" })).status, 503);
+     assert.equal((await missingKey.request("/text-ai/status", {}, { cookie })).status, 503);
     assert.equal(providerCalls, 0);
   } finally {
     await missingKey.close();
@@ -523,7 +525,7 @@ test("owner text AI validates size and language, uses isolated mock injection, a
   });
   try {
     const cookie = await ownerCookie(h);
-    const status = await h.request("/text-ai/status", undefined, { cookie, method: "GET" });
+    const status = await h.request("/text-ai/status", {}, { cookie });
     assert.deepEqual(await status.json(), { mode: "test_ai", model: "gpt-4o-mini" });
     assert.equal((await h.request("/text-ai", { message: "synthetic test" }, {
       cookie,

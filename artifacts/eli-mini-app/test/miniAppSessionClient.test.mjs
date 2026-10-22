@@ -68,15 +68,18 @@ test("empty signed initData is rejected before any request", async () => {
 test("owner AI status check never calls the AI endpoint and distinguishes mock from live", async () => {
   for (const mode of ["mock", "test_ai"]) {
     const paths = [];
-    const result = await getOwnerTextAiStatus(initData, async (url) => {
-      paths.push(String(url));
+    const result = await getOwnerTextAiStatus(initData, async (url, init) => {
+      paths.push({ url: String(url), method: init.method });
       return String(url).endsWith("/session")
         ? new Response(JSON.stringify({ ok: true, expiresAt: "2026-10-22T00:10:00.000Z" }))
         : new Response(JSON.stringify({ mode, ...(mode === "test_ai" ? { model: "gpt-4o-mini" } : {}) }));
     });
     assert.equal(result, mode);
-    assert.deepEqual(paths, ["/api/mini-app/session", "/api/mini-app/text-ai/status"]);
-    assert.equal(paths.some((path) => path.endsWith("/text-ai")), false);
+    assert.deepEqual(paths, [
+      { url: "/api/mini-app/session", method: "POST" },
+      { url: "/api/mini-app/text-ai/status", method: "POST" },
+    ]);
+    assert.equal(paths.some(({ url }) => url.endsWith("/text-ai") && !url.endsWith("/status")), false);
   }
 });
 
