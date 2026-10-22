@@ -97,6 +97,22 @@ test('normal /start is one short welcome, owner personalized; /help is full and 
   assert.deepEqual(h.purchases, []);
 });
 
+test('/plans remains the same static plan menu without creating a trial or purchase', async () => {
+  const h = harness();
+  const replies = await h.send('/plans');
+
+  assert.equal(replies.length, 1);
+  assert.match(replies[0].data.text, /7 days — €15/);
+  const buttons = replies[0].data.reply_markup.inline_keyboard.map((row) => row[0]);
+  assert.deepEqual(buttons.map((button) => button.callback_data), [
+    'buy:seven_day',
+    'buy:monthly',
+    'buy:yearly',
+  ]);
+  assert.deepEqual(h.users, []);
+  assert.deepEqual(h.purchases, []);
+});
+
 test('Mini App /start button stays off by default and requires an explicit HTTPS URL', async () => {
   assert.equal(startCommands.createMiniAppStartMarkup({}), undefined);
   assert.equal(startCommands.createMiniAppStartMarkup({
