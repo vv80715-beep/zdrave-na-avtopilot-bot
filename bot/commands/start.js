@@ -41,7 +41,55 @@ function createMiniAppStartMarkup(env = process.env) {
     }
 
     return Markup.inlineKeyboard([
-      [Markup.button.webApp('Отвори Ели', url.toString())],
+      [Markup.button.webApp('Влез в Ели', url.toString())],
+    ]);
+  } catch {
+    return undefined;
+  }
+}
+
+function createPublicMiniAppStartMarkup(env = process.env) {
+  if (
+    env.ELI_MINI_APP_PUBLIC_START_BUTTON_ENABLED !== 'true' ||
+    env.ELI_MINI_APP_PUBLIC_START_READY !== 'true' ||
+    env.NODE_ENV !== 'production'
+  ) {
+    return undefined;
+  }
+
+  const rawUrl = String(env.ELI_MINI_APP_PUBLIC_URL || '').trim();
+  try {
+    const url = new URL(rawUrl);
+    const hostname = url.hostname.toLowerCase();
+    const reservedHost =
+      !hostname.includes('.') ||
+      hostname === 'localhost' ||
+      hostname.endsWith('.localhost') ||
+      hostname.endsWith('.local') ||
+      hostname.endsWith('.internal') ||
+      hostname.endsWith('.test') ||
+      hostname.endsWith('.invalid') ||
+      hostname.endsWith('.example') ||
+      hostname === 'replit.dev' ||
+      hostname.endsWith('.replit.dev') ||
+      hostname.startsWith('[') ||
+      /^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname);
+
+    if (
+      url.protocol !== 'https:' ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      rawUrl.includes('?') ||
+      rawUrl.includes('#') ||
+      reservedHost
+    ) {
+      return undefined;
+    }
+
+    return Markup.inlineKeyboard([
+      [Markup.button.webApp('Влез в Ели', url.toString())],
     ]);
   } catch {
     return undefined;
@@ -85,6 +133,7 @@ function register(bot, {
   purchasePlan,
   refreshPaymentComplete,
   miniAppStartMarkup = () => createMiniAppStartMarkup(),
+  publicMiniAppStartMarkup = () => createPublicMiniAppStartMarkup(),
 }) {
   // Register after session and before stage: active wizards cannot swallow these
   // commands. Do not erase other session state or conversation memory.
@@ -106,11 +155,14 @@ function register(bot, {
       return refreshPaymentComplete(ctx);
     }
     ensureUser(ctx.from.id);
-    const replyMarkup =
-      ctx.chat?.type === 'private' && isOwner(ctx)
-        ? miniAppStartMarkup()
-        : undefined;
-    return ctx.reply(isOwner(ctx)
+    const owner = isOwner(ctx);
+    let replyMarkup;
+    if (ctx.chat?.type === 'private') {
+      replyMarkup =
+        publicMiniAppStartMarkup() ||
+        (owner ? miniAppStartMarkup() : undefined);
+    }
+    return ctx.reply(owner
       ? `Здравей, ${ownerName}! 👑 Радвам се да те видя.`
       : `Здравей, ${ctx.from.first_name || 'приятелю'}! 👋 Аз съм Ели. Пиши ми или виж /help.`,
     replyMarkup);
@@ -127,4 +179,5 @@ module.exports = {
   BUY_PAYLOADS,
   HELP_TEXT,
   createMiniAppStartMarkup,
+  createPublicMiniAppStartMarkup,
 };

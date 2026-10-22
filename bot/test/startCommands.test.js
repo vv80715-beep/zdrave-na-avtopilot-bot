@@ -4,12 +4,13 @@ const { Telegraf, Telegram, Scenes, session } = require('telegraf');
 const startCommands = require('../commands/start');
 const plans = require('../commands/plans');
 
-function harness({ failPurchase = false, miniAppEnv } = {}) {
+function harness({ failPurchase = false, miniAppEnv, publicMiniAppEnv } = {}) {
   const bot = new Telegraf('123:offline');
   bot.botInfo = { id: 999, is_bot: true, first_name: 'Eli', username: 'EliTestBot' };
   const sent = [];
   const purchases = [];
   const users = [];
+  const trials = new Map();
   const refreshes = [];
   const client = {
     async createPurchaseSession(id, planId) {
@@ -32,12 +33,24 @@ function harness({ failPurchase = false, miniAppEnv } = {}) {
     return next();
   });
   startCommands.register(bot, {
-    ensureUser: (id) => users.push(id),
+    ensureUser: (id) => {
+      users.push(id);
+      const key = String(id);
+      if (!trials.has(key)) {
+        trials.set(key, {
+          trialStartedAt: 1000,
+          trialExpiresAt: 1000 + 5 * 24 * 60 * 60 * 1000,
+        });
+      }
+      return trials.get(key);
+    },
     isOwner: (ctx) => ctx.from.id === 12345,
     ownerName: 'Собственик',
     purchasePlan: (ctx, planId) => plans.sendPurchaseLink(ctx, planId, client),
     miniAppStartMarkup: () =>
-      miniAppEnv ? startCommands.createMiniAppStartMarkup(miniAppEnv) : undefined,
+      startCommands.createMiniAppStartMarkup(miniAppEnv || {}),
+    publicMiniAppStartMarkup: () =>
+      startCommands.createPublicMiniAppStartMarkup(publicMiniAppEnv || {}),
     refreshPaymentComplete: async (ctx) => {
       refreshes.push(ctx.from.id);
       return ctx.reply('Плащането е проверено.');
@@ -63,7 +76,7 @@ function harness({ failPurchase = false, miniAppEnv } = {}) {
     await bot.handleUpdate({ update_id: updateId, message });
     return sent.slice(before);
   }
-  return { bot, sent, purchases, users, refreshes, send };
+  return { bot, sent, purchases, users, trials, refreshes, send };
 }
 
 test('normal /start is one short welcome, owner personalized; /help is full and explicit', async () => {
@@ -72,6 +85,7 @@ test('normal /start is one short welcome, owner personalized; /help is full and 
   assert.equal(normal.length, 1);
   assert.match(normal[0].data.text, /Здравей.*Ели/);
   assert.doesNotMatch(normal[0].data.text, /Профил|пробен период|планове/i);
+  assert.equal(normal[0].data.reply_markup, undefined);
   assert.deepEqual(h.users, [23456]);
   assert.equal((await h.send('/start', { from: 12345 }))[0].data.text.includes('Собственик'), true);
   assert.equal((await h.send('/start ordinary_payload')).length, 1);
@@ -106,16 +120,22 @@ test('Mini App /start button stays off by default and requires an explicit HTTPS
     miniAppEnv: {
       ELI_MINI_APP_START_BUTTON_ENABLED: 'true',
       ELI_MINI_APP_STAGE: 'staging',
-      ELI_MINI_APP_URL: 'https://eli.replit.app/mini',
+      NODE_ENV: 'development',
+      ELI_MINI_APP_URL: 'https://a8d764ea-44fd-403d-b30b-c4b99af8d5ca-00-139ynzw6poze2.worf.replit.dev/chat',
     },
   });
   const nonOwnerStart = await h.send('/start');
   assert.equal(nonOwnerStart[0].data.reply_markup, undefined);
 
   const start = await h.send('/start', { from: 12345 });
-  const button = start[0].data.reply_markup.inline_keyboard[0][0];
-  assert.equal(button.text, 'Отвори Ели');
-  assert.deepEqual(button.web_app, { url: 'https://eli.replit.app/mini' });
+  const rows = start[0].data.reply_markup.inline_keyboard;
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].length, 1);
+  const button = rows[0][0];
+  assert.equal(button.text, 'Влез в Ели');
+  assert.deepEqual(button.web_app, {
+    url: 'https://a8d764ea-44fd-403d-b30b-c4b99af8d5ca-00-139ynzw6poze2.worf.replit.dev/chat',
+  });
 
   const purchase = await h.send('/start buy_monthly');
   assert.equal(purchase[0].data.reply_markup.inline_keyboard[0][0].text, 'Confirm payment');
@@ -127,6 +147,130 @@ test('Mini App /start button stays off by default and requires an explicit HTTPS
 
   const group = await h.send('/start', { chat: -100002, type: 'supergroup' });
   assert.equal(group[0].data.reply_markup, undefined);
+});
+
+test('repeated normal /start preserves the original trial and sends no customer dev button', async () => {
+  const h = harness({
+    miniAppEnv: {
+      ELI_MINI_APP_START_BUTTON_ENABLED: 'true',
+      ELI_MINI_APP_STAGE: 'staging',
+      NODE_ENV: 'development',
+      ELI_MINI_APP_URL: 'https://owner-stage.replit.dev/chat',
+    },
+  });
+
+  const first = await h.send('/start');
+  const initialTrial = h.trials.get('23456');
+  const second = await h.send('/start');
+
+  assert.equal(first[0].data.reply_markup, undefined);
+  assert.equal(second[0].data.reply_markup, undefined);
+  assert.equal(h.users.length, 2);
+  assert.equal(h.trials.size, 1);
+  assert.equal(h.trials.get('23456').trialStartedAt, initialTrial.trialStartedAt);
+  assert.equal(h.trials.get('23456').trialExpiresAt, initialTrial.trialExpiresAt);
+});
+
+test('public /start CTA is default-off and requires production readiness plus a safe stable URL', async () => {
+  const disabled = {
+    ELI_MINI_APP_PUBLIC_START_BUTTON_ENABLED: 'true',
+    ELI_MINI_APP_PUBLIC_URL: 'https://eli.replit.app/chat',
+    NODE_ENV: 'production',
+  };
+  assert.equal(startCommands.createPublicMiniAppStartMarkup(disabled), undefined);
+  assert.equal(startCommands.createPublicMiniAppStartMarkup({
+    ...disabled,
+    ELI_MINI_APP_PUBLIC_START_READY: 'true',
+    NODE_ENV: 'development',
+  }), undefined);
+
+  const ready = {
+    ...disabled,
+    ELI_MINI_APP_PUBLIC_START_READY: 'true',
+  };
+  const markup = startCommands.createPublicMiniAppStartMarkup(ready);
+  assert.equal(markup.reply_markup.inline_keyboard.length, 1);
+  assert.equal(markup.reply_markup.inline_keyboard[0].length, 1);
+  assert.equal(markup.reply_markup.inline_keyboard[0][0].text, 'Влез в Ели');
+  assert.deepEqual(markup.reply_markup.inline_keyboard[0][0].web_app, {
+    url: 'https://eli.replit.app/chat',
+  });
+
+  for (const url of [
+    'http://eli.example.org/chat',
+    'https://eli.replit.dev/chat',
+    'https://localhost/chat',
+    'https://127.0.0.1/chat',
+    'https://user:pass@eli.example.org/chat',
+    'https://eli.example.org/chat?next=https://attacker.example',
+    'https://eli.example.org/chat#redirect',
+  ]) {
+    assert.equal(startCommands.createPublicMiniAppStartMarkup({
+      ...ready,
+      ELI_MINI_APP_PUBLIC_URL: url,
+    }), undefined, `should reject ${url}`);
+  }
+});
+
+test('public CTA is the only customer path; owner staging flag cannot expose its dev URL', async () => {
+  const h = harness({
+    miniAppEnv: {
+      ELI_MINI_APP_START_BUTTON_ENABLED: 'true',
+      ELI_MINI_APP_STAGE: 'staging',
+      NODE_ENV: 'development',
+      ELI_MINI_APP_URL: 'https://owner-stage.replit.dev/chat',
+    },
+    publicMiniAppEnv: {},
+  });
+  assert.equal((await h.send('/start'))[0].data.reply_markup, undefined);
+  assert.equal(
+    (await h.send('/start', { from: 12345 }))[0].data.reply_markup.inline_keyboard[0][0].text,
+    'Влез в Ели',
+  );
+
+  const publicH = harness({
+    publicMiniAppEnv: {
+      ELI_MINI_APP_PUBLIC_START_BUTTON_ENABLED: 'true',
+      ELI_MINI_APP_PUBLIC_START_READY: 'true',
+      ELI_MINI_APP_PUBLIC_URL: 'https://eli.replit.app/chat',
+      NODE_ENV: 'production',
+    },
+  });
+  for (const from of [23456, 12345]) {
+    const reply = await publicH.send('/start', { from });
+    const rows = reply[0].data.reply_markup.inline_keyboard;
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].length, 1);
+    assert.equal(rows[0][0].text, 'Влез в Ели');
+    assert.deepEqual(rows[0][0].web_app, { url: 'https://eli.replit.app/chat' });
+  }
+  const group = await publicH.send('/start', {
+    from: 23456,
+    chat: -100002,
+    type: 'supergroup',
+  });
+  assert.equal(group[0].data.reply_markup, undefined);
+});
+
+test('buy and payment deep links never receive the public Web App CTA', async () => {
+  const h = harness({
+    publicMiniAppEnv: {
+      ELI_MINI_APP_PUBLIC_START_BUTTON_ENABLED: 'true',
+      ELI_MINI_APP_PUBLIC_START_READY: 'true',
+      ELI_MINI_APP_PUBLIC_URL: 'https://eli.replit.app/chat',
+      NODE_ENV: 'production',
+    },
+  });
+
+  const purchase = await h.send('/start buy_monthly');
+  const purchaseButton = purchase[0].data.reply_markup.inline_keyboard[0][0];
+  assert.equal(purchaseButton.text, 'Confirm payment');
+  assert.equal(purchaseButton.web_app, undefined);
+
+  const paymentComplete = await h.send('/start payment_complete');
+  assert.equal(paymentComplete[0].data.reply_markup, undefined);
+  assert.equal(paymentComplete[0].data.text, 'Плащането е проверено.');
+  assert.deepEqual(h.users, []);
 });
 
 test('all website buy deep links use trusted private Telegram identity, one URL only, no trial', async () => {
