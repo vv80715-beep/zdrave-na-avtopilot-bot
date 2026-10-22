@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: mini-app
+    description: Disabled-by-default owner-only staging demo routes
 paths:
   /healthz:
     get:
@@ -24,7 +26,64 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /mini-app/session:
+    post:
+      operationId: createMiniAppOwnerSession
+      tags: [mini-app]
+      summary: Validate Telegram initData and create a short-lived owner session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MiniAppSessionInput"
+      responses:
+        "200":
+          description: Owner session cookie issued
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniAppSession"
+        "400":
+          description: Invalid request
+        "401":
+          description: Invalid or stale Telegram initData
+        "403":
+          description: Request is not from the configured owner or allowed origin
+  /mini-app/demo-chat:
+    post:
+      operationId: postMiniAppDemoChat
+      tags: [mini-app]
+      summary: Return a fixed text-only staging demo response
+      security:
+        - MiniAppSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MiniAppDemoChatInput"
+      responses:
+        "200":
+          description: Static demo reply; no provider or persistence is used
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniAppDemoChatResponse"
+        "401":
+          description: Valid owner session required
+        "403":
+          description: Request is not from the configured origin
 components:
+  securitySchemes:
+    MiniAppSessionCookie:
+      type: apiKey
+      in: cookie
+      name: eli_mini_owner_session
   schemas:
     HealthStatus:
       type: object
@@ -33,4 +92,44 @@ components:
           type: string
       required:
         - status
+    MiniAppSessionInput:
+      type: object
+      properties:
+        initData:
+          type: string
+          minLength: 1
+          maxLength: 16384
+      required: [initData]
+      additionalProperties: false
+    MiniAppSession:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          const: true
+        expiresAt:
+          type: string
+          format: date-time
+      required: [ok, expiresAt]
+    MiniAppDemoChatInput:
+      type: object
+      properties:
+        message:
+          type: string
+          minLength: 1
+          maxLength: 1200
+        language:
+          type: string
+          enum: [bg, en]
+      required: [message]
+      additionalProperties: false
+    MiniAppDemoChatResponse:
+      type: object
+      properties:
+        reply:
+          type: string
+        demo:
+          type: boolean
+          const: true
+      required: [reply, demo]
 

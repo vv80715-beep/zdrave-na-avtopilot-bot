@@ -1,9 +1,9 @@
 # Eli Mini App → Telegram rollout preparation
 
-This document describes the isolated demo preparation only. The Mini App still
-has no account session, live chat API, entitlement API, or payment integration.
-Do not connect it to customer data or paid providers until the prerequisites
-below have been approved and tested in a separate staging environment.
+This document describes the isolated demo and owner-only staging foundation.
+The Mini App has no live customer session, live AI chat, entitlement API, or
+payment integration. The staging routes are not mounted unless every explicit
+development-only guard is configured.
 
 ## Confirmed access rules in the existing bot
 
@@ -25,8 +25,8 @@ below have been approved and tested in a separate staging environment.
   the existing durable allowance/reservation and actual-duration metering,
   including purchased add-on time. It reserves 30 seconds before generation
   and does not send a generated video longer than 20 seconds.
-- The API artifact currently has only `/api/healthz`; the Mini App is local
-  demo content. No user identity or client-supplied plan is trusted here.
+- The API has `/api/healthz` plus disabled-by-default owner-only staging routes
+  described below. No customer identity or client-supplied plan is trusted.
 - The production bot's owner role bypasses normal customer chat gates. Avatar
   generation has an owner authorization exception but can still reach real
   metering and HeyGen; it is not a staging shortcut.
@@ -44,8 +44,8 @@ below have been approved and tested in a separate staging environment.
 
 ## `/start` inline button guard
 
-The normal welcome may include an inline Web App button only when both
-conditions are explicitly true:
+Only the configured owner in a private chat can receive the inline Web App
+button. It remains disabled unless all conditions below are explicitly true:
 
 ```text
 ELI_MINI_APP_START_BUTTON_ENABLED=true
@@ -54,10 +54,10 @@ ELI_MINI_APP_URL=https://<public-host>/<app-path>
 ```
 
 All three settings are required; the default is off, and `NODE_ENV=production`
-also disables the button. The URL must parse as HTTPS and use a non-local,
+also disables the button. Existing `/start buy_*` and `/start payment_complete`
+paths do not receive the Mini App button. The URL must parse as HTTPS and use a non-local,
 non-reserved hostname. This is a format guard, not proof that DNS, TLS, or
 public reachability work. No environment value was set as part of this change.
-Existing `/start buy_*` and `/start payment_complete` paths are unchanged.
 `/start` only displays a button; the user must tap it to open the Mini App.
 
 After an HTTPS deployment and explicit approval, configure the global menu in
@@ -66,30 +66,38 @@ the bot's Main Mini App separately before sharing a direct link such as
 `https://t.me/<bot_username>?startapp`. Do not distribute a guessed or
 unconfigured link.
 
-## Server authentication foundation
+## Owner-only staging API foundation
 
-The API artifact can serve production traffic and currently has no isolated
-staging deployment or Mini App auth route. To avoid adding a live-looking route
-to that service, this change adds only a pure validator and offline tests; it is
-not imported by the API router and is not reachable over HTTP.
+The API mounts `/api/mini-app/session` and `/api/mini-app/demo-chat` only when
+all of these hold: `NODE_ENV=development`, `ELI_MINI_APP_STAGE=staging`,
+`ELI_MINI_APP_SESSION_ENABLED=true`, a valid exact HTTPS
+`ELI_MINI_APP_ORIGIN`, a valid `OWNER_TELEGRAM_ID`, `TELEGRAM_BOT_TOKEN`, and a
+32+ character `SESSION_SECRET`. Missing configuration fails closed. No such
+staging flags/origin are currently configured, so these routes are not mounted.
+Production `NODE_ENV` cannot mount them.
 
-Before exposing an endpoint:
+`POST /api/mini-app/session` accepts only raw Telegram `initData`, verifies the
+HMAC and five-minute `auth_date` freshness on the server, and compares the
+verified ID to the configured owner ID. It rejects replayed initData and issues
+a ten-minute `HttpOnly; Secure; SameSite=Strict` cookie. The server token and
+owner ID never enter frontend code or responses.
 
-1. Deploy a separate HTTPS staging API and separate test bot; never use the
-   production polling token in a second process.
-2. Validate the **raw** `Telegram.WebApp.initData` HMAC server-side using the
-   server-only bot token, reject stale/future `auth_date`, and use the verified
-   Telegram user ID only. Never accept a client-provided ID or plan as proof.
-3. Exchange valid initData for a short-lived, protected server session; do not
-   put the bot token or internal Bolt purchase secret in frontend code.
-4. Add explicit owner allowlisting on the server. Do not use current production
-   owner exceptions as staging isolation.
-5. Keep AI, Voice, HeyGen, metering, memory, and payment routes disabled until
-   their shared existing gates and transport contracts have an isolated test.
+`POST /api/mini-app/demo-chat` requires that session and exact Origin, then
+returns fixed BG/EN text. It does not call an AI/provider, database, memory,
+health, billing, TTS, or video service and does not store or return the input.
+The dedicated router enforces exact-origin CORS and CSRF checks before the
+existing general CORS middleware, leaving existing route behavior unchanged.
 
-The offline validator tests use only a fabricated token and signed test payloads.
-They cover valid data, modified/forged data, expired timestamps, and future
-timestamps. They make no Telegram, database, payment, or AI calls.
+Tests use a fabricated bot token and signed payloads. They cover valid, forged,
+expired and replayed initData; non-owner IDs; absent flags/secrets; session
+expiry; missing sessions; exact-origin CORS/CSRF; and the static response.
+They make no Telegram, database, payment, or AI calls.
+
+For a Telegram owner test, the remaining prerequisites are an HTTPS origin
+reachable from Telegram, explicit development/staging flags, verification that
+the existing bot's server-side owner config matches the intended account, and
+an owner-only launch action. Do not start a second polling process or configure
+BotFather until separately approved. This foundation is not a live integration.
 
 ## Digital purchase boundary
 

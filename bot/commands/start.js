@@ -107,7 +107,9 @@ function register(bot, {
     }
     ensureUser(ctx.from.id);
     const replyMarkup =
-      ctx.chat?.type === 'private' ? miniAppStartMarkup() : undefined;
+      ctx.chat?.type === 'private' && isOwner(ctx)
+        ? miniAppStartMarkup()
+        : undefined;
     return ctx.reply(isOwner(ctx)
       ? `Здравей, ${ownerName}! 👑 Радвам се да те видя.`
       : `Здравей, ${ctx.from.first_name || 'приятелю'}! 👋 Аз съм Ели. Пиши ми или виж /help.`,

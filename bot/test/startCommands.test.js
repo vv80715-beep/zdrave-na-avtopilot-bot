@@ -109,7 +109,10 @@ test('Mini App /start button stays off by default and requires an explicit HTTPS
       ELI_MINI_APP_URL: 'https://eli.replit.app/mini',
     },
   });
-  const start = await h.send('/start');
+  const nonOwnerStart = await h.send('/start');
+  assert.equal(nonOwnerStart[0].data.reply_markup, undefined);
+
+  const start = await h.send('/start', { from: 12345 });
   const button = start[0].data.reply_markup.inline_keyboard[0][0];
   assert.equal(button.text, 'Отвори Ели');
   assert.deepEqual(button.web_app, { url: 'https://eli.replit.app/mini' });

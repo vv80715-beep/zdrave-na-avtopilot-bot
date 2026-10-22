@@ -3,6 +3,7 @@ import cors from "cors";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { mountMiniAppRoutes } from "./routes/miniApp";
 
 const app: Express = express();
 
@@ -25,6 +26,9 @@ app.use(
     },
   }),
 );
+// This owner-only router is mounted before the existing permissive CORS middleware.
+// It stays absent unless the explicit development-only staging config is complete.
+mountMiniAppRoutes(app);
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
