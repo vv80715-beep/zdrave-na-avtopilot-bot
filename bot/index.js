@@ -104,7 +104,7 @@ const forget = require('./commands/forget');
 const userMemory = require('./commands/userMemory');
 const coach = require('./commands/coach');
 const reminders = require('./commands/reminders');
-const { startBotRuntime } = require('./startup');
+const { startBotRuntimeWithHealthServer } = require('./startup');
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const PORT = process.env.PORT || 3001;
@@ -896,14 +896,12 @@ app.get('/health', (_req, res) => {
 
 async function start() {
   let runtime;
-  let server;
   let shuttingDown = false;
 
   const shutdown = (signal) => {
     if (shuttingDown) return;
     shuttingDown = true;
     runtime?.stop();
-    server?.close();
     try {
       bot.stop(signal);
     } catch (err) {
@@ -915,25 +913,20 @@ async function start() {
   };
 
   try {
-    // `bot.launch()` stays pending for the lifetime of long polling. The
-    // runtime uses Telegraf's validated-launch callback instead of waiting for
-    // that promise, which would otherwise make local schedulers unreachable.
-    runtime = startBotRuntime(bot);
+    // Acquire the health port before creating a Telegram poller. A second
+    // local start fails here with EADDRINUSE instead of polling before failing.
+    runtime = await startBotRuntimeWithHealthServer(bot, app, PORT);
     console.log('Telegram bot started (long polling).');
 
-    server = app.listen(PORT, () => {
-      console.log(`Express health server listening on port ${PORT}`);
-    });
+    console.log(`Express health server listening on port ${PORT}`);
 
     process.once('SIGINT', () => shutdown('SIGINT'));
     process.once('SIGTERM', () => shutdown('SIGTERM'));
 
     await runtime.launchPromise;
     runtime.stop();
-    server?.close();
   } catch (err) {
     runtime?.stop();
-    server?.close();
     console.error('Failed to start bot:', err.message);
     process.exit(1);
   }

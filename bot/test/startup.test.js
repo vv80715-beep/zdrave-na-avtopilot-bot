@@ -1,6 +1,66 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { startBotRuntime } = require('../startup');
+const express = require('express');
+const {
+  listenForHealthServer,
+  startBotRuntime,
+  startBotRuntimeWithHealthServer,
+} = require('../startup');
+
+test('an occupied health port rejects startup before Telegram launch', async () => {
+  const blocker = await listenForHealthServer(express(), 0);
+  const port = blocker.address().port;
+  let launchCalls = 0;
+
+  await assert.rejects(
+    startBotRuntimeWithHealthServer(
+      { launch() { launchCalls += 1; return Promise.resolve(); } },
+      express(),
+      port,
+    ),
+    { code: 'EADDRINUSE' },
+  );
+  assert.equal(launchCalls, 0);
+
+  await new Promise((resolve) => blocker.close(resolve));
+});
+
+test('health port is acquired before launch and shutdown releases it idempotently', async () => {
+  const calls = [];
+  const bot = {
+    launch(_config, onLaunch) {
+      calls.push('launch');
+      onLaunch();
+      return new Promise(() => {});
+    },
+  };
+  const runtime = await startBotRuntimeWithHealthServer(
+    bot,
+    express(),
+    0,
+    {
+      startSubscriptionExpiryScheduler: () => ({
+        stop: () => calls.push('stop:expiry'),
+      }),
+      startDailyCoaching: () => ({ stop: () => calls.push('stop:daily') }),
+      startReminderScheduler: () => ({ stop: () => calls.push('stop:reminder') }),
+      logger: { error() {} },
+    },
+  );
+  assert.equal(runtime.server.listening, true);
+  assert.equal(calls[0], 'launch');
+
+  const serverClosed = new Promise((resolve) => runtime.server.once('close', resolve));
+  runtime.stop();
+  runtime.stop();
+  await serverClosed;
+  assert.deepEqual(calls.slice(-3), [
+    'stop:reminder',
+    'stop:daily',
+    'stop:expiry',
+  ]);
+  assert.equal(runtime.server.listening, false);
+});
 
 test('starts every scheduler after Telegram launch validation without awaiting long polling', async () => {
   const calls = [];

@@ -1,3 +1,52 @@
+function listenForHealthServer(app, port) {
+  return new Promise((resolve, reject) => {
+    let server;
+    try {
+      server = app.listen(port);
+    } catch (error) {
+      reject(error);
+      return;
+    }
+
+    const onListening = () => {
+      server.removeListener('error', onError);
+      resolve(server);
+    };
+    const onError = (error) => {
+      server.removeListener('listening', onListening);
+      reject(error);
+    };
+    server.once('listening', onListening);
+    server.once('error', onError);
+  });
+}
+
+function startBotRuntimeWithHealthServer(bot, app, port, dependencies = {}) {
+  return listenForHealthServer(app, port).then((server) => {
+    let runtime;
+    try {
+      // The occupied health port is the local singleton guard. Do not create a
+      // Telegram poller until this process owns the configured listener.
+      runtime = startBotRuntime(bot, dependencies);
+    } catch (error) {
+      if (server.listening) server.close();
+      throw error;
+    }
+
+    let stopped = false;
+    return {
+      ...runtime,
+      server,
+      stop() {
+        if (stopped) return;
+        stopped = true;
+        runtime.stop();
+        if (server.listening) server.close();
+      },
+    };
+  });
+}
+
 // Keep long-polling startup orchestration separate from index.js so it can be
 // regression-tested without creating a Telegram polling instance.
 function startBotRuntime(bot, dependencies = {}) {
@@ -57,4 +106,8 @@ function startBotRuntime(bot, dependencies = {}) {
   };
 }
 
-module.exports = { startBotRuntime };
+module.exports = {
+  listenForHealthServer,
+  startBotRuntime,
+  startBotRuntimeWithHealthServer,
+};

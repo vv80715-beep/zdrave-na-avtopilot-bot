@@ -1,15 +1,17 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-test('production starts the bot runtime before awaiting long polling', () => {
+test('production reserves the health port before starting the bot runtime', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const source = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
+  const startupModule = fs.readFileSync(path.join(__dirname, '..', 'startup.js'), 'utf8');
   const startup = source.slice(source.indexOf('async function start()'));
-  const runtime = startup.indexOf('runtime = startBotRuntime(bot);');
+  const runtime = startup.indexOf('runtime = await startBotRuntimeWithHealthServer(bot, app, PORT);');
   const awaitLaunch = startup.indexOf('await runtime.launchPromise;');
   assert.ok(runtime >= 0 && runtime < awaitLaunch);
   assert.ok(startup.includes('runtime?.stop();'));
+  assert.match(startupModule, /function listenForHealthServer/);
 });
 const { startSubscriptionExpiryScheduler } = require('../subscriptionExpiryScheduler');
 
