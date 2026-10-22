@@ -21,6 +21,13 @@ async function buildAll() {
     format: "esm",
     outdir: distDir,
     outExtension: { ".js": ".mjs" },
+    define: {
+      __ELI_CANONICAL_OWNER_DOSSIER_PATH__: JSON.stringify(
+        process.env.NODE_ENV === "development"
+          ? path.resolve(artifactDir, "../../bot/owner_dossier.json")
+          : "",
+      ),
+    },
     logLevel: "info",
     // Some packages may not be bundleable, so we externalize them, we can add more here as needed.
     // Some of the packages below may not be imported or installed, but we're adding them in case they are in the future.

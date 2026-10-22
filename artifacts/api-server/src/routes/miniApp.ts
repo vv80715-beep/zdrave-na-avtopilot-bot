@@ -1,6 +1,9 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { accessSync, constants as fsConstants, statSync } from "node:fs";
 import express, { Router, type Application, type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { validateTelegramInitData } from "../lib/telegramInitData.mjs";
 // @ts-expect-error The CommonJS persona module is the canonical prompt shared with the Telegram bot.
 import eliPersona from "../../../../bot/persona.js";
@@ -33,6 +36,7 @@ const TEXT_AI_TEST_BOUNDARY = [
   "If asked about prior conversations or personal history, say this test has no synchronized memory.",
 ].join(" ");
 const SYSTEM_PROMPT = (eliPersona as { SYSTEM_PROMPT: string }).SYSTEM_PROMPT;
+declare const __ELI_CANONICAL_OWNER_DOSSIER_PATH__: string;
 type SessionClaims = { sub: string; iat: number; exp: number; nonce: string };
 
 type Env = NodeJS.ProcessEnv;
@@ -65,6 +69,35 @@ function ownerDossierFaqIntents(message: string, detect: OwnerDossierFaq["detect
   return legacyIntent === "creation_reason" || legacyIntent === "goals"
     ? [legacyIntent]
     : [];
+}
+
+function canonicalOwnerDossierPath(): string {
+  if (typeof __ELI_CANONICAL_OWNER_DOSSIER_PATH__ === "string" &&
+      path.isAbsolute(__ELI_CANONICAL_OWNER_DOSSIER_PATH__) &&
+      __ELI_CANONICAL_OWNER_DOSSIER_PATH__) {
+    return __ELI_CANONICAL_OWNER_DOSSIER_PATH__;
+  }
+  // Source-level tests use this branch. Bundled development builds receive the
+  // absolute path from build.mjs, so runtime cwd and dist placement are irrelevant.
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../bot/owner_dossier.json");
+}
+
+function withOwnerDossierPath<T>(filePath: string, read: () => T): T {
+  if (!path.isAbsolute(filePath)) throw new Error("owner_dossier_path_invalid");
+  const stat = statSync(filePath);
+  if (!stat.isFile()) throw new Error("owner_dossier_not_file");
+  accessSync(filePath, fsConstants.R_OK);
+
+  // ownerDossier resolves its configured path per read. Scope this override to
+  // the synchronous canonical read so it cannot leak into other API requests.
+  const previousPath = process.env.OWNER_DOSSIER_PATH;
+  process.env.OWNER_DOSSIER_PATH = filePath;
+  try {
+    return read();
+  } finally {
+    if (previousPath === undefined) delete process.env.OWNER_DOSSIER_PATH;
+    else process.env.OWNER_DOSSIER_PATH = previousPath;
+  }
 }
 
 export function createOpenAiTextAiAdapter(
@@ -215,6 +248,7 @@ export function createMiniAppRouter(
     textAi?: TextAiAdapter;
     ownerDossierContext?: (ownerId: string, message: string) => string;
     ownerDossierFaq?: OwnerDossierFaq;
+    ownerDossierPath?: string;
   } = {},
 ) {
   if (!miniAppConfigEnabled(env)) throw new Error("Mini App staging route is not enabled.");
@@ -228,6 +262,9 @@ export function createMiniAppRouter(
   const textAiEnabled = env.ELI_MINI_APP_TEXT_AI_ENABLED === "true";
   const ownerDossierEnabled = env.NODE_ENV === "development" &&
     env.ELI_MINI_APP_OWNER_DOSSIER_ENABLED === "true";
+  const ownerDossierPath = ownerDossierEnabled
+    ? options.ownerDossierPath || canonicalOwnerDossierPath()
+    : undefined;
   const textAiKeyAvailable = OPENAI_KEY_FORMAT.test(env.OPENAI_API_KEY || "");
   const activeTextAiSessions = new Set<string>();
   const textAiMinuteRequests = new Map<string, number[]>();
@@ -419,13 +456,15 @@ export function createMiniAppRouter(
           ownerDossierFaq.detectOwnerDossierQuestion,
         );
         if (faqIntents.length) {
-          const reply = faqIntents
+          const reply = withOwnerDossierPath(ownerDossierPath!, () => faqIntents
             .map((intent) => ownerDossierFaq.answerOwnerDossierQuestion(verifiedOwnerId, intent))
-            .join("\n\n");
+            .join("\n\n"));
           res.json({ reply, mode: "owner_dossier_faq" });
           return;
         }
-        ownerDossierContext = buildOwnerDossierContext(verifiedOwnerId, body.message.trim());
+        ownerDossierContext = withOwnerDossierPath(ownerDossierPath!, () =>
+          buildOwnerDossierContext(verifiedOwnerId, body.message.trim()),
+        );
       } catch {
         sendError(res, 503, "owner_memory_unavailable");
         return;

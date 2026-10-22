@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { mkdtemp, readdir, rm, writeFile, readFile } from "node:fs/promises";
 import cors from "cors";
 import express from "express";
 import os from "node:os";
@@ -18,6 +19,7 @@ const SESSION_SECRET = "offline-session-secret-for-tests-only-000000";
 const OWNER_ID = "123456789";
 const ORIGIN = "https://eli-stage.replit.dev";
 const NOW_SECONDS = 1_800_000_000;
+const require = createRequire(import.meta.url);
 
 function config(overrides = {}) {
   return {
@@ -54,7 +56,23 @@ async function serverHarness({
   textAi,
   ownerDossierContext,
   ownerDossierFaq,
+  ownerDossierPath,
+  ownerDossierFixture,
 } = {}) {
+  let generatedDossierRoot;
+  let resolvedDossierPath = ownerDossierPath;
+  if (
+    !resolvedDossierPath &&
+    env.NODE_ENV === "development" &&
+    env.ELI_MINI_APP_OWNER_DOSSIER_ENABLED === "true"
+  ) {
+    generatedDossierRoot = await mkdtemp(path.join(os.tmpdir(), "eli-mini-dossier-fixture-"));
+    resolvedDossierPath = path.join(generatedDossierRoot, "owner_dossier.json");
+    await writeFile(resolvedDossierPath, JSON.stringify({
+      schemaVersion: 1,
+      facts: ownerDossierFixture || [],
+    }), { mode: 0o600 });
+  }
   const app = express();
   const mounted = mountMiniAppRoutes(app, env, {
     now,
@@ -62,6 +80,7 @@ async function serverHarness({
     textAi,
     ownerDossierContext,
     ownerDossierFaq,
+    ownerDossierPath: resolvedDossierPath,
   });
   app.use((_req, res) => res.status(404).json({ error: "not_found" }));
   const server = app.listen(0, "127.0.0.1");
@@ -86,8 +105,31 @@ async function serverHarness({
     },
     async close() {
       await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      if (generatedDossierRoot) {
+        await rm(generatedDossierRoot, { recursive: true, force: true });
+      }
     },
   };
+}
+
+function loadSyntheticOwnerDossierModule() {
+  const dossierPath = require.resolve("../../../bot/ownerDossier.js");
+  const adminGuardPath = require.resolve("../../../bot/adminGuard.js");
+  const previousDossier = require.cache[dossierPath];
+  const adminGuardModule = require.cache[adminGuardPath];
+  assert.ok(adminGuardModule, "owner guard module should already be loaded");
+  const previousGuardExports = adminGuardModule.exports;
+  delete require.cache[dossierPath];
+  adminGuardModule.exports = {
+    isOwnerId: (userId) => String(userId) === OWNER_ID,
+  };
+  try {
+    return require(dossierPath);
+  } finally {
+    adminGuardModule.exports = previousGuardExports;
+    if (previousDossier) require.cache[dossierPath] = previousDossier;
+    else delete require.cache[dossierPath];
+  }
 }
 
 async function ownerCookie(h) {
@@ -699,6 +741,104 @@ test("owner dossier FAQ returns explicit unknowns instead of guessing when facts
     );
     assert.equal(response.status, 200);
     assert.match((await response.json()).reply, /Не знам потвърдената причина/);
+    assert.equal(providerCalls, 0);
+  } finally {
+    await h.close();
+  }
+});
+
+test("canonical owner dossier functions read only a synthetic fixture for motivation, goals, and mixed questions", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "eli-mini-canonical-dossier-"));
+  const fixturePath = path.join(tempRoot, "fixture.json");
+  const fixture = {
+    schemaVersion: 1,
+    facts: [
+      { id: "motivation", category: "motivation", value: "SYNTHETIC_PERSONAL_MOTIVATION" },
+      { id: "financial-dream", category: "goals", value: "SYNTHETIC_LIFE_GOAL" },
+      { id: "eli-relationship", category: "relationship_context", value: "SYNTHETIC_UNRELATED_FACT" },
+    ],
+  };
+  const originalFixture = JSON.stringify(fixture);
+  await writeFile(fixturePath, originalFixture, { mode: 0o600 });
+  const dossier = loadSyntheticOwnerDossierModule();
+  let providerCalls = 0;
+  const h = await serverHarness({
+    env: config({
+      ELI_MINI_APP_TEXT_AI_ENABLED: "true",
+      ELI_MINI_APP_OWNER_DOSSIER_ENABLED: "true",
+      OPENAI_API_KEY: `sk-${"x".repeat(24)}`,
+    }),
+    ownerDossierPath: fixturePath,
+    ownerDossierFaq: dossier,
+    textAi: async () => {
+      providerCalls += 1;
+      return "Provider must not be called for a matching FAQ.";
+    },
+  });
+  try {
+    assert.equal((await h.request("/session", {
+      initData: signedInitData({ userId: "987654321" }),
+    })).status, 403);
+
+    const cookie = await ownerCookie(h);
+    const questions = [
+      ["Каква е моята лична мотивация да създам този бизнес?", ["SYNTHETIC_PERSONAL_MOTIVATION"]],
+      ["Какво искам да постигна в живота си?", ["SYNTHETIC_LIFE_GOAL"]],
+      [
+        "Ели, освен твоята мисия, каква е моята лична мотивация и какво искам да постигна в живота си?",
+        ["SYNTHETIC_PERSONAL_MOTIVATION", "SYNTHETIC_LIFE_GOAL"],
+      ],
+    ];
+    for (const [message, expectedMarkers] of questions) {
+      const response = await h.request("/text-ai", { message }, { cookie });
+      assert.equal(response.status, 200);
+      const body = await response.json();
+      assert.deepEqual(Object.keys(body).sort(), ["mode", "reply"]);
+      assert.equal(body.mode, "owner_dossier_faq");
+      for (const marker of expectedMarkers) assert.ok(body.reply.includes(marker));
+      assert.equal(body.reply.includes("SYNTHETIC_UNRELATED_FACT"), false);
+    }
+    assert.equal(providerCalls, 0);
+    assert.equal((await readFile(fixturePath, "utf8")), originalFixture);
+  } finally {
+    await h.close();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("owner dossier read failures return a safe error without answering or calling AI", async () => {
+  const missingPath = path.join(os.tmpdir(), `eli-mini-missing-${process.pid}`, "dossier.json");
+  let faqCalls = 0;
+  let providerCalls = 0;
+  const h = await serverHarness({
+    env: config({
+      ELI_MINI_APP_TEXT_AI_ENABLED: "true",
+      ELI_MINI_APP_OWNER_DOSSIER_ENABLED: "true",
+      OPENAI_API_KEY: `sk-${"x".repeat(24)}`,
+    }),
+    ownerDossierPath: missingPath,
+    ownerDossierFaq: {
+      detectOwnerDossierQuestion: () => "creation_reason",
+      answerOwnerDossierQuestion: () => {
+        faqCalls += 1;
+        return "Must not answer without readable dossier.";
+      },
+    },
+    textAi: async () => {
+      providerCalls += 1;
+      return "Must not guess.";
+    },
+  });
+  try {
+    const cookie = await ownerCookie(h);
+    const response = await h.request(
+      "/text-ai",
+      { message: "Каква е моята лична мотивация?" },
+      { cookie },
+    );
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: "owner_memory_unavailable" });
+    assert.equal(faqCalls, 0);
     assert.equal(providerCalls, 0);
   } finally {
     await h.close();
