@@ -181,6 +181,26 @@ test("valid owner initData issues a secure short-lived session; session serves o
   }
 });
 
+test("signed initData can renew the same valid session after its five-minute freshness window", async () => {
+  let currentTime = NOW_SECONDS * 1000;
+  const h = await serverHarness({ now: () => currentTime });
+  try {
+    const initData = signedInitData();
+    const initial = await h.request("/session", { initData });
+    assert.equal(initial.status, 200);
+    const cookie = initial.headers.get("set-cookie").split(";")[0];
+    currentTime += 301_000;
+    const repeated = await h.request("/session", { initData }, { cookie });
+    assert.equal(repeated.status, 200);
+    assert.equal(repeated.headers.get("set-cookie"), null);
+    const withoutSession = await h.request("/session", { initData });
+    assert.equal(withoutSession.status, 401);
+    assert.deepEqual(await withoutSession.json(), { error: "init_data_replayed" });
+  } finally {
+    await h.close();
+  }
+});
+
 test("rejects forged, expired, and non-owner initData", async () => {
   const h = await serverHarness();
   try {

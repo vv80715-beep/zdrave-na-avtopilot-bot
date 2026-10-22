@@ -1,4 +1,11 @@
 export type MiniAppLanguage = "bg" | "en";
+export type OwnerDemoMediaResult = {
+  reply: string;
+  transcript?: string;
+  mediaType: "image" | "voice";
+  staged: true;
+  demo: true;
+};
 
 export class MiniAppStageError extends Error {
   readonly code: string;
@@ -103,7 +110,7 @@ export async function uploadOwnerDemoMedia(
   language: MiniAppLanguage,
   caption = "",
   fetchFn: FetchLike = fetch,
-): Promise<{ reply: string; transcript?: string; mediaType: "image" | "voice"; demo: true }> {
+): Promise<OwnerDemoMediaResult> {
   await ensureOwnerSession(initData, fetchFn);
   const form = new FormData();
   form.set("file", file, file.name || "attachment");

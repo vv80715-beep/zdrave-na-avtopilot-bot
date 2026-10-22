@@ -1,10 +1,8 @@
 export type MiniAppMediaKind = "image" | "voice";
 
-export type MiniAppMediaResult =
-  | { mediaType: "image"; reply: string; staged: true; demo: true }
-  | { mediaType: "voice"; transcript: string; reply: string; staged: true; demo: true };
+import { uploadOwnerDemoMedia, type OwnerDemoMediaResult } from "./miniAppSessionClient";
 
-import { uploadOwnerDemoMedia } from "./miniAppSessionClient";
+export type MiniAppMediaResult = OwnerDemoMediaResult;
 
 /**
  * Explicit future owner-canary helper. The chat demo does not call this.

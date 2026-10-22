@@ -193,7 +193,7 @@ export function createMiniAppRouter(
       return;
     }
 
-    usedInitData.set(fingerprint, timestamp + INIT_DATA_MAX_AGE_SECONDS * 1000);
+    usedInitData.set(fingerprint, timestamp + SESSION_TTL_SECONDS * 1000);
 
     const issuedAt = Math.floor(timestamp / 1000);
     const payload = Buffer.from(JSON.stringify({
