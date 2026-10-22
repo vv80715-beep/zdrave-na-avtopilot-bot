@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import cors from "cors";
 import express from "express";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import {
   createMiniAppRouter,
@@ -326,5 +329,63 @@ test("voice upload enforces magic bytes and the 90 second limit; responses stay 
     assert.equal(providerCalls, 0);
   } finally {
     await h.close();
+  }
+});
+
+test("valid voice upload returns mocked transcript and text reply, then removes its temporary directory", async () => {
+  let processorCalls = 0;
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "eli-mini-api-test-"));
+  const h = await serverHarness({
+    env: config({ ELI_MINI_APP_MEDIA_AI_ENABLED: "true" }),
+    media: {
+      tempRoot,
+      inspectAudioDuration: async () => 12,
+      normalizeAudio: async (filePath) => filePath,
+      processor: {
+        analyzeImage: async () => ({ reply: "unused" }),
+        transcribeAndAnswer: async ({ mimeType }) => {
+          processorCalls += 1;
+          assert.equal(mimeType, "audio/wav");
+          return { transcript: "Искам да се разходя.", reply: "Нека започнем с кратка разходка." };
+        },
+      },
+    },
+  });
+  try {
+    const cookie = await ownerCookie(h);
+    const form = new FormData();
+    form.set("file", new Blob([Buffer.from("OggS-mocked-audio")], { type: "audio/ogg" }), "unsafe/voice.ogg");
+    form.set("language", "bg");
+    const response = await h.request("/media/voice", form, { cookie });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      transcript: "Искам да се разходя.",
+      reply: "Нека започнем с кратка разходка.",
+      mediaType: "voice",
+      staged: true,
+    });
+    assert.equal(processorCalls, 1);
+    assert.deepEqual(await readdir(tempRoot), []);
+
+    const now = NOW_SECONDS * 1000 + 601_000;
+    const expired = await serverHarness({
+      env: config({ ELI_MINI_APP_MEDIA_AI_ENABLED: "true" }),
+      now: () => now,
+      media: { processor: {
+        analyzeImage: async () => ({ reply: "never" }),
+        transcribeAndAnswer: async () => { processorCalls += 1; return { transcript: "never", reply: "never" }; },
+      } },
+    });
+    try {
+      const staleCookie = await ownerCookie(expired);
+      const request = await expired.request("/media/voice", form, { cookie: staleCookie });
+      assert.equal(request.status, 401);
+      assert.equal(processorCalls, 1);
+    } finally {
+      await expired.close();
+    }
+  } finally {
+    await h.close();
+    await rm(tempRoot, { recursive: true, force: true });
   }
 });

@@ -23,6 +23,7 @@ export type MiniAppMediaRouteOptions = {
   processor?: MediaAiProcessor;
   tempRoot?: string;
   inspectAudioDuration?: (filePath: string) => Promise<number>;
+  normalizeAudio?: (filePath: string, directory: string) => Promise<string>;
   now?: () => number;
 };
 
@@ -35,11 +36,13 @@ type ReceivedUpload = {
 };
 
 class MediaRequestError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-  ) {
+  readonly status: number;
+  readonly code: string;
+
+  constructor(status: number, code: string) {
     super(code);
+    this.status = status;
+    this.code = code;
   }
 }
 
@@ -264,6 +267,38 @@ async function probeAudioDuration(filePath: string): Promise<number> {
   });
 }
 
+async function normalizeAudioToWav(filePath: string, directory: string): Promise<string> {
+  const outputPath = path.join(directory, "normalized.wav");
+  await new Promise<void>((resolve, reject) => {
+    const ffmpeg = spawn("ffmpeg", [
+      "-nostdin", "-y", "-i", filePath,
+      "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
+      outputPath,
+    ], { stdio: ["ignore", "ignore", "ignore"] });
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      ffmpeg.kill("SIGKILL");
+      reject(new MediaRequestError(415, "invalid_audio"));
+    }, 30_000);
+    ffmpeg.on("error", () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new MediaRequestError(415, "invalid_audio"));
+    });
+    ffmpeg.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new MediaRequestError(415, "invalid_audio"));
+    });
+  });
+  return outputPath;
+}
+
 function makeLimiter(now: () => number) {
   const recent: number[] = [];
   let active = false;
@@ -293,6 +328,7 @@ export function registerMiniAppMediaRoutes(
   const processor = options.processor ??
     (env.OPENAI_API_KEY ? createOpenAiMediaAiProcessor(env.OPENAI_API_KEY) : null);
   const inspectDuration = options.inspectAudioDuration ?? probeAudioDuration;
+  const normalizeAudio = options.normalizeAudio ?? normalizeAudioToWav;
   const limiter = makeLimiter(options.now ?? Date.now);
   const tempRoot = options.tempRoot ?? os.tmpdir();
 
@@ -306,6 +342,8 @@ export function registerMiniAppMediaRoutes(
       return;
     }
     let upload: ReceivedUpload | undefined;
+    let responseBody: Record<string, unknown> | null = null;
+    let responseStatus = 200;
     try {
       upload = await receiveUpload(req, kind, tempRoot);
       if (kind === "image") {
@@ -315,34 +353,42 @@ export function registerMiniAppMediaRoutes(
           caption: upload.caption,
           language: upload.language,
         });
-        res.setHeader("Cache-Control", "no-store");
-        res.json({ reply: result.reply, mediaType: "image", staged: true });
-        return;
+        responseBody = { reply: result.reply, mediaType: "image", staged: true };
+      } else {
+        const duration = await inspectDuration(upload.path);
+        if (duration > MAX_AUDIO_SECONDS) {
+          responseStatus = 413;
+          responseBody = { error: "audio_too_long" };
+        } else {
+          const normalizedPath = await normalizeAudio(upload.path, upload.directory);
+          const result = await processor.transcribeAndAnswer({
+            path: normalizedPath,
+            mimeType: "audio/wav",
+            language: upload.language,
+          });
+          responseBody = {
+            transcript: result.transcript,
+            reply: result.reply,
+            mediaType: "voice",
+            staged: true,
+          };
+        }
       }
-
-      const duration = await inspectDuration(upload.path);
-      if (duration > MAX_AUDIO_SECONDS) {
-        sendMediaError(res, 413, "audio_too_long");
-        return;
-      }
-      const result = await processor.transcribeAndAnswer({
-        path: upload.path,
-        mimeType: upload.mimeType,
-        language: upload.language,
-      });
-      res.setHeader("Cache-Control", "no-store");
-      res.json({ transcript: result.transcript, reply: result.reply, mediaType: "voice", staged: true });
     } catch (error) {
       if (error instanceof MediaRequestError) {
-        sendMediaError(res, error.status, error.code);
-        return;
+        responseStatus = error.status;
+        responseBody = { error: error.code };
+      } else {
+        req.log.error({ mediaType: kind }, "Mini App media processing failed");
+        responseStatus = 502;
+        responseBody = { error: "media_processing_failed" };
       }
-      req.log.error({ mediaType: kind }, "Mini App media processing failed");
-      sendMediaError(res, 502, "media_processing_failed");
     } finally {
       if (upload) await rm(upload.directory, { recursive: true, force: true });
       limiter.release();
     }
+    res.setHeader("Cache-Control", "no-store");
+    res.status(responseStatus).json(responseBody ?? { error: "media_processing_failed" });
   };
 
   router.post("/media/image", requireOwnerSession, handle("image"));
