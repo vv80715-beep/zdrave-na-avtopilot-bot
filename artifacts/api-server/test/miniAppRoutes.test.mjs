@@ -367,10 +367,10 @@ test("valid voice upload returns mocked transcript and text reply, then removes 
     assert.equal(processorCalls, 1);
     assert.deepEqual(await readdir(tempRoot), []);
 
-    const now = NOW_SECONDS * 1000 + 601_000;
+    let currentTime = NOW_SECONDS * 1000;
     const expired = await serverHarness({
       env: config({ ELI_MINI_APP_MEDIA_AI_ENABLED: "true" }),
-      now: () => now,
+      now: () => currentTime,
       media: { processor: {
         analyzeImage: async () => ({ reply: "never" }),
         transcribeAndAnswer: async () => { processorCalls += 1; return { transcript: "never", reply: "never" }; },
@@ -378,6 +378,7 @@ test("valid voice upload returns mocked transcript and text reply, then removes 
     });
     try {
       const staleCookie = await ownerCookie(expired);
+      currentTime += 601_000;
       const request = await expired.request("/media/voice", form, { cookie: staleCookie });
       assert.equal(request.status, 401);
       assert.equal(processorCalls, 1);

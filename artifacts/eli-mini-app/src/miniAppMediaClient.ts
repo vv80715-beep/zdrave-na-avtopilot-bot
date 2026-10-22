@@ -17,6 +17,9 @@ export async function uploadOwnerMediaWithInitData(
   caption = "",
   fetchFn: typeof fetch = fetch,
 ): Promise<MiniAppMediaResult> {
+  if (typeof window === "undefined" || !window.isSecureContext) {
+    throw new Error("secure_context_required");
+  }
   if (!initData.trim()) throw new Error("telegram_auth_required");
   const session = await fetchFn("/api/mini-app/session", {
     method: "POST",
