@@ -14,10 +14,12 @@ import {
   MessageCircle,
   Moon,
   Paperclip,
+  Save,
   Send,
   Sparkles,
   Square,
   Sun,
+  Trash2,
   Video,
   X,
 } from 'lucide-react';
@@ -25,6 +27,19 @@ import { Route, Switch, Link, useLocation, Router as WouterRouter } from 'wouter
 import { translate, type Language, type TranslationKey } from './i18n';
 import { connectTelegramWebApp } from './telegramWebApp';
 import { useChatMedia, type ChatAttachment } from './useChatMedia';
+import {
+  dailyEntryToDraft,
+  emptyDailyEntryDraft,
+  getRecentDateKeys,
+  localDateKey,
+  removeDailyEntry,
+  summarizeWeek,
+  upsertDailyEntry,
+  validateDailyEntry,
+  type DailyEntry,
+  type DailyEntryDraft,
+  type EntryField,
+} from './profileProgress';
 
 type LanguageContextValue = {
   language: Language;
@@ -33,6 +48,22 @@ type LanguageContextValue = {
 };
 
 const LanguageContext = createContext<LanguageContextValue | null>(null);
+type ProgressContextValue = {
+  entries: DailyEntry[];
+  setEntries: (entries: DailyEntry[]) => void;
+};
+const ProgressContext = createContext<ProgressContextValue | null>(null);
+
+function ProgressProvider({ children }: { children: ReactNode }) {
+  const [entries, setEntries] = useState<DailyEntry[]>([]);
+  return <ProgressContext.Provider value={{ entries, setEntries }}>{children}</ProgressContext.Provider>;
+}
+
+function useProgress() {
+  const context = useContext(ProgressContext);
+  if (!context) throw new Error('ProgressProvider is missing.');
+  return context;
+}
 
 function LanguageProvider({ children }: { children: ReactNode }) {
   const [language, setLanguage] = useState<Language>(() => {
@@ -437,60 +468,185 @@ function Chat() {
   );
 }
 
-const week = [
-  { dayKey: 'mon', testDay: 'ПН', done: true, today: false }, { dayKey: 'tue', testDay: 'ВТ', done: true, today: false }, { dayKey: 'wed', testDay: 'СР', done: false, today: false },
-  { dayKey: 'thu', testDay: 'ЧТ', done: true, today: false }, { dayKey: 'fri', testDay: 'ПТ', done: false, today: true }, { dayKey: 'sat', testDay: 'СБ', done: false, today: false }, { dayKey: 'sun', testDay: 'НД', done: false, today: false },
-] as const;
-
 function Profile() {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  const { entries, setEntries } = useProgress();
+  const dates = getRecentDateKeys();
+  const today = localDateKey();
+  const [selectedDate, setSelectedDate] = useState(today);
+  const [draft, setDraft] = useState<DailyEntryDraft>(() => emptyDailyEntryDraft(today));
+  const [errors, setErrors] = useState<Partial<Record<EntryField, string>>>({});
+  const [openRanges, setOpenRanges] = useState({ energy: false, mood: false });
+  const [notice, setNotice] = useState<TranslationKey | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const currentEntry = entries.find((entry) => entry.date === selectedDate);
+  const summary = summarizeWeek(entries, dates);
+  const dateFormatter = new Intl.DateTimeFormat(language === 'bg' ? 'bg-BG' : 'en-GB', { day: 'numeric', month: 'short' });
+  const weekdayFormatter = new Intl.DateTimeFormat(language === 'bg' ? 'bg-BG' : 'en-GB', { weekday: 'short' });
+
+  function chooseDate(date: string) {
+    setSelectedDate(date);
+    const entry = entries.find((item) => item.date === date);
+    setDraft(entry ? dailyEntryToDraft(entry) : emptyDailyEntryDraft(date));
+    setErrors({});
+    setNotice(null);
+    setDeleteConfirm(false);
+    setOpenRanges({ energy: false, mood: false });
+  }
+
+  function updateDraft(field: keyof DailyEntryDraft, value: string) {
+    setDraft((current) => ({ ...current, [field]: value }));
+    setErrors((current) => ({ ...current, [field]: undefined, entry: undefined }));
+    setNotice(null);
+  }
+
+  function saveEntry(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const validation = validateDailyEntry(draft, dates);
+    if (!validation.ok) {
+      setErrors(validation.errors);
+      setNotice(null);
+      return;
+    }
+    if (draft.sleepHours.trim() && Number(draft.sleepHours) * 4 % 1 !== 0) {
+      setErrors({ sleepHours: 'step' });
+      setNotice(null);
+      return;
+    }
+    setEntries(upsertDailyEntry(entries, validation.value));
+    setDraft(dailyEntryToDraft(validation.value));
+    setErrors({});
+    setNotice(currentEntry ? 'progressUpdated' : 'progressSaved');
+    setDeleteConfirm(false);
+  }
+
+  function deleteEntry() {
+    setEntries(removeDailyEntry(entries, selectedDate));
+    setDraft(emptyDailyEntryDraft(selectedDate));
+    setErrors({});
+    setDeleteConfirm(false);
+    setNotice('progressDeleted');
+  }
+
+  const errorCopy: Partial<Record<EntryField, TranslationKey>> = {
+    date: 'errorDateOutside',
+    movementMinutes: 'errorMovement',
+    sleepHours: 'errorSleep',
+    energy: 'errorEnergy',
+    mood: 'errorMood',
+    waterMl: 'errorWater',
+    entry: 'errorRequiredMeasurement',
+  };
+
+  function fieldError(field: EntryField) {
+    const code = errors[field];
+    if (!code) return null;
+    const key = field === 'sleepHours' && code === 'step' ? 'errorSleepStep' : errorCopy[field];
+    return key ? <span className="progress-error" id={`error-${field}`} role="alert">{t(key)}</span> : null;
+  }
+
+  function dayLabel(date: string) {
+    const value = new Date(`${date}T12:00:00`);
+    return `${weekdayFormatter.format(value)} ${dateFormatter.format(value)}`;
+  }
+
+  function metric(value: number | null, decimals = 1) {
+    return value === null ? '—' : Number(value.toFixed(decimals)).toString();
+  }
+
+  const points = summary.energyByDay.map(({ energy }, index) => energy === null ? null : ({
+    x: (index / 6) * 600,
+    y: 145 - ((energy - 1) / 9) * 120,
+  }));
+  const segments: string[] = [];
+  let segment: string[] = [];
+  points.forEach((point) => {
+    if (!point) {
+      if (segment.length) segments.push(segment.join(' '));
+      segment = [];
+    } else {
+      segment.push(`${segment.length ? 'L' : 'M'}${point.x} ${point.y}`);
+    }
+  });
+  if (segment.length) segments.push(segment.join(' '));
+
   return (
-    <main className="page-wrap">
+    <main className="page-wrap progress-page">
       <div className="page-heading animate-in">
         <div><div className="eyebrow"><i className="eyebrow-line" /> {t('profileEyebrow')}</div><h1>{t('profileTitle')}</h1><p>{t('profileDescription')}</p></div>
-        <span className="page-tag"><Clock3 size={14} /> {t('weekRange')}</span>
+        <span className="page-tag progress-mode-tag" data-testid="status-demo-unsynced">{t('demoUnsynced')}</span>
       </div>
       <div className="profile-grid">
         <div className="profile-main">
-          <section className="panel summary-panel animate-in delay-1" data-testid="content-example-profile">
-            <div className="user-row"><EliAvatar className="initial-avatar" alt={t('avatarProfileAlt')} testId="image-eli-profile" /><span><h2>{t('profileSummary')}</h2><p>{t('noAccount')}</p></span></div>
-            <span className="example-ribbon">{t('sampleData')}</span>
+          <section className="panel summary-panel progress-summary animate-in delay-1" data-testid="content-profile-summary">
+            <div className="user-row"><EliAvatar className="initial-avatar" alt={t('avatarProfileAlt')} testId="image-eli-profile" /><span><h2>{t('profileSummary')}</h2><p>{t('sessionOnly')}</p></span></div>
+            <div className="session-disclosure" data-testid="text-session-disclosure">{t('sessionDisclosure')}</div>
           </section>
-          <section className="stats-row animate-in delay-1" aria-label={t('statsAria')}>
-            <div className="stat"><div className="stat-label"><Activity size={12} /> {t('movement')}</div><span className="sample-label">{t('sample')}</span><strong>4<span>{t('days')}</span></strong></div>
-            <div className="stat"><div className="stat-label"><Moon size={12} /> {t('sleep')}</div><span className="sample-label">{t('sample')}</span><strong>7.2<span>{t('averageHours')}</span></strong></div>
-            <div className="stat"><div className="stat-label"><HeartPulse size={12} /> {t('energy')}</div><span className="sample-label">{t('sample')}</span><strong>6.8<span>/ 10</span></strong></div>
-          </section>
-          <section className="panel chart-panel animate-in delay-2">
-            <div className="panel-head"><div><h2>{t('chartTitle')}</h2><p>{t('sampleScale')}</p></div><span className="chart-key"><i className="key-dot" /> {t('sample')}</span></div>
-            <div className="chart" role="img" aria-label={t('chartAria')}>
-              <svg viewBox="0 0 600 165" preserveAspectRatio="none" aria-hidden="true">
-                <defs><linearGradient id="lineGlow" x1="0" x2="1"><stop offset="0" stopColor="#8ac849" /><stop offset="1" stopColor="#c0ff5b" /></linearGradient></defs>
-                <path d="M0 118 C40 109 49 103 85 105 S140 127 170 112 S225 86 255 96 S300 111 340 83 S390 78 425 86 S475 61 510 69 S557 43 600 49" fill="none" stroke="url(#lineGlow)" strokeWidth="2.5" vectorEffect="non-scaling-stroke" />
-                <path d="M0 118 C40 109 49 103 85 105 S140 127 170 112 S225 86 255 96 S300 111 340 83 S390 78 425 86 S475 61 510 69 S557 43 600 49 L600 165 L0 165Z" fill="rgba(165,229,92,.07)" />
-                <circle cx="600" cy="49" r="4" fill="#c0ff5b" />
-              </svg>
-            </div>
-            <div className="chart-labels">{week.map(({ dayKey }) => <span key={dayKey}>{t(dayKey)}</span>)}</div>
-          </section>
+          {summary.entries > 0 && <section className="stats-row progress-stats animate-in delay-1" aria-label={t('statsAria')} data-testid="content-profile-metrics">
+            <div className="stat"><div className="stat-label"><Activity size={12} /> {t('checkinDays')}</div><strong data-testid="value-checkin-days">{summary.activeDays}<span> / 7 {t('days')}</span></strong><small>{t('checkinDaysHelp')}</small></div>
+            <div className="stat"><div className="stat-label"><Moon size={12} /> {t('sleep')}</div><strong data-testid="value-average-sleep">{metric(summary.averageSleepHours)}<span>{t('averageHours')}</span></strong></div>
+            <div className="stat"><div className="stat-label"><HeartPulse size={12} /> {t('energy')}</div><strong data-testid="value-average-energy">{metric(summary.averageEnergy)}<span> / 10</span></strong></div>
+          </section>}
+          {summary.entries === 0
+            ? <section className="panel progress-empty animate-in delay-2" data-testid="content-progress-empty"><span className="empty-mark"><Activity size={20} /></span><h2>{t('emptyProgressTitle')}</h2><p>{t('emptyProgressBody')}</p></section>
+            : <section className="panel chart-panel progress-chart animate-in delay-2" data-testid="content-energy-chart">
+              <div className="panel-head"><div><h2>{t('chartTitle')}</h2><p>{t('chartScale')}</p></div><span className="chart-key"><i className="key-dot" /> {t('energy')}</span></div>
+              <div className="chart" role="img" aria-label={t('chartAria')} data-testid="chart-energy-by-day">
+                <svg viewBox="0 0 600 165" preserveAspectRatio="none" aria-hidden="true">
+                  {segments.map((path, index) => <path key={index} d={path} fill="none" stroke="#baff61" strokeWidth="2.5" vectorEffect="non-scaling-stroke" />)}
+                  {points.map((point, index) => point && <circle key={index} cx={point.x} cy={point.y} r="4" fill="#c0ff5b" />)}
+                </svg>
+              </div>
+              <div className="chart-labels">{dates.map((date) => <span key={date}>{weekdayFormatter.format(new Date(`${date}T12:00:00`))}</span>)}</div>
+            </section>}
         </div>
         <aside className="profile-side">
-          <section className="panel weekly-panel animate-in delay-2">
-            <div className="panel-head"><div><h2>{t('thisWeek')}</h2><p>{t('sampleHabitMarks')}</p></div><span className="page-tag" style={{ padding: '7px 9px', fontSize: 9 }}>{t('sampleThreeOfSeven')}</span></div>
-            <div className="week-days">
-              {week.map(({ dayKey, testDay, done, today }) => <div key={dayKey} className={`day${done ? ' done' : ''}${today ? ' today' : ''}`} data-testid={`day-sample-${testDay}`}><span>{t(dayKey)}</span><span className="day-mark">{done && <Check size={12} />}</span></div>)}
+          <section className="panel weekly-panel progress-week animate-in delay-2">
+            <div className="panel-head"><div><h2>{t('rollingWeek')}</h2><p>{t('checkinDaysHelp')}</p></div><span className="week-count" data-testid="value-week-percent">{summary.entries > 0 ? `${summary.goalPercent}%` : '—'}</span></div>
+            <div className="week-days progress-days" role="group" aria-label={t('selectDateAria')} data-testid="date-selector">
+              {dates.map((date) => {
+                const hasEntry = entries.some((entry) => entry.date === date);
+                const isToday = date === today;
+                return <button type="button" key={date} className={`day date-day${hasEntry ? ' done' : ''}${isToday ? ' today' : ''}${selectedDate === date ? ' selected' : ''}`} onClick={() => chooseDate(date)} aria-label={`${dayLabel(date)}${isToday ? `, ${t('today')}` : ''}${hasEntry ? `, ${t('hasCheckin')}` : ''}`} aria-pressed={selectedDate === date} data-testid={`button-date-${date}`}>
+                  <span>{weekdayFormatter.format(new Date(`${date}T12:00:00`))}</span><span className="day-mark">{hasEntry && <Check size={12} />}</span><small>{date.slice(8)}</small>
+                </button>;
+              })}
             </div>
-            <div className="weekly-note">{t('weekNote')}</div>
+            <div className="weekly-note">{t('weeklyProgressNote')}</div>
           </section>
-          <section className="panel goal-panel animate-in delay-3">
-            <div className="goal-top"><h2>{t('sampleGoal')}</h2><span className="goal-value">{t('sampleSixtyEight')}</span></div>
-            <div className="goal-bar" role="img" aria-label={t('progressAria')}><span /></div>
-            <div className="goal-caption"><span>{t('shortWalks')}</span><span>{t('fourOfSixDays')}</span></div>
-            <div className="prototype-note" data-testid="text-profile-disclosure">{t('profileDisclosure')}</div>
+          <section className="panel entry-panel animate-in delay-3" data-testid="content-daily-entry">
+            <div className="entry-heading"><div><span className="entry-date-label">{t('selectedDate')}</span><h2>{dayLabel(selectedDate)}{selectedDate === today ? ` · ${t('today')}` : ''}</h2></div>
+              {currentEntry && <span className="editing-pill">{t('editingEntry')}</span>}
+            </div>
+            <p className="entry-hint">{t('entryOptionalHint')}</p>
+            <form onSubmit={saveEntry} noValidate data-testid="form-daily-entry">
+              <div className="entry-field">
+                <label htmlFor="movement-input">{t('movementMinutes')}</label><div className="input-with-unit"><input id="movement-input" type="number" min="0" max="1440" step="1" inputMode="numeric" value={draft.movementMinutes} onChange={(event) => updateDraft('movementMinutes', event.target.value)} aria-invalid={Boolean(errors.movementMinutes)} aria-describedby={errors.movementMinutes ? 'error-movementMinutes' : 'hint-movement-minutes'} data-testid="input-movement-minutes" /><span>{t('minutesUnit')}</span></div><small className="field-hint" id="hint-movement-minutes">{t('movementHint')}</small>{fieldError('movementMinutes')}
+              </div>
+              <div className="entry-field">
+                <label htmlFor="sleep-input">{t('sleepHours')}</label><div className="input-with-unit"><input id="sleep-input" type="number" min="0.1" max="24" step="0.25" inputMode="decimal" value={draft.sleepHours} onChange={(event) => updateDraft('sleepHours', event.target.value)} aria-invalid={Boolean(errors.sleepHours)} aria-describedby={errors.sleepHours ? 'error-sleepHours' : undefined} data-testid="input-sleep-hours" /><span>{t('hoursUnit')}</span></div>{fieldError('sleepHours')}
+              </div>
+              {(['energy', 'mood'] as const).map((field) => <div className="entry-field range-field" key={field}>
+                <div className="range-label-row"><label htmlFor={`${field}-input`}>{t(field)}</label>{draft[field] !== '' && <button className="text-button" type="button" onClick={() => updateDraft(field, '')} aria-label={`${t('clearValue')} ${t(field)}`} data-testid={`button-clear-${field}`}>{t('clearValue')}</button>}</div>
+                {draft[field] === '' && !openRanges[field] ? <button className="range-enable" type="button" onClick={() => setOpenRanges((current) => ({ ...current, [field]: true }))} data-testid={`button-add-${field}`}>{t('addMeasurement')}</button>
+                  : <div className="range-control"><input id={`${field}-input`} type="range" min="1" max="10" step="1" value={draft[field] || '5'} onChange={(event) => updateDraft(field, event.target.value)} onClick={(event) => { if (!draft[field]) updateDraft(field, event.currentTarget.value); }} aria-label={t(field)} aria-valuetext={draft[field] ? `${draft[field]} / 10` : t('chooseRating')} data-testid={`input-${field}`} /><output htmlFor={`${field}-input`}>{draft[field] || '—'}<span>{draft[field] ? ' / 10' : ''}</span></output></div>}
+                {fieldError(field)}
+              </div>)}
+              <div className="entry-field">
+                <label htmlFor="water-input">{t('waterMl')}</label><div className="input-with-unit"><input id="water-input" type="number" min="0" max="20000" step="1" inputMode="numeric" value={draft.waterMl} onChange={(event) => updateDraft('waterMl', event.target.value)} aria-invalid={Boolean(errors.waterMl)} aria-describedby={errors.waterMl ? 'error-waterMl' : undefined} data-testid="input-water-ml" /><span>{t('millilitersUnit')}</span></div>{fieldError('waterMl')}
+              </div>
+              {fieldError('entry')}
+              {notice && <p className={`entry-notice${notice === 'progressDeleted' ? ' destructive' : ''}`} role="status" aria-live="polite" data-testid="status-progress">{t(notice)}</p>}
+              {deleteConfirm && <div className="delete-confirm" role="alert" data-testid="confirm-delete-entry"><p>{t('confirmDeleteEntry')}</p><div><button type="button" className="text-button destructive-button" onClick={deleteEntry} data-testid="button-confirm-delete">{t('confirmDelete')}</button><button type="button" className="text-button" onClick={() => setDeleteConfirm(false)} data-testid="button-cancel-delete">{t('cancel')}</button></div></div>}
+              <div className="entry-actions">
+                <button type="submit" className="primary-button entry-save" data-testid="button-save-entry"><Save size={15} />{currentEntry ? t('updateEntry') : t('saveEntry')}</button>
+                {currentEntry && <button type="button" className="delete-button" onClick={() => { setNotice(null); setDeleteConfirm(true); }} aria-label={t('deleteEntry')} data-testid="button-delete-entry"><Trash2 size={15} /><span>{t('deleteEntry')}</span></button>}
+              </div>
+            </form>
           </section>
         </aside>
       </div>
-      <p className="footer-note">{t('profileFooter')}</p>
+      <p className="footer-note" data-testid="text-profile-session-note">{t('profileSessionFooter')}</p>
     </main>
   );
 }
@@ -517,9 +673,11 @@ function App() {
   useEffect(() => connectTelegramWebApp(), []);
   return (
     <LanguageProvider>
-      <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-        <Router />
-      </WouterRouter>
+      <ProgressProvider>
+        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+          <Router />
+        </WouterRouter>
+      </ProgressProvider>
     </LanguageProvider>
   );
 }

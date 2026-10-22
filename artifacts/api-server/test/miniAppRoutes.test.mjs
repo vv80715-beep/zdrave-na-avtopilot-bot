@@ -390,3 +390,18 @@ test("valid voice upload returns mocked transcript and text reply, then removes 
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
+
+test("profile/progress GET remains unavailable even with a valid owner session", async () => {
+  const h = await serverHarness();
+  try {
+    const cookie = await ownerCookie(h);
+    const response = await h.request("/profile-progress", undefined, {
+      cookie,
+      method: "GET",
+    });
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { error: "not_found" });
+  } finally {
+    await h.close();
+  }
+});

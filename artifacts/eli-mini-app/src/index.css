@@ -327,6 +327,123 @@ a { color: inherit; text-decoration: none; }
   .chat-page .composer-disclosure { margin: 0 10px 7px; font-size: 9px; }
 }
 
+/* Session-only profile check-in */
+.progress-page { overflow-wrap: anywhere; }
+.progress-page .profile-grid { grid-template-columns: minmax(0, 1.1fr) minmax(310px, .9fr); gap: 16px; }
+.progress-page .profile-main, .progress-page .profile-side { min-width: 0; }
+.progress-summary { padding: 20px 22px; }
+.progress-summary .user-row { min-width: 0; }
+.progress-summary .user-row > span:last-child { min-width: 0; }
+.progress-summary .user-row p { font-size: 11px; }
+.session-disclosure {
+  position: relative; z-index: 1; margin-top: 17px; padding: 11px 13px;
+  border: 1px solid rgba(188,255,86,.18); border-radius: 12px;
+  background: rgba(188,255,86,.045); color: #b1c3a9; font-size: 10px; line-height: 1.6;
+}
+.progress-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.progress-stats .stat { min-width: 0; padding: 17px 14px; }
+.progress-stats .stat-label { min-height: 24px; line-height: 1.4; }
+.progress-stats .stat strong { font-size: clamp(19px, 2.3vw, 25px); margin-top: 9px; }
+.progress-stats .stat strong span { display: inline-block; }
+.progress-stats .stat small { display: block; margin-top: 6px; color: #83947e; font-size: 9px; line-height: 1.45; }
+.progress-empty { min-height: 210px; padding: 27px; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; }
+.empty-mark { width: 42px; height: 42px; display: grid; place-items: center; border: 1px solid rgba(188,255,86,.22); border-radius: 14px; color: #c0ff5b; background: rgba(188,255,86,.06); }
+.progress-empty h2 { margin: 17px 0 6px; font-size: 17px; letter-spacing: -.035em; }
+.progress-empty p { margin: 0; max-width: 390px; color: #98a994; font-size: 11px; line-height: 1.6; }
+.progress-chart { min-width: 0; }
+.progress-chart .chart { height: 155px; }
+.progress-chart .chart svg { overflow: hidden; }
+.progress-chart .chart circle { vector-effect: non-scaling-stroke; }
+.week-count { color: #c3f275; font-size: 19px; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.progress-week { padding: 21px; }
+.progress-week .panel-head { margin-bottom: 11px; }
+.progress-week .panel-head p { max-width: 205px; line-height: 1.5; }
+.progress-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin-top: 18px; }
+.date-day {
+  appearance: none; min-width: 0; padding: 7px 2px 6px; border: 1px solid transparent;
+  border-radius: 13px; background: transparent; cursor: pointer; transition: background .18s ease, border-color .18s ease, color .18s ease;
+}
+.date-day > span:first-child { font-size: 9px; text-transform: uppercase; }
+.date-day .day-mark { width: 25px; height: 25px; }
+.date-day small { color: #778975; font-size: 9px; font-variant-numeric: tabular-nums; }
+.date-day.selected { border-color: rgba(188,255,86,.35); background: rgba(188,255,86,.07); color: #d5f6ba; }
+.date-day.today > span:first-child { color: #c3f275; }
+.date-day:hover { background: rgba(188,255,86,.06); }
+.weekly-note { font-size: 10px; }
+.entry-panel { padding: 21px; }
+.entry-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.entry-date-label { color: #8fa28a; font-size: 9px; letter-spacing: .12em; text-transform: uppercase; }
+.entry-heading h2 { margin: 5px 0 0; font-size: 16px; line-height: 1.35; letter-spacing: -.035em; }
+.editing-pill { flex: 0 0 auto; padding: 6px 8px; border: 1px solid rgba(188,255,86,.2); border-radius: 99px; color: #c4e8a3; font-size: 8px; }
+.entry-hint { margin: 9px 0 17px; color: #91a08d; font-size: 10px; line-height: 1.5; }
+.entry-panel form { display: grid; gap: 13px; }
+.entry-field { display: grid; gap: 6px; min-width: 0; }
+.entry-field > label, .range-label-row > label { color: #d6e1d0; font-size: 10px; font-weight: 600; }
+.field-hint { color: #91a08d; font-size: 9px; line-height: 1.45; }
+.progress-mode-tag { flex: 0 0 auto; color: #d4c9a5; border-color: rgba(255,205,117,.25); background: rgba(255,205,117,.045); font-size: 9px; letter-spacing: .04em; }
+.input-with-unit { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.input-with-unit input {
+  width: 100%; min-width: 0; height: 40px; padding: 0 11px; border: 1px solid rgba(170,205,158,.17);
+  border-radius: 11px; background: rgba(5,15,9,.54); color: #e3eddd; font-size: 13px; font-variant-numeric: tabular-nums;
+}
+.input-with-unit input[aria-invalid="true"] { border-color: rgba(255,149,132,.6); }
+.input-with-unit > span { flex: 0 0 auto; min-width: 43px; color: #82917c; font-size: 9px; }
+.range-label-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.range-control { display: flex; align-items: center; gap: 12px; }
+.range-control input { min-width: 0; flex: 1; accent-color: #c0ff5b; cursor: pointer; }
+.range-control output { min-width: 49px; color: #d9edc8; font-size: 13px; text-align: right; font-variant-numeric: tabular-nums; }
+.range-control output span { color: #7e8f7a; font-size: 9px; }
+.range-enable, .text-button {
+  width: fit-content; border: 0; padding: 2px 0; color: #bce984; background: transparent; font-size: 9px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer;
+}
+.range-enable { min-height: 31px; text-decoration: none; }
+.range-enable:hover, .text-button:hover { color: #d4ffa0; }
+.progress-error { color: #ffad9f; font-size: 9px; line-height: 1.45; }
+.entry-actions { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
+.entry-save { min-height: 42px; padding: 0 15px; font-size: 10px; box-shadow: none; }
+.entry-save:hover { box-shadow: none; }
+.delete-button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 38px; padding: 0 8px;
+  border: 0; border-radius: 10px; color: #d5a09a; background: transparent; font-size: 9px; cursor: pointer;
+}
+.delete-button:hover { color: #ffc0b4; background: rgba(255,132,113,.07); }
+.entry-notice { margin: 0; padding: 9px 10px; border: 1px solid rgba(188,255,86,.2); border-radius: 10px; color: #c7e9a9; background: rgba(188,255,86,.055); font-size: 9px; line-height: 1.5; }
+.entry-notice.destructive { border-color: rgba(255,149,132,.2); color: #eab1a7; background: rgba(255,149,132,.05); }
+.delete-confirm { padding: 11px; border: 1px solid rgba(255,149,132,.25); border-radius: 11px; background: rgba(255,149,132,.05); }
+.delete-confirm p { margin: 0 0 10px; color: #e5c2bb; font-size: 10px; line-height: 1.5; }
+.delete-confirm > div { display: flex; gap: 15px; }
+.destructive-button { color: #ffad9f; }
+.progress-page .footer-note { line-height: 1.5; }
+
+@media (max-width: 760px) {
+  .progress-page .profile-grid { grid-template-columns: 1fr; gap: 12px; }
+  .progress-page .profile-main, .progress-page .profile-side { gap: 12px; }
+  .progress-summary { padding: 17px; }
+  .progress-stats .stat { padding: 13px 9px; }
+  .progress-stats .stat-label { font-size: 7px; }
+  .progress-stats .stat strong { font-size: 20px; }
+  .progress-week, .entry-panel { padding: 17px; }
+  .progress-days { gap: 3px; }
+  .progress-chart .chart { height: 130px; }
+}
+@media (max-width: 380px) {
+  .progress-page .page-heading { margin-bottom: 14px; }
+  .progress-page .page-heading h1 { font-size: 30px; }
+  .progress-summary .user-row { gap: 11px; }
+  .progress-summary .initial-avatar { width: 46px; height: 46px; border-radius: 14px; }
+  .session-disclosure { font-size: 9px; }
+  .progress-stats { grid-template-columns: 1fr; }
+  .progress-stats .stat { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 8px; border-right: 0; border-bottom: 1px solid rgba(170,205,158,.12); }
+  .progress-stats .stat:last-child { border-bottom: 0; }
+  .progress-stats .stat-label { grid-column: 1; }
+  .progress-stats .stat strong { grid-column: 1; margin-top: 2px; }
+  .progress-stats .stat small { grid-column: 2; grid-row: 1 / span 2; max-width: 120px; text-align: right; }
+  .progress-days { gap: 1px; }
+  .date-day { padding-inline: 0; }
+  .date-day > span:first-child { font-size: 8px; }
+  .entry-panel { padding: 15px; }
+}
+
 /* Compact local attachment and microphone controls for the demo composer. */
 .chat-page .composer { align-items: center; gap: 5px; }
 .icon-button {
