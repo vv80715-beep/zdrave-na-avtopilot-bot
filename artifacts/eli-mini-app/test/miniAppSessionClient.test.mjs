@@ -7,6 +7,7 @@ import {
   sendOwnerTextAi,
   uploadOwnerDemoMedia,
 } from "../src/miniAppSessionClient.ts";
+import { translate } from "../src/i18n.ts";
 
 const initData = "signed-data-fixture-not-a-real-credential";
 
@@ -95,6 +96,14 @@ test("owner AI status check never calls the AI endpoint and distinguishes mock f
       { url: "/api/mini-app/text-ai/status", method: "POST" },
     ]);
     assert.equal(paths.some(({ url }) => url.endsWith("/text-ai") && !url.endsWith("/status")), false);
+  }
+});
+
+test("session recovery and mock fallback notices are localized in Bulgarian and English", () => {
+  for (const language of ["bg", "en"]) {
+    assert.ok(translate(language, "stageSessionError").length > 20);
+    assert.ok(translate(language, "stageSwitchedToMock").length > 20);
+    assert.ok(translate(language, "dismiss").length > 0);
   }
 });
 

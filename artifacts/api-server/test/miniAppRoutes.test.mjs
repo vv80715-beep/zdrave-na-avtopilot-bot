@@ -485,6 +485,7 @@ test("text AI is 404 while disabled, requires owner session, and fails closed wi
   });
   try {
     assert.equal((await disabled.request("/text-ai", { message: "synthetic" })).status, 401);
+    assert.equal((await disabled.request("/text-ai/status", {})).status, 401);
     const cookie = await ownerCookie(disabled);
     assert.equal((await disabled.request("/text-ai", { message: "synthetic" }, { cookie })).status, 404);
     const status = await disabled.request("/text-ai/status", {}, { cookie });
