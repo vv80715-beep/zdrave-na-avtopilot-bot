@@ -10,7 +10,7 @@ import {
   createOpenAiMediaAiProcessor,
   type MediaAiProcessor,
   type MediaLanguage,
-} from "../lib/miniAppMediaAi";
+} from "../lib/miniAppMediaAi.ts";
 
 export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 export const MAX_AUDIO_BYTES = 15 * 1024 * 1024;

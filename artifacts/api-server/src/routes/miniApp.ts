@@ -5,7 +5,7 @@ import { validateTelegramInitData } from "../lib/telegramInitData.mjs";
 import {
   registerMiniAppMediaRoutes,
   type MiniAppMediaRouteOptions,
-} from "./miniAppMedia";
+} from "./miniAppMedia.ts";
 
 const COOKIE = "eli_mini_owner_session";
 const SESSION_TTL_SECONDS = 600;
