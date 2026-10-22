@@ -103,6 +103,7 @@ test("session recovery and mock fallback notices are localized in Bulgarian and 
   for (const language of ["bg", "en"]) {
     assert.ok(translate(language, "stageSessionError").length > 20);
     assert.ok(translate(language, "stageSwitchedToMock").length > 20);
+    assert.ok(translate(language, "stageProviderUncertain").length > 20);
     assert.ok(translate(language, "dismiss").length > 0);
   }
 });
