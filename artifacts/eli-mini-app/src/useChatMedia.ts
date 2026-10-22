@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { TranslationKey } from "./i18n";
+import { startLocalRecording, type LocalRecordingSession, type RecorderConstructor } from "./localRecorder";
 
 export type ChatAttachment = {
   id: number;
@@ -42,8 +43,7 @@ export function useChatMedia() {
   const [errorKey, setErrorKey] = useState<TranslationKey | null>(null);
   const urls = useRef(new Set<string>());
   const nextId = useRef(1);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
+  const recorderSessionRef = useRef<LocalRecordingSession | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const bytesRef = useRef(0);
   const startedAtRef = useRef(0);
@@ -68,11 +68,6 @@ export function useChatMedia() {
       url,
       supported,
     } satisfies ChatAttachment;
-  }, []);
-
-  const stopTracks = useCallback(() => {
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
   }, []);
 
   const clearTimer = useCallback(() => {
@@ -112,16 +107,15 @@ export function useChatMedia() {
   }, [attachment, makeAttachment, recording]);
 
   const stopRecording = useCallback((cancel = false) => {
-    const recorder = recorderRef.current;
-    if (!recorder) return;
+    const session = recorderSessionRef.current;
+    if (!session) return;
     cancelRef.current = cancel;
     clearTimer();
-    stopTracks();
-    if (recorder.state !== "inactive") {
+    session.stop(cancel);
+    if (session.recorder.state !== "inactive") {
       setRecording(cancel ? "idle" : "processing");
-      recorder.stop();
     }
-  }, [clearTimer, stopTracks]);
+  }, [clearTimer]);
 
   const startRecording = useCallback(async () => {
     setErrorKey(null);
@@ -129,87 +123,78 @@ export function useChatMedia() {
       setErrorKey("oneAttachmentOnly");
       return;
     }
-    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      setErrorKey("microphoneUnavailable");
-      return;
-    }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-      const mimeType = RECORDING_MIMES.find((candidate) => MediaRecorder.isTypeSupported(candidate));
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-      recorderRef.current = recorder;
       chunksRef.current = [];
       bytesRef.current = 0;
       cancelRef.current = false;
       sizeExceededRef.current = false;
       startedAtRef.current = performance.now();
       setElapsedSeconds(0);
-      recorder.ondataavailable = (event) => {
-        if (!event.data.size) return;
-        bytesRef.current += event.data.size;
-        if (bytesRef.current > MAX_ATTACHMENT_BYTES) {
-          sizeExceededRef.current = true;
-          setErrorKey("recordingSizeError");
-          stopRecording(true);
-          return;
-        }
-        chunksRef.current.push(event.data);
-      };
-      recorder.onerror = () => {
-        setErrorKey("recordingFailed");
-        stopRecording(true);
-      };
-      recorder.onstop = () => {
-        recorderRef.current = null;
-        stopTracks();
-        if (cancelRef.current || sizeExceededRef.current) {
+      const session = await startLocalRecording({
+        secureContext: window.isSecureContext,
+        getUserMedia: navigator.mediaDevices?.getUserMedia?.bind(navigator.mediaDevices),
+        MediaRecorder: typeof MediaRecorder === "undefined" ? undefined : MediaRecorder as unknown as RecorderConstructor,
+      }, RECORDING_MIMES, {
+        onData: (data) => {
+          bytesRef.current += data.size;
+          if (bytesRef.current > MAX_ATTACHMENT_BYTES) {
+            sizeExceededRef.current = true;
+            setErrorKey("recordingSizeError");
+            recorderSessionRef.current?.stop(true);
+            return;
+          }
+          chunksRef.current.push(data);
+        },
+        onError: () => {
+          setErrorKey("recordingFailed");
+          recorderSessionRef.current?.stop(true);
+        },
+        onStop: (wasCancelled) => {
+          recorderSessionRef.current = null;
+          if (wasCancelled || cancelRef.current || sizeExceededRef.current) {
+            chunksRef.current = [];
+            setRecording("idle");
+            setElapsedSeconds(0);
+            return;
+          }
+          const type = normalizedMime(session.recorder.mimeType || "audio/webm");
+          const blob = new Blob(chunksRef.current, { type });
           chunksRef.current = [];
-          setRecording("idle");
-          setElapsedSeconds(0);
-          return;
-        }
-        const type = normalizedMime(recorder.mimeType || mimeType || "audio/webm");
-        const blob = new Blob(chunksRef.current, { type });
-        chunksRef.current = [];
-        if (!blob.size || blob.size > MAX_ATTACHMENT_BYTES || !AUDIO_TYPES.has(type)) {
-          setErrorKey(blob.size > MAX_ATTACHMENT_BYTES ? "recordingSizeError" : "recordingFailed");
-          setRecording("idle");
-          setElapsedSeconds(0);
-          return;
-        }
-        const audio = makeAttachment(blob, "voice", recordingName(type), type, true);
-        setAttachment(audio);
-        setRecording("preview");
-      };
-      recorder.start(1000);
+          if (!blob.size || blob.size > MAX_ATTACHMENT_BYTES || !AUDIO_TYPES.has(type)) {
+            setErrorKey(blob.size > MAX_ATTACHMENT_BYTES ? "recordingSizeError" : "recordingFailed");
+            setRecording("idle");
+            setElapsedSeconds(0);
+            return;
+          }
+          setAttachment(makeAttachment(blob, "voice", recordingName(type), type, true));
+          setRecording("preview");
+        },
+      });
+      recorderSessionRef.current = session;
       setRecording("recording");
       timerRef.current = setInterval(() => {
         const elapsed = Math.min(MAX_RECORDING_SECONDS, Math.floor((performance.now() - startedAtRef.current) / 1000));
         setElapsedSeconds(elapsed);
-        if (elapsed >= MAX_RECORDING_SECONDS && recorderRef.current?.state === "recording") {
+        if (elapsed >= MAX_RECORDING_SECONDS && recorderSessionRef.current?.recorder.state === "recording") {
           setErrorKey("recordingDurationLimit");
           stopRecording(false);
         }
       }, 250);
     } catch (error) {
-      stopTracks();
-      setErrorKey(error instanceof DOMException && error.name === "NotAllowedError"
+      setErrorKey(error instanceof Error && error.message === "microphone_denied"
         ? "microphoneDenied"
-        : "microphoneUnavailable");
+        : error instanceof Error && error.message === "recording_failed"
+          ? "recordingFailed"
+          : "microphoneUnavailable");
     }
-  }, [attachment, makeAttachment, recording, stopRecording, stopTracks]);
+  }, [attachment, makeAttachment, recording, stopRecording]);
 
   useEffect(() => () => {
     clearTimer();
-    if (recorderRef.current?.state !== "inactive") {
-      cancelRef.current = true;
-      recorderRef.current?.stop();
-    }
-    stopTracks();
+    recorderSessionRef.current?.dispose();
     urls.current.forEach((url) => URL.revokeObjectURL(url));
     urls.current.clear();
-  }, [clearTimer, stopTracks]);
+  }, [clearTimer]);
 
   const detachForMessage = useCallback(() => {
     const current = attachment;
