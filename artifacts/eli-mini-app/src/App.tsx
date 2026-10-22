@@ -279,6 +279,7 @@ function Chat() {
   const [ambiguousDraft, setAmbiguousDraft] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [stageMode, setStageMode] = useState<'local' | 'checking' | 'mock' | 'live' | 'unavailable'>('local');
+  const [ownerDossierContext, setOwnerDossierContext] = useState(false);
   const [messages, setMessages] = useState<LocalChatMessage[]>([]);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const media = useChatMedia();
@@ -298,19 +299,22 @@ function Chat() {
   useEffect(() => {
     if (!canUseOwnerStage) {
       setStageMode('local');
+      setOwnerDossierContext(false);
       return;
     }
     let current = true;
     setStageMode('checking');
-    void getOwnerTextAiStatus(signedInitData).then((mode) => {
+    void getOwnerTextAiStatus(signedInitData).then((status) => {
       if (current) {
-        setStageMode(mode === 'test_ai' ? 'live' : 'mock');
+        setStageMode(status.mode === 'test_ai' ? 'live' : 'mock');
+        setOwnerDossierContext(status.ownerDossierContext);
         setStageError(null);
         setStageErrorCanRetry(false);
       }
     }).catch((error) => {
       if (current) {
         setStageMode('unavailable');
+        setOwnerDossierContext(false);
         setStageError(stageErrorKey(error));
         setStageErrorCanRetry(true);
       }
@@ -370,8 +374,9 @@ function Chat() {
         if (stageMode === 'mock' || stageMode === 'live') {
           mode = stageMode;
         } else {
-          const checkedMode = await getOwnerTextAiStatus(signedInitData);
-          mode = checkedMode === 'test_ai' ? 'live' : 'mock';
+          const checkedStatus = await getOwnerTextAiStatus(signedInitData);
+          mode = checkedStatus.mode === 'test_ai' ? 'live' : 'mock';
+          setOwnerDossierContext(checkedStatus.ownerDossierContext);
           setStageMode(mode);
         }
 
@@ -384,8 +389,9 @@ function Chat() {
             if (!(error instanceof MiniAppStageError) || error.status !== 404) throw error;
             // A 404 is safe to re-check: the guarded route rejects before any provider call.
             phase = 'status';
-            const checkedMode = await getOwnerTextAiStatus(signedInitData);
-            mode = checkedMode === 'test_ai' ? 'live' : 'mock';
+            const checkedStatus = await getOwnerTextAiStatus(signedInitData);
+            mode = checkedStatus.mode === 'test_ai' ? 'live' : 'mock';
+            setOwnerDossierContext(checkedStatus.ownerDossierContext);
             setStageMode(mode);
             if (mode !== 'mock') throw error;
             setNotice('stageSwitchedToMock');
@@ -668,7 +674,9 @@ function Chat() {
             </button>
           </form>
           <p className="composer-disclosure">{t(
-            stageMode === 'live' ? 'stagingLiveDisclosure' :
+            stageMode === 'live'
+              ? ownerDossierContext ? 'stagingLiveMemoryDisclosure' : 'stagingLiveDisclosure'
+              :
               canUseOwnerStage ? 'stagingComposerDisclosure' : 'composerDisclosure'
           )}</p>
         </section>

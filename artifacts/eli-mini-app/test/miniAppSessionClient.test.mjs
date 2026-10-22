@@ -88,9 +88,13 @@ test("owner AI status check never calls the AI endpoint and distinguishes mock f
       paths.push({ url: String(url), method: init.method });
       return String(url).endsWith("/session")
         ? new Response(JSON.stringify({ ok: true, expiresAt: "2026-10-22T00:10:00.000Z" }))
-        : new Response(JSON.stringify({ mode, ...(mode === "test_ai" ? { model: "gpt-4o-mini" } : {}) }));
+        : new Response(JSON.stringify({
+          mode,
+          ownerDossierContext: false,
+          ...(mode === "test_ai" ? { model: "gpt-4o-mini" } : {}),
+        }));
     });
-    assert.equal(result, mode);
+    assert.deepEqual(result, { mode, ownerDossierContext: false });
     assert.deepEqual(paths, [
       { url: "/api/mini-app/session", method: "POST" },
       { url: "/api/mini-app/text-ai/status", method: "POST" },

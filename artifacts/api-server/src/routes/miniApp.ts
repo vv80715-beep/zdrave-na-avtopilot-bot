@@ -4,6 +4,8 @@ import cors from "cors";
 import { validateTelegramInitData } from "../lib/telegramInitData.mjs";
 // @ts-expect-error The CommonJS persona module is the canonical prompt shared with the Telegram bot.
 import eliPersona from "../../../../bot/persona.js";
+// @ts-expect-error The selector rechecks the owner and filters dossier facts by message topic.
+import ownerDossier from "../../../../bot/ownerDossier.js";
 import {
   registerMiniAppMediaRoutes,
   type MiniAppMediaRouteOptions,
@@ -39,16 +41,28 @@ type MiniAppLanguage = "bg" | "en";
 type TextAiAdapter = (input: {
   message: string;
   language: MiniAppLanguage;
+  ownerDossierContext?: string;
 }) => Promise<string>;
 
 export function createOpenAiTextAiAdapter(
   apiKey: string,
   fetchFn: typeof fetch = fetch,
 ): TextAiAdapter {
-  return async ({ message, language }) => {
+  return async ({ message, language, ownerDossierContext }) => {
     const languageRule = language === "en"
       ? "Reply in English."
       : "Отговаряй на български.";
+    const boundary = ownerDossierContext
+      ? [
+          "This is an isolated owner-only staging test, not the production Telegram conversation.",
+          "Use only the topic-filtered private owner dossier context included in the system prompt.",
+          "You have no access to profile stores, health logs, relationship-memory stores, prior Telegram turns, or Universal Memory.",
+          "Never claim to remember prior conversation turns; the Mini App has no synchronized chat history.",
+        ].join(" ")
+      : TEXT_AI_TEST_BOUNDARY;
+    const systemContext = ownerDossierContext
+      ? `${ownerDossierContext}\n\n${SYSTEM_PROMPT}`
+      : SYSTEM_PROMPT;
     const response = await fetchFn("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -61,7 +75,7 @@ export function createOpenAiTextAiAdapter(
         messages: [
           {
             role: "system",
-            content: `${SYSTEM_PROMPT}\n\n${TEXT_AI_TEST_BOUNDARY}\n${languageRule}`,
+            content: `${systemContext}\n\n${boundary}\n${languageRule}`,
           },
           { role: "user", content: message },
         ],
@@ -176,6 +190,7 @@ export function createMiniAppRouter(
     validate?: (raw: string, token: string, options: { nowSeconds: number; maxAgeSeconds: number }) => VerifiedInitData;
     media?: MiniAppMediaRouteOptions;
     textAi?: TextAiAdapter;
+    ownerDossierContext?: (ownerId: string, message: string) => string;
   } = {},
 ) {
   if (!miniAppConfigEnabled(env)) throw new Error("Mini App staging route is not enabled.");
@@ -187,6 +202,8 @@ export function createMiniAppRouter(
   const validate = options.validate || validateTelegramInitData;
   const mediaEnabled = env.ELI_MINI_APP_MEDIA_MOCK_ENABLED === "true";
   const textAiEnabled = env.ELI_MINI_APP_TEXT_AI_ENABLED === "true";
+  const ownerDossierEnabled = env.NODE_ENV === "development" &&
+    env.ELI_MINI_APP_OWNER_DOSSIER_ENABLED === "true";
   const textAiKeyAvailable = OPENAI_KEY_FORMAT.test(env.OPENAI_API_KEY || "");
   const activeTextAiSessions = new Set<string>();
   const textAiMinuteRequests = new Map<string, number[]>();
@@ -289,11 +306,19 @@ export function createMiniAppRouter(
       return;
     }
     res.locals.miniAppSessionNonce = verified.session.nonce;
+    res.locals.miniAppOwnerId = verified.session.sub;
     next();
   };
 
   const configuredTextAi: TextAiAdapter = options.textAi ||
     createOpenAiTextAiAdapter(env.OPENAI_API_KEY || "");
+  const buildOwnerDossierContext = options.ownerDossierContext || ((verifiedOwnerId: string, message: string) => {
+    if (verifiedOwnerId !== ownerId || verifiedOwnerId !== env.OWNER_TELEGRAM_ID) return "";
+    const dossierPrompt = (ownerDossier as {
+      buildOwnerDossierPrompt: (id: string, question: string) => string;
+    }).buildOwnerDossierPrompt(verifiedOwnerId, message);
+    return dossierPrompt;
+  });
 
   registerMiniAppMediaRoutes(router, requireOwnerSession, mediaEnabled, env, options.media);
 
@@ -301,14 +326,18 @@ export function createMiniAppRouter(
   // while same-origin GET requests commonly omit it and fail the router's CSRF check.
   router.post("/text-ai/status", requireOwnerSession, (_req, res) => {
     if (!textAiEnabled) {
-      res.json({ mode: "mock" });
+      res.json({ mode: "mock", ownerDossierContext: false });
       return;
     }
     if (!textAiKeyAvailable) {
       sendError(res, 503, "text_ai_unavailable");
       return;
     }
-    res.json({ mode: "test_ai", model: TEXT_AI_MODEL });
+    res.json({
+      mode: "test_ai",
+      model: TEXT_AI_MODEL,
+      ownerDossierContext: ownerDossierEnabled,
+    });
   });
 
   router.post("/text-ai", requireOwnerSession, async (req, res) => {
@@ -352,6 +381,21 @@ export function createMiniAppRouter(
       return;
     }
 
+    let ownerDossierContext: string | undefined;
+    if (ownerDossierEnabled) {
+      const verifiedOwnerId = res.locals.miniAppOwnerId as string;
+      if (verifiedOwnerId !== ownerId || verifiedOwnerId !== env.OWNER_TELEGRAM_ID) {
+        sendError(res, 403, "owner_only");
+        return;
+      }
+      try {
+        ownerDossierContext = buildOwnerDossierContext(verifiedOwnerId, body.message.trim());
+      } catch {
+        sendError(res, 503, "owner_memory_unavailable");
+        return;
+      }
+    }
+
     // Reserve quota before calling the provider; failed/ambiguous calls are not retried.
     minuteRequests.push(current);
     textAiMinuteRequests.set(ownerId, minuteRequests);
@@ -361,6 +405,7 @@ export function createMiniAppRouter(
       const reply = await configuredTextAi({
         message: body.message.trim(),
         language: body.language === "en" ? "en" : "bg",
+        ...(ownerDossierContext ? { ownerDossierContext } : {}),
       });
       res.json({ reply, mode: "test_ai", model: TEXT_AI_MODEL });
     } catch (error) {

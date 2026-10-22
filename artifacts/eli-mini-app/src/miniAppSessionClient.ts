@@ -1,5 +1,9 @@
 export type MiniAppLanguage = "bg" | "en";
 export type OwnerTextAiMode = "mock" | "test_ai";
+export type OwnerTextAiStatus = {
+  mode: OwnerTextAiMode;
+  ownerDossierContext: boolean;
+};
 export type OwnerTextAiResult = {
   reply: string;
   mode: "test_ai";
@@ -112,7 +116,7 @@ export async function sendOwnerDemoChat(
 export async function getOwnerTextAiStatus(
   initData: string,
   fetchFn: FetchLike = fetch,
-): Promise<OwnerTextAiMode> {
+): Promise<OwnerTextAiStatus> {
   await ensureOwnerSession(initData, fetchFn);
   const response = await sameOriginRequest("/api/mini-app/text-ai/status", {
     method: "POST",
@@ -124,7 +128,10 @@ export async function getOwnerTextAiStatus(
   if (body.mode !== "mock" && body.mode !== "test_ai") {
     throw new MiniAppStageError("invalid_response", response.status);
   }
-  return body.mode;
+  if (typeof body.ownerDossierContext !== "boolean") {
+    throw new MiniAppStageError("invalid_response", response.status);
+  }
+  return { mode: body.mode, ownerDossierContext: body.ownerDossierContext };
 }
 
 export async function sendOwnerTextAi(

@@ -47,9 +47,15 @@ function signedInitData({ userId = OWNER_ID, authDate = NOW_SECONDS } = {}) {
   return fields.toString();
 }
 
-async function serverHarness({ env = config(), now = () => NOW_SECONDS * 1000, media, textAi } = {}) {
+async function serverHarness({
+  env = config(),
+  now = () => NOW_SECONDS * 1000,
+  media,
+  textAi,
+  ownerDossierContext,
+} = {}) {
   const app = express();
-  const mounted = mountMiniAppRoutes(app, env, { now, media, textAi });
+  const mounted = mountMiniAppRoutes(app, env, { now, media, textAi, ownerDossierContext });
   app.use((_req, res) => res.status(404).json({ error: "not_found" }));
   const server = app.listen(0, "127.0.0.1");
   await new Promise((resolve, reject) => {
@@ -92,7 +98,10 @@ function imageForm(bytes, { mime = "image/jpeg", filename = "photo.jpg" } = {}) 
 
 test("staging API is not mounted when the flag, stage, owner, origin, or secrets are missing", async () => {
   assert.equal(miniAppConfigEnabled(config({ ELI_MINI_APP_SESSION_ENABLED: "false" })), false);
-  assert.equal(miniAppConfigEnabled(config({ NODE_ENV: "production" })), false);
+  assert.equal(miniAppConfigEnabled(config({
+    NODE_ENV: "production",
+    ELI_MINI_APP_OWNER_DOSSIER_ENABLED: "true",
+  })), false);
   assert.equal(miniAppConfigEnabled(config({ OWNER_TELEGRAM_ID: "" })), false);
   assert.equal(miniAppConfigEnabled(config({ TELEGRAM_BOT_TOKEN: "" })), false);
   assert.equal(miniAppConfigEnabled(config({ SESSION_SECRET: "" })), false);
@@ -489,7 +498,7 @@ test("text AI is 404 while disabled, requires owner session, and fails closed wi
     const cookie = await ownerCookie(disabled);
     assert.equal((await disabled.request("/text-ai", { message: "synthetic" }, { cookie })).status, 404);
     const status = await disabled.request("/text-ai/status", {}, { cookie });
-    assert.deepEqual(await status.json(), { mode: "mock" });
+    assert.deepEqual(await status.json(), { mode: "mock", ownerDossierContext: false });
     assert.equal((await disabled.request("/text-ai/status", undefined, { cookie, method: "GET" })).status, 404);
     assert.equal((await disabled.request("/text-ai/status", {}, { cookie, origin: null })).status, 403);
     assert.equal(providerCalls, 0);
@@ -518,17 +527,22 @@ test("owner text AI validates size and language, uses isolated mock injection, a
       ELI_MINI_APP_TEXT_AI_ENABLED: "true",
       OPENAI_API_KEY: `sk-${"x".repeat(24)}`,
     }),
-    textAi: async ({ message, language }) => {
+    textAi: async ({ message, language, ownerDossierContext }) => {
       providerCalls += 1;
       assert.equal(message, "synthetic test");
       assert.equal(language, "en");
+      assert.equal(ownerDossierContext, undefined);
       return "Synthetic AI reply.";
     },
   });
   try {
     const cookie = await ownerCookie(h);
     const status = await h.request("/text-ai/status", {}, { cookie });
-    assert.deepEqual(await status.json(), { mode: "test_ai", model: "gpt-4o-mini" });
+    assert.deepEqual(await status.json(), {
+      mode: "test_ai",
+      model: "gpt-4o-mini",
+      ownerDossierContext: false,
+    });
     assert.equal((await h.request("/text-ai", { message: "synthetic test" }, {
       cookie,
       origin: "https://untrusted.example",
@@ -547,6 +561,54 @@ test("owner text AI validates size and language, uses isolated mock injection, a
     const limited = await h.request("/text-ai", { message: "synthetic test" }, { cookie });
     assert.equal(limited.status, 429);
     assert.equal(providerCalls, 5);
+  } finally {
+    await h.close();
+  }
+});
+
+test("owner dossier context is dev-only, session-gated, topic-selected, and never returned to the browser", async () => {
+  const syntheticContext = "SYNTHETIC_OWNER_DOSSIER_FIXTURE";
+  let contextReads = 0;
+  let receivedInput;
+  const h = await serverHarness({
+    env: config({
+      ELI_MINI_APP_TEXT_AI_ENABLED: "true",
+      ELI_MINI_APP_OWNER_DOSSIER_ENABLED: "true",
+      OPENAI_API_KEY: `sk-${"x".repeat(24)}`,
+    }),
+    ownerDossierContext: (ownerId, message) => {
+      contextReads += 1;
+      assert.equal(ownerId, OWNER_ID);
+      assert.equal(message, "synthetic goal question");
+      return syntheticContext;
+    },
+    textAi: async (input) => {
+      receivedInput = input;
+      return "Synthetic answer.";
+    },
+  });
+  try {
+    assert.equal((await h.request("/text-ai", { message: "synthetic goal question" })).status, 401);
+    assert.equal(contextReads, 0);
+    const cookie = await ownerCookie(h);
+    const status = await h.request("/text-ai/status", {}, { cookie });
+    const statusBody = await status.json();
+    assert.deepEqual(statusBody, {
+      mode: "test_ai",
+      model: "gpt-4o-mini",
+      ownerDossierContext: true,
+    });
+    const response = await h.request("/text-ai", { message: "synthetic goal question" }, { cookie });
+    assert.equal(response.status, 200);
+    const responseBody = await response.json();
+    assert.deepEqual(responseBody, {
+      reply: "Synthetic answer.",
+      mode: "test_ai",
+      model: "gpt-4o-mini",
+    });
+    assert.equal(contextReads, 1);
+    assert.equal(receivedInput.ownerDossierContext, syntheticContext);
+    assert.equal(JSON.stringify(responseBody).includes(syntheticContext), false);
   } finally {
     await h.close();
   }
@@ -664,6 +726,18 @@ test("OpenAI adapter selects gpt-4o-mini with 400 tokens and never exposes provi
   assert.match(captured.body.messages[0].content, /no access to synchronized profile/i);
   assert.doesNotMatch(captured.body.messages[0].content, /OWNER_MEMORY/i);
   assert.ok(captured.init.signal);
+
+  const legacyAdapter = createOpenAiTextAiAdapter(`sk-${"x".repeat(24)}`, async (_url, init) => {
+    captured = { body: JSON.parse(init.body) };
+    return new Response(JSON.stringify({ choices: [{ message: { content: "Synthetic answer." } }] }));
+  });
+  await legacyAdapter({
+    message: "synthetic goal question",
+    language: "en",
+    ownerDossierContext: "SYNTHETIC_OWNER_DOSSIER_FIXTURE",
+  });
+  assert.match(captured.body.messages[0].content, /SYNTHETIC_OWNER_DOSSIER_FIXTURE/);
+  assert.match(captured.body.messages[0].content, /no synchronized chat history/i);
 
   const failing = createOpenAiTextAiAdapter(`sk-${"x".repeat(24)}`, async () =>
     new Response("synthetic provider detail must not surface", { status: 500 }));
