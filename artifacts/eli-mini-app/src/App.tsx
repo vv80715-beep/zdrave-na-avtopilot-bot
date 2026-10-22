@@ -27,6 +27,7 @@ import { Route, Switch, Link, useLocation, Router as WouterRouter } from 'wouter
 import { translate, type Language, type TranslationKey } from './i18n';
 import { connectTelegramWebApp } from './telegramWebApp';
 import { useChatMedia, type ChatAttachment } from './useChatMedia';
+import { MiniAppStageError, sendOwnerDemoChat, uploadOwnerDemoMedia } from './miniAppSessionClient';
 import {
   dailyEntryToDraft,
   emptyDailyEntryDraft,
@@ -244,8 +245,10 @@ function Home() {
 
 type LocalChatMessage = {
   id: number;
+  role: 'user' | 'assistant';
   text: string;
   attachment: ChatAttachment | null;
+  mock?: boolean;
 };
 
 function formatFileSize(bytes: number) {
@@ -255,9 +258,12 @@ function formatFileSize(bytes: number) {
 }
 
 function Chat() {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [draft, setDraft] = useState('');
   const [notice, setNotice] = useState<TranslationKey | null>(null);
+  const [stageError, setStageError] = useState<TranslationKey | null>(null);
+  const [sending, setSending] = useState(false);
+  const [stageConnected, setStageConnected] = useState(false);
   const [messages, setMessages] = useState<LocalChatMessage[]>([]);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const media = useChatMedia();
@@ -266,6 +272,12 @@ function Chat() {
   const nextMessageId = useRef(1);
   const conversationRef = useRef<HTMLDivElement>(null);
   const hasMountedConversation = useRef(false);
+  const telegram = window.Telegram?.WebApp;
+  const signedInitData = telegram?.initData?.trim() || '';
+  const canUseOwnerStage = import.meta.env.VITE_ELI_MINI_APP_STAGING_ENABLED === 'true' &&
+    window.isSecureContext &&
+    window.location.protocol === 'https:' &&
+    Boolean(telegram?.platform && signedInitData);
 
   useEffect(() => {
     if (!hasMountedConversation.current) {
@@ -276,19 +288,77 @@ function Chat() {
     if (conversation) conversation.scrollTo({ top: conversation.scrollHeight, behavior: 'smooth' });
   }, [messages, notice, media.attachment]);
 
-  function submitDemoMessage(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  function stageErrorKey(error: unknown): TranslationKey {
+    if (!(error instanceof MiniAppStageError)) return 'stageNetworkError';
+    if (error.status === 404) return 'stageDisabledError';
+    if (error.status === 403) return 'stageOwnerError';
+    if (error.status === 429) return 'stageRateLimitError';
+    if (error.status === 401 || error.code === 'telegram_auth_required') return 'stageSessionError';
+    if (error.code === 'request_timeout') return 'stageTimeoutError';
+    return 'stageNetworkError';
+  }
+
+  async function submitDemoMessage(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
+    if (sending) return;
     if (!draft.trim() && !media.attachment) {
       setNotice('emptyDraftNotice');
       return;
     }
-    const attachment = media.detachForMessage();
+    const text = draft.trim();
+    const attachment = media.attachment;
+    const isImage = attachment?.kind === 'image';
+    const isVoice = attachment?.kind === 'voice' ||
+      (attachment?.kind === 'file' && attachment.mimeType.startsWith('audio/'));
+    const sendMedia = Boolean(attachment && (isImage || isVoice) && canUseOwnerStage);
+    const sendText = canUseOwnerStage && Boolean(text);
+    setNotice(null);
+    setStageError(null);
+    if (sendMedia || sendText) {
+      setSending(true);
+      try {
+        const result = sendMedia && attachment
+          ? await uploadOwnerDemoMedia(
+              signedInitData,
+              isImage ? 'image' : 'voice',
+              new File([attachment.blob], attachment.name || 'attachment', { type: attachment.mimeType }),
+              language,
+              text,
+            )
+          : await sendOwnerDemoChat(signedInitData, text, language);
+        const deliveredAttachment = media.detachForMessage();
+        setMessages((current) => [
+          ...current,
+          { id: nextMessageId.current++, role: 'user', text, attachment: deliveredAttachment },
+          {
+            id: nextMessageId.current++,
+            role: 'assistant',
+            text: result.reply,
+            attachment: null,
+            mock: true,
+          },
+        ]);
+        setStageConnected(true);
+        setDraft('');
+        setAttachmentMenuOpen(false);
+        media.clearError();
+      } catch (error) {
+        setStageError(stageErrorKey(error));
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
+    const localAttachment = media.detachForMessage();
     setMessages((current) => [...current, {
       id: nextMessageId.current++,
-      text: draft.trim(),
-      attachment,
+      role: 'user',
+      text,
+      attachment: localAttachment,
     }]);
-    setNotice(attachment ? 'attachmentLocalNotice' : 'localDraftNotice');
+    if (attachment && !canUseOwnerStage && !text) setNotice('attachmentLocalNotice');
+    else if (attachment && !sendMedia && canUseOwnerStage) setNotice('unsupportedUploadLocalNotice');
+    else setNotice('localDraftNotice');
     setDraft('');
     setAttachmentMenuOpen(false);
     media.clearError();
@@ -304,7 +374,7 @@ function Chat() {
         <section className="panel chat-panel animate-in delay-1" aria-label={t('chatAria')}>
           <div className="chat-top">
             <div className="coach-ident"><EliAvatar className="coach-avatar" alt={t('avatarChatAlt')} testId="image-eli-chat" /><span><strong>{t('eliName')}</strong><small>{t('coachSubtitle')}</small></span></div>
-            <span className="local-chip"><i className="prototype-dot" /> {t('localDemo')}</span>
+            <span className="local-chip"><i className="prototype-dot" /> {t(stageConnected ? 'ownerStageMock' : 'localDemo')}</span>
           </div>
           <div className="chat-mode-actions" role="group" aria-label={t('modeActionsAria')}>
             <button type="button" aria-label={t('actionText')} title={t('actionText')} data-testid="button-chat-mode-text" onClick={() => setNotice('modeTextNotice')}>
@@ -337,7 +407,15 @@ function Chat() {
                 <div className="prepared-box"><strong>{t('staticExampleStrong')}</strong>{t('staticExampleBody')}</div>
               </div>
             </div>
-            {messages.map((message) => (
+            {messages.map((message) => message.role === 'assistant' ? (
+              <div className="message coach" key={message.id} data-testid="message-stage-mock-reply">
+                <EliAvatar className="message-avatar" alt={t('avatarChatAlt')} testId="image-eli-stage-reply" />
+                <div className="coach-message-body">
+                  <div className="message-label"><Sparkles size={11} /> {t('fixedMockReply')}</div>
+                  <div className="message-bubble">{message.text}</div>
+                </div>
+              </div>
+            ) : (
               <div className="message user" key={message.id} data-testid="message-local-attachment">
                 <div className="message-bubble attachment-message">
                   {message.text && <p className="attachment-caption">{message.text}</p>}
@@ -400,7 +478,9 @@ function Chat() {
             </div>
           )}
           {media.errorKey && <p className="media-error" role="alert">{t(media.errorKey)}</p>}
-          <form className="composer" onSubmit={submitDemoMessage}>
+          {sending && <div className="local-notice" role="status" aria-live="polite">{t('stageSending')}</div>}
+          {stageError && <div className="stage-error" role="alert" data-testid="status-stage-error"><span>{t(stageError)}</span><button type="button" onClick={() => void submitDemoMessage()} disabled={sending} data-testid="button-stage-retry">{t('retry')}</button></div>}
+          <form className="composer" onSubmit={(event) => void submitDemoMessage(event)}>
             <div className="attachment-menu-wrap">
               <button
                 type="button"
@@ -443,7 +523,7 @@ function Chat() {
               type="button"
               className={`icon-button composer-icon-button${media.recording === 'recording' ? ' is-recording' : ''}`}
               aria-label={media.recording === 'recording' ? t('stopRecording') : t('startRecording')}
-              disabled={media.recording === 'processing'}
+                disabled={sending || media.recording === 'processing'}
               onClick={() => media.recording === 'recording' ? media.stopRecording() : void media.startRecording()}
             >
               {media.recording === 'recording' ? <Square size={15} /> : <Mic size={18} />}
@@ -454,14 +534,15 @@ function Chat() {
               enterKeyHint="send"
               autoComplete="off"
               value={draft}
+              disabled={sending}
               onChange={(event) => { setDraft(event.target.value); media.clearError(); }}
               data-testid="input-demo-message"
             />
-            <button className="send-button" type="submit" aria-label={t('sendAria')} data-testid="button-demo-send" disabled={!draft.trim() && !media.attachment}>
-              <Send size={16} />
+            <button className="send-button" type="submit" aria-label={t(canUseOwnerStage ? 'sendAriaStage' : 'sendAria')} data-testid="button-demo-send" disabled={sending || (!draft.trim() && !media.attachment)}>
+              {sending ? <Clock3 size={16} /> : <Send size={16} />}
             </button>
           </form>
-          <p className="composer-disclosure">{t('composerDisclosure')}</p>
+          <p className="composer-disclosure">{t(canUseOwnerStage ? 'stagingComposerDisclosure' : 'composerDisclosure')}</p>
         </section>
       </div>
     </main>

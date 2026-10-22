@@ -7,7 +7,6 @@ import { spawn } from "node:child_process";
 import { pipeline } from "node:stream/promises";
 import type { Request, RequestHandler, Response, Router } from "express";
 import {
-  createOpenAiMediaAiProcessor,
   type MediaAiProcessor,
   type MediaLanguage,
 } from "../lib/miniAppMediaAi.ts";
@@ -59,6 +58,29 @@ function languageValue(value: string | undefined): MediaLanguage {
   if (value === undefined || value === "bg") return "bg";
   if (value === "en") return "en";
   fail(400, "invalid_language");
+}
+
+function createFixedMockProcessor(): MediaAiProcessor {
+  return {
+    async analyzeImage({ language }) {
+      return {
+        reply: language === "en"
+          ? "Fixed staging mock: the image was received, but not analyzed."
+          : "Фиксиран staging mock: снимката е приета, но не е анализирана.",
+      };
+    },
+    async transcribeAndAnswer({ language }) {
+      return language === "en"
+        ? {
+            transcript: "[MOCK transcript — audio was not transcribed]",
+            reply: "Fixed staging mock: the audio was received, but not analyzed.",
+          }
+        : {
+            transcript: "[МОК транскрипт — аудиото не е транскрибирано]",
+            reply: "Фиксиран staging mock: аудиото е прието, но не е анализирано.",
+          };
+    },
+  };
 }
 
 function matchesImageSignature(bytes: Buffer, mimeType: string): boolean {
@@ -325,8 +347,7 @@ export function registerMiniAppMediaRoutes(
   options: MiniAppMediaRouteOptions = {},
 ) {
   if (!enabled) return;
-  const processor = options.processor ??
-    (env.OPENAI_API_KEY ? createOpenAiMediaAiProcessor(env.OPENAI_API_KEY) : null);
+  const processor = options.processor ?? createFixedMockProcessor();
   const inspectDuration = options.inspectAudioDuration ?? probeAudioDuration;
   const normalizeAudio = options.normalizeAudio ?? normalizeAudioToWav;
   const limiter = makeLimiter(options.now ?? Date.now);
@@ -353,7 +374,7 @@ export function registerMiniAppMediaRoutes(
           caption: upload.caption,
           language: upload.language,
         });
-        responseBody = { reply: result.reply, mediaType: "image", staged: true };
+        responseBody = { reply: result.reply, mediaType: "image", staged: true, demo: true };
       } else {
         const duration = await inspectDuration(upload.path);
         if (duration > MAX_AUDIO_SECONDS) {
@@ -371,6 +392,7 @@ export function registerMiniAppMediaRoutes(
             reply: result.reply,
             mediaType: "voice",
             staged: true,
+            demo: true,
           };
         }
       }

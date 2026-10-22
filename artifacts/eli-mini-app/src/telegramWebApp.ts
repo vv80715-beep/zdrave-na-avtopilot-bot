@@ -15,6 +15,8 @@ type TelegramThemeParams = {
 };
 
 type TelegramWebAppApi = {
+  initData?: string;
+  platform?: string;
   version?: string;
   colorScheme?: 'light' | 'dark';
   themeParams?: TelegramThemeParams;

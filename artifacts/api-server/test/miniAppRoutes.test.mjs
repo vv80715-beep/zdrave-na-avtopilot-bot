@@ -169,6 +169,13 @@ test("valid owner initData issues a secure short-lived session; session serves o
 
     const replay = await h.request("/session", { initData: signedInitData() });
     assert.equal(replay.status, 401);
+    const sameSessionRetry = await h.request(
+      "/session",
+      { initData: signedInitData() },
+      { cookie },
+    );
+    assert.equal(sameSessionRetry.status, 200);
+    assert.equal(sameSessionRetry.headers.get("set-cookie"), null);
   } finally {
     await h.close();
   }
@@ -226,6 +233,10 @@ test("session expiry is enforced server-side and demo input is never returned or
 test("media routes return 404 without the separate default-off flag and never call a processor", async () => {
   let providerCalls = 0;
   const h = await serverHarness({
+    env: config({
+      ELI_MINI_APP_MEDIA_AI_ENABLED: "true",
+      OPENAI_API_KEY: "offline-fake-key-never-used",
+    }),
     media: { processor: {
       analyzeImage: async () => { providerCalls += 1; return { reply: "never" }; },
       transcribeAndAnswer: async () => { providerCalls += 1; return { transcript: "never", reply: "never" }; },
@@ -244,7 +255,7 @@ test("media routes return 404 without the separate default-off flag and never ca
 test("media endpoint requires the same owner session and verifies image signature before mock processing", async () => {
   let providerCalls = 0;
   const h = await serverHarness({
-    env: config({ ELI_MINI_APP_MEDIA_AI_ENABLED: "true" }),
+    env: config({ ELI_MINI_APP_MEDIA_MOCK_ENABLED: "true" }),
     media: {
       processor: {
         analyzeImage: async () => { providerCalls += 1; return { reply: "mock description" }; },
@@ -268,7 +279,7 @@ test("media endpoint requires the same owner session and verifies image signatur
       { cookie },
     );
     assert.equal(valid.status, 200);
-    assert.deepEqual(await valid.json(), { reply: "mock description", mediaType: "image", staged: true });
+    assert.deepEqual(await valid.json(), { reply: "mock description", mediaType: "image", staged: true, demo: true });
     assert.equal(providerCalls, 1);
   } finally {
     await h.close();
@@ -278,7 +289,7 @@ test("media endpoint requires the same owner session and verifies image signatur
 test("media upload rejects image size overflow before mock processing", async () => {
   let providerCalls = 0;
   const h = await serverHarness({
-    env: config({ ELI_MINI_APP_MEDIA_AI_ENABLED: "true" }),
+    env: config({ ELI_MINI_APP_MEDIA_MOCK_ENABLED: "true" }),
     media: {
       processor: {
         analyzeImage: async () => { providerCalls += 1; return { reply: "never" }; },
@@ -303,7 +314,7 @@ test("media upload rejects image size overflow before mock processing", async ()
 test("voice upload enforces magic bytes and the 90 second limit; responses stay text-only", async () => {
   let providerCalls = 0;
   const h = await serverHarness({
-    env: config({ ELI_MINI_APP_MEDIA_AI_ENABLED: "true" }),
+    env: config({ ELI_MINI_APP_MEDIA_MOCK_ENABLED: "true" }),
     media: {
       processor: {
         analyzeImage: async () => { providerCalls += 1; return { reply: "never" }; },
@@ -336,7 +347,7 @@ test("valid voice upload returns mocked transcript and text reply, then removes 
   let processorCalls = 0;
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "eli-mini-api-test-"));
   const h = await serverHarness({
-    env: config({ ELI_MINI_APP_MEDIA_AI_ENABLED: "true" }),
+    env: config({ ELI_MINI_APP_MEDIA_MOCK_ENABLED: "true" }),
     media: {
       tempRoot,
       inspectAudioDuration: async () => 12,
@@ -363,13 +374,14 @@ test("valid voice upload returns mocked transcript and text reply, then removes 
       reply: "Нека започнем с кратка разходка.",
       mediaType: "voice",
       staged: true,
+      demo: true,
     });
     assert.equal(processorCalls, 1);
     assert.deepEqual(await readdir(tempRoot), []);
 
     let currentTime = NOW_SECONDS * 1000;
     const expired = await serverHarness({
-      env: config({ ELI_MINI_APP_MEDIA_AI_ENABLED: "true" }),
+      env: config({ ELI_MINI_APP_MEDIA_MOCK_ENABLED: "true" }),
       now: () => currentTime,
       media: { processor: {
         analyzeImage: async () => ({ reply: "never" }),
@@ -388,6 +400,58 @@ test("valid voice upload returns mocked transcript and text reply, then removes 
   } finally {
     await h.close();
     await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("mock-only media flag returns fixed non-analysis copy even when an OpenAI key is present", async () => {
+  const h = await serverHarness({
+    env: config({
+      ELI_MINI_APP_MEDIA_MOCK_ENABLED: "true",
+      OPENAI_API_KEY: "offline-fake-key-never-used",
+    }),
+  });
+  try {
+    const cookie = await ownerCookie(h);
+    const response = await h.request(
+      "/media/image",
+      imageForm(Buffer.from([0xff, 0xd8, 0xff, 0xd9])),
+      { cookie },
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      reply: "Фиксиран staging mock: снимката е приета, но не е анализирана.",
+      mediaType: "image",
+      staged: true,
+      demo: true,
+    });
+  } finally {
+    await h.close();
+  }
+});
+
+test("fixed demo chat limits input and caps each signed session at 20 messages per minute", async () => {
+  const h = await serverHarness();
+  try {
+    const cookie = await ownerCookie(h);
+    const oversized = await h.request(
+      "/demo-chat",
+      { message: "x".repeat(1201), language: "en" },
+      { cookie },
+    );
+    assert.equal(oversized.status, 400);
+    for (let index = 0; index < 20; index += 1) {
+      const response = await h.request(
+        "/demo-chat",
+        { message: `synthetic ${index}`, language: "en" },
+        { cookie },
+      );
+      assert.equal(response.status, 200);
+    }
+    const limited = await h.request("/demo-chat", { message: "twenty-first", language: "en" }, { cookie });
+    assert.equal(limited.status, 429);
+    assert.deepEqual(await limited.json(), { error: "chat_rate_limited" });
+  } finally {
+    await h.close();
   }
 });
 

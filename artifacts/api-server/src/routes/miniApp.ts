@@ -15,6 +15,7 @@ const STATIC_REPLIES = {
   bg: "Това е фиксиран owner-only демо отговор. Не е изпратена AI заявка.",
   en: "This is a fixed owner-only demo reply. No AI request was made.",
 };
+type SessionClaims = { sub: string; iat: number; exp: number; nonce: string };
 
 type Env = NodeJS.ProcessEnv;
 type VerifiedInitData = ReturnType<typeof validateTelegramInitData>;
@@ -72,6 +73,33 @@ function readCookie(req: Request): string | null {
   return null;
 }
 
+function readValidSession(
+  req: Request,
+  ownerId: string,
+  sessionSecret: string,
+  nowSeconds: number,
+): { session: SessionClaims } | { error: "session_required" | "session_invalid" | "session_expired" } {
+  const value = readCookie(req);
+  const [payload, signature, extra] = value?.split(".") || [];
+  if (!payload || !signature || extra) return { error: "session_required" };
+  const expected = Buffer.from(signSession(payload, sessionSecret));
+  const actual = Buffer.from(signature);
+  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
+    return { error: "session_invalid" };
+  }
+  try {
+    const session = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as SessionClaims;
+    if (session.sub !== ownerId || !Number.isInteger(session.exp) || session.exp <= nowSeconds ||
+        !Number.isInteger(session.iat) || session.iat > nowSeconds + 30 ||
+        typeof session.nonce !== "string" || !session.nonce) {
+      return { error: "session_expired" };
+    }
+    return { session };
+  } catch {
+    return { error: "session_invalid" };
+  }
+}
+
 export function createMiniAppRouter(
   env: Env = process.env,
   options: {
@@ -87,8 +115,9 @@ export function createMiniAppRouter(
   const sessionSecret = env.SESSION_SECRET!;
   const now = options.now || Date.now;
   const validate = options.validate || validateTelegramInitData;
-  const mediaEnabled = env.ELI_MINI_APP_MEDIA_AI_ENABLED === "true";
+  const mediaEnabled = env.ELI_MINI_APP_MEDIA_MOCK_ENABLED === "true";
   const usedInitData = new Map<string, number>();
+  const chatRequestsBySession = new Map<string, number[]>();
   const router = Router();
 
   router.use((req, res, next) => {
@@ -127,6 +156,28 @@ export function createMiniAppRouter(
       return;
     }
 
+    const timestamp = now();
+    for (const [key, expiresAt] of usedInitData) {
+      if (expiresAt <= timestamp) usedInitData.delete(key);
+    }
+    const fingerprint = createHash("sha256").update(body.initData).digest("hex");
+    if (usedInitData.has(fingerprint)) {
+      const existing = readValidSession(req, ownerId, sessionSecret, Math.floor(timestamp / 1000));
+      if ("session" in existing) {
+        res.json({
+          ok: true,
+          expiresAt: new Date(existing.session.exp * 1000).toISOString(),
+        });
+        return;
+      }
+      sendError(res, 401, "init_data_replayed");
+      return;
+    }
+    if (usedInitData.size >= 1000) {
+      sendError(res, 429, "session_rate_limited");
+      return;
+    }
+
     let identity: VerifiedInitData;
     try {
       identity = validate(body.initData, botToken, {
@@ -142,15 +193,6 @@ export function createMiniAppRouter(
       return;
     }
 
-    const timestamp = now();
-    for (const [key, expiresAt] of usedInitData) {
-      if (expiresAt <= timestamp) usedInitData.delete(key);
-    }
-    const fingerprint = createHash("sha256").update(body.initData).digest("hex");
-    if (usedInitData.has(fingerprint) || usedInitData.size >= 1000) {
-      sendError(res, 401, "init_data_replayed");
-      return;
-    }
     usedInitData.set(fingerprint, timestamp + INIT_DATA_MAX_AGE_SECONDS * 1000);
 
     const issuedAt = Math.floor(timestamp / 1000);
@@ -166,31 +208,12 @@ export function createMiniAppRouter(
   });
 
   const requireOwnerSession = (req: Request, res: Response, next: NextFunction) => {
-    const value = readCookie(req);
-    const [payload, signature, extra] = value?.split(".") || [];
-    if (!payload || !signature || extra) {
-      sendError(res, 401, "session_required");
+    const verified = readValidSession(req, ownerId, sessionSecret, Math.floor(now() / 1000));
+    if (!("session" in verified)) {
+      sendError(res, 401, verified.error);
       return;
     }
-    const expected = Buffer.from(signSession(payload, sessionSecret));
-    const actual = Buffer.from(signature);
-    if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
-      sendError(res, 401, "session_invalid");
-      return;
-    }
-    try {
-      const session = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-      const current = Math.floor(now() / 1000);
-      if (session.sub !== ownerId || !Number.isInteger(session.exp) || session.exp <= current ||
-          !Number.isInteger(session.iat) || session.iat > current + 30 ||
-          typeof session.nonce !== "string") {
-        sendError(res, 401, "session_expired");
-        return;
-      }
-    } catch {
-      sendError(res, 401, "session_invalid");
-      return;
-    }
+    res.locals.miniAppSessionNonce = verified.session.nonce;
     next();
   };
 
@@ -208,6 +231,20 @@ export function createMiniAppRouter(
     ) {
       sendError(res, 400, "invalid_request");
       return;
+    }
+    const nonce = res.locals.miniAppSessionNonce as string;
+    const current = now();
+    const recent = (chatRequestsBySession.get(nonce) || []).filter((time) => current - time < 60_000);
+    if (recent.length >= 20) {
+      sendError(res, 429, "chat_rate_limited");
+      return;
+    }
+    recent.push(current);
+    chatRequestsBySession.set(nonce, recent);
+    if (chatRequestsBySession.size > 1000) {
+      for (const [key, times] of chatRequestsBySession) {
+        if (!times.length || current - times[times.length - 1] >= 60_000) chatRequestsBySession.delete(key);
+      }
     }
     res.json({ reply: STATIC_REPLIES[body.language === "en" ? "en" : "bg"], demo: true });
   });
