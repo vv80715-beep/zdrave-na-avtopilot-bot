@@ -25,6 +25,13 @@ import {
 } from 'lucide-react';
 import { Route, Switch, Link, useLocation, Router as WouterRouter } from 'wouter';
 import { translate, type Language, type TranslationKey } from './i18n';
+import {
+  getReplyLabelKey,
+  getUserMessageTimeKey,
+  showPreparedChatExamples,
+  type ChatMessageDelivery,
+  type ChatReplySource,
+} from './chatPresentation';
 import { connectTelegramWebApp } from './telegramWebApp';
 import { useChatMedia, type ChatAttachment } from './useChatMedia';
 import {
@@ -253,7 +260,8 @@ type LocalChatMessage = {
   role: 'user' | 'assistant';
   text: string;
   attachment: ChatAttachment | null;
-  mock?: boolean;
+  replySource?: ChatReplySource;
+  delivery?: ChatMessageDelivery;
 };
 
 function formatFileSize(bytes: number) {
@@ -397,13 +405,13 @@ function Chat() {
         const deliveredAttachment = media.detachForMessage();
         setMessages((current) => [
           ...current,
-          { id: nextMessageId.current++, role: 'user', text, attachment: deliveredAttachment },
+          { id: nextMessageId.current++, role: 'user', text, attachment: deliveredAttachment, delivery: 'api' },
           {
             id: nextMessageId.current++,
             role: 'assistant',
             text: result.reply,
             attachment: null,
-            mock: result.mode === 'mock',
+            replySource: result.mode === 'test_ai' ? 'test_ai' : 'mock',
           },
         ]);
         setStageMode(result.mode === 'test_ai' ? 'live' : 'mock');
@@ -439,6 +447,7 @@ function Chat() {
       role: 'user',
       text,
       attachment: localAttachment,
+      delivery: 'local',
     }]);
     if (attachment) setNotice('attachmentLocalNotice');
     else setNotice('localDraftNotice');
@@ -451,13 +460,17 @@ function Chat() {
   return (
     <main className="page-wrap chat-page">
       <div className="page-heading chat-page-heading animate-in">
-        <div><div className="eyebrow"><i className="eyebrow-line" /> {t('chatEyebrow')}</div><h1>{t('chatTitle')}</h1><p>{t('chatDescription')}</p></div>
-        <span className="page-tag"><CircleHelp size={14} /> {t('preparedTag')}</span>
+        <div>
+          <div className="eyebrow"><i className="eyebrow-line" /> {t(stageMode === 'live' ? 'liveChatEyebrow' : 'chatEyebrow')}</div>
+          <h1>{t('chatTitle')}</h1>
+          <p>{t(stageMode === 'live' ? 'liveChatDescription' : 'chatDescription')}</p>
+        </div>
+        <span className="page-tag"><CircleHelp size={14} /> {t(stageMode === 'live' ? 'livePreparedTag' : 'preparedTag')}</span>
       </div>
       <div className="chat-layout">
-        <section className="panel chat-panel animate-in delay-1" aria-label={t('chatAria')}>
+        <section className="panel chat-panel animate-in delay-1" aria-label={t(stageMode === 'live' ? 'liveChatAria' : 'chatAria')}>
           <div className="chat-top">
-            <div className="coach-ident"><EliAvatar className="coach-avatar" alt={t('avatarChatAlt')} testId="image-eli-chat" /><span><strong>{t('eliName')}</strong><small>{t('coachSubtitle')}</small></span></div>
+            <div className="coach-ident"><EliAvatar className="coach-avatar" alt={t('avatarChatAlt')} testId="image-eli-chat" /><span><strong>{t('eliName')}</strong><small>{t(stageMode === 'live' ? 'ownerLiveSubtitle' : 'coachSubtitle')}</small></span></div>
             <span className="local-chip"><i className="prototype-dot" /> {t(
               stageMode === 'live' ? 'ownerAiTest' :
                 stageMode === 'mock' ? 'ownerStageMock' :
@@ -466,7 +479,7 @@ function Chat() {
             )}</span>
           </div>
           <div className="chat-mode-actions" role="group" aria-label={t('modeActionsAria')}>
-            <button type="button" aria-label={t('actionText')} title={t('actionText')} data-testid="button-chat-mode-text" onClick={() => setNotice('modeTextNotice')}>
+            <button type="button" aria-label={t('actionText')} title={t('actionText')} data-testid="button-chat-mode-text" onClick={() => setNotice(stageMode === 'live' ? 'liveTextModeNotice' : 'modeTextNotice')}>
               <MessageCircle size={15} /><span>{t('actionText')}</span>
             </button>
             <button type="button" aria-label={t('actionVoice')} title={t('actionVoice')} data-testid="button-chat-mode-voice" onClick={() => setNotice('modeVoiceNotice')}>
@@ -478,29 +491,37 @@ function Chat() {
           </div>
           <p className="mode-disclosure">{t('modeDemoDisclosure')}</p>
           <div className="conversation" ref={conversationRef} aria-live="polite" data-testid="content-chat-example">
-            <div className="date-divider">{t('dateDivider')}</div>
-            <div className="message coach">
-              <EliAvatar className="message-avatar" alt={t('avatarChatAlt')} testId="image-eli-chat-message-1" />
-              <div className="coach-message-body">
-                <div className="message-label"><Sparkles size={11} /> {t('sampleText')}</div>
-                <div className="message-bubble">{t('openingMessage')}</div>
-                <span className="message-time">{t('sampleBeginning')}</span>
-              </div>
-            </div>
-            <div className="message user"><div className="message-bubble">{t('sampleUserMessage')}</div><span className="message-time">{t('sampleMessage')}</span></div>
-            <div className="message coach">
-              <EliAvatar className="message-avatar" alt={t('avatarChatAlt')} testId="image-eli-chat-message-2" />
-              <div className="coach-message-body">
-                <div className="message-label"><Sparkles size={11} /> {t('preparedReply')}</div>
-                <div className="message-bubble">{t('initialReply')}</div>
-                <div className="prepared-box"><strong>{t('staticExampleStrong')}</strong>{t('staticExampleBody')}</div>
-              </div>
-            </div>
+            {showPreparedChatExamples(stageMode) && (
+              <>
+                <div className="date-divider">{t('dateDivider')}</div>
+                <div className="message coach">
+                  <EliAvatar className="message-avatar" alt={t('avatarChatAlt')} testId="image-eli-chat-message-1" />
+                  <div className="coach-message-body">
+                    <div className="message-label"><Sparkles size={11} /> {t('sampleText')}</div>
+                    <div className="message-bubble">{t('openingMessage')}</div>
+                    <span className="message-time">{t('sampleBeginning')}</span>
+                  </div>
+                </div>
+                <div className="message user"><div className="message-bubble">{t('sampleUserMessage')}</div><span className="message-time">{t('sampleMessage')}</span></div>
+                <div className="message coach">
+                  <EliAvatar className="message-avatar" alt={t('avatarChatAlt')} testId="image-eli-chat-message-2" />
+                  <div className="coach-message-body">
+                    <div className="message-label"><Sparkles size={11} /> {t('preparedReply')}</div>
+                    <div className="message-bubble">{t('initialReply')}</div>
+                    <div className="prepared-box"><strong>{t('staticExampleStrong')}</strong>{t('staticExampleBody')}</div>
+                  </div>
+                </div>
+              </>
+            )}
             {messages.map((message) => message.role === 'assistant' ? (
-              <div className="message coach" key={message.id} data-testid="message-stage-mock-reply">
+              <div className="message coach" key={message.id} data-testid="message-stage-reply">
                 <EliAvatar className="message-avatar" alt={t('avatarChatAlt')} testId="image-eli-stage-reply" />
                 <div className="coach-message-body">
-                  <div className="message-label"><Sparkles size={11} /> {t('fixedMockReply')}</div>
+                  {getReplyLabelKey(message.replySource) && (
+                    <div className="message-label">
+                      <Sparkles size={11} /> {t(getReplyLabelKey(message.replySource)!)}
+                    </div>
+                  )}
                   <div className="message-bubble">{message.text}</div>
                 </div>
               </div>
@@ -528,7 +549,9 @@ function Chat() {
                     <p className="unsupported-file-note">{t('unsupportedFileNotice')}</p>
                   )}
                 </div>
-                <span className="message-time">{t('localMessageTime')}</span>
+                {getUserMessageTimeKey(message.delivery) && (
+                  <span className="message-time">{t(getUserMessageTimeKey(message.delivery)!)}</span>
+                )}
               </div>
             ))}
             {notice && <div className="local-notice" role="status" data-testid="status-local-message">{t(notice)}</div>}
