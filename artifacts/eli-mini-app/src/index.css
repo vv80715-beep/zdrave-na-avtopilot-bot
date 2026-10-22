@@ -570,3 +570,117 @@ a { color: inherit; text-decoration: none; }
   .chat-page .message-bubble { padding-top: 7px; padding-bottom: 7px; }
   .chat-page .prepared-box { margin-top: 5px; padding-top: 6px; padding-bottom: 6px; }
 }
+
+/* The chat owns the available viewport; only its message history scrolls. */
+:root { --eli-viewport-height: 100vh; }
+@supports (height: 100dvh) {
+  :root { --eli-viewport-height: 100dvh; }
+}
+
+.chat-page .chat-layout,
+.chat-page .chat-panel,
+.chat-page .conversation,
+.chat-page .coach-ident,
+.chat-page .coach-message-body {
+  min-width: 0;
+}
+
+.chat-page .chat-layout { flex: 1 1 0; min-height: 0; }
+.chat-page .chat-panel { min-height: 0; }
+.chat-page .chat-top,
+.chat-page .chat-mode-actions,
+.chat-page .mode-disclosure,
+.chat-page .composer,
+.chat-page .composer-disclosure,
+.chat-page .attachment-draft,
+.chat-page .recording-status,
+.chat-page .media-error,
+.chat-page .stage-error {
+  flex: 0 0 auto;
+}
+.chat-page .chat-top { gap: 8px; }
+.chat-page .coach-ident { flex: 1 1 auto; }
+.chat-page .local-chip {
+  flex: 0 1 auto;
+  max-width: 43%;
+  min-width: 0;
+  text-align: right;
+  white-space: normal;
+  line-height: 1.25;
+}
+.chat-page .conversation {
+  flex: 1 1 0;
+  min-height: 0;
+  justify-content: flex-start;
+  gap: 16px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(188,255,86,.32) transparent;
+}
+.chat-page .conversation > * { flex: 0 0 auto; }
+.chat-page .message { max-width: min(78%, 760px); overflow-wrap: anywhere; }
+.chat-page .message.coach { max-width: min(94%, 900px); }
+.chat-page .message-bubble,
+.chat-page .prepared-box { overflow-wrap: anywhere; }
+
+@media (min-width: 761px) {
+  .app-shell:has(.chat-page) {
+    display: flex;
+    flex-direction: column;
+    height: var(--telegram-viewport-height, var(--eli-viewport-height, 100vh));
+    min-height: 0;
+  }
+  .app-shell:has(.chat-page) > .topbar { flex: 0 0 auto; }
+  .page-wrap.chat-page {
+    flex: 1 1 0;
+    height: auto;
+    min-height: 0;
+    overflow: hidden;
+    padding: 12px 0 18px;
+  }
+  .chat-page-heading { margin-bottom: 10px; }
+  .chat-page .chat-top { padding: 12px 18px; }
+  .chat-page .chat-mode-actions { padding-top: 7px; }
+  .chat-page .conversation { padding: 18px 22px; }
+  .chat-page .message { font-size: 13px; line-height: 1.6; }
+  .chat-page .composer { padding: 10px 14px; }
+  .chat-page .composer-disclosure { margin: 0 14px 9px; }
+}
+
+@media (max-width: 760px) {
+  .app-shell:has(.chat-page) {
+    height: var(--telegram-viewport-height, var(--eli-viewport-height, 100vh));
+    min-height: 0;
+  }
+  .app-shell:has(.chat-page .composer input:focus) {
+    padding-bottom: calc(76px + max(env(safe-area-inset-bottom), var(--telegram-safe-bottom, 0px)));
+  }
+  .page-wrap.chat-page {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    padding: 6px 0;
+  }
+  .chat-page-heading { margin-bottom: 4px; }
+  .chat-page .chat-layout { width: 100%; }
+  .chat-page .chat-panel { height: 100%; }
+  .chat-page .chat-top { min-height: 45px; padding: 6px 9px; }
+  .chat-page .coach-ident { gap: 8px; }
+  .chat-page .coach-avatar { width: 32px; height: 32px; }
+  .chat-page .local-chip { max-width: 40%; font-size: 8px; }
+  .chat-page .chat-mode-actions { padding: 5px 8px 0; gap: 4px; }
+  .chat-page .chat-mode-actions button { min-height: 40px; }
+  .chat-page .mode-disclosure { margin: 3px 9px 0; font-size: 8px; }
+  .chat-page .conversation { padding: 9px 9px 12px; gap: 10px; }
+  .chat-page .message { max-width: 80%; font-size: 12px; line-height: 1.5; }
+  .chat-page .message.coach { max-width: 94%; }
+  .chat-page .message-avatar { width: 25px; height: 25px; }
+  .chat-page .message-bubble { padding: 8px 10px; }
+  .chat-page .prepared-box { margin-top: 6px; padding: 7px 9px; }
+  .chat-page .composer { padding: 7px 8px 5px; }
+  .chat-page .composer-disclosure { margin: 0 9px 6px; }
+  .chat-page .stage-error { flex: 0 0 auto; }
+}

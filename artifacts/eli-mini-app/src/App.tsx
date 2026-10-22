@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import {
   Activity,
   ArrowRight,
@@ -289,6 +289,7 @@ function Chat() {
   const sendLock = useRef(false);
   const conversationRef = useRef<HTMLDivElement>(null);
   const hasMountedConversation = useRef(false);
+  const shouldFollowConversationRef = useRef(true);
   const telegram = window.Telegram?.WebApp;
   const signedInitData = telegram?.initData?.trim() || '';
   const canUseOwnerStage = import.meta.env.VITE_ELI_MINI_APP_STAGING_ENABLED === 'true' &&
@@ -322,14 +323,20 @@ function Chat() {
     return () => { current = false; };
   }, [canUseOwnerStage, signedInitData]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!hasMountedConversation.current) {
       hasMountedConversation.current = true;
+      const conversation = conversationRef.current;
+      if (conversation) {
+        conversation.scrollTop = conversation.scrollHeight;
+        shouldFollowConversationRef.current = true;
+      }
       return;
     }
     const conversation = conversationRef.current;
-    if (conversation) conversation.scrollTo({ top: conversation.scrollHeight, behavior: 'smooth' });
-  }, [messages, notice, media.attachment]);
+    if (!conversation || !shouldFollowConversationRef.current) return;
+    conversation.scrollTo({ top: conversation.scrollHeight, behavior: 'smooth' });
+  }, [messages]);
 
   function stageErrorKey(error: unknown): TranslationKey {
     if (!(error instanceof MiniAppStageError)) return 'stageNetworkError';
@@ -349,6 +356,9 @@ function Chat() {
       setNotice('emptyDraftNotice');
       return;
     }
+    const conversation = conversationRef.current;
+    shouldFollowConversationRef.current = !conversation ||
+      conversation.scrollHeight - conversation.clientHeight - conversation.scrollTop <= 72;
     const text = draft.trim();
     const attachment = media.attachment;
     const sendText = canUseOwnerStage && Boolean(text);
@@ -496,7 +506,17 @@ function Chat() {
             </button>
           </div>
           <p className="mode-disclosure">{t('modeDemoDisclosure')}</p>
-          <div className="conversation" ref={conversationRef} aria-live="polite" data-testid="content-chat-example">
+          <div
+            className="conversation"
+            ref={conversationRef}
+            onScroll={(event) => {
+              const element = event.currentTarget;
+              shouldFollowConversationRef.current =
+                element.scrollHeight - element.clientHeight - element.scrollTop <= 72;
+            }}
+            aria-live="polite"
+            data-testid="content-chat-example"
+          >
             {showPreparedChatExamples(stageMode) && (
               <>
                 <div className="date-divider">{t('dateDivider')}</div>
