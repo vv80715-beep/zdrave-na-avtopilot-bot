@@ -6,6 +6,9 @@ export type OwnerTextAiStatus = {
 };
 export type OwnerTextAiResult = {
   reply: string;
+  mode: "owner_dossier_faq";
+} | {
+  reply: string;
   mode: "test_ai";
   model: "gpt-4o-mini";
 };
@@ -148,7 +151,13 @@ export async function sendOwnerTextAi(
   }, fetchFn, 28_000);
   const body = await responseBody(response);
   if (!response.ok) throw new MiniAppStageError(safeErrorCode(body), response.status);
-  if (typeof body.reply !== "string" || body.mode !== "test_ai" || body.model !== "gpt-4o-mini") {
+  if (typeof body.reply !== "string") {
+    throw new MiniAppStageError("invalid_response", response.status);
+  }
+  if (body.mode === "owner_dossier_faq") {
+    return { reply: body.reply, mode: "owner_dossier_faq" };
+  }
+  if (body.mode !== "test_ai" || body.model !== "gpt-4o-mini") {
     throw new MiniAppStageError("invalid_response", response.status);
   }
   return {

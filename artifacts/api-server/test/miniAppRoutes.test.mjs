@@ -53,9 +53,16 @@ async function serverHarness({
   media,
   textAi,
   ownerDossierContext,
+  ownerDossierFaq,
 } = {}) {
   const app = express();
-  const mounted = mountMiniAppRoutes(app, env, { now, media, textAi, ownerDossierContext });
+  const mounted = mountMiniAppRoutes(app, env, {
+    now,
+    media,
+    textAi,
+    ownerDossierContext,
+    ownerDossierFaq,
+  });
   app.use((_req, res) => res.status(404).json({ error: "not_found" }));
   const server = app.listen(0, "127.0.0.1");
   await new Promise((resolve, reject) => {
@@ -609,6 +616,90 @@ test("owner dossier context is dev-only, session-gated, topic-selected, and neve
     assert.equal(contextReads, 1);
     assert.equal(receivedInput.ownerDossierContext, syntheticContext);
     assert.equal(JSON.stringify(responseBody).includes(syntheticContext), false);
+  } finally {
+    await h.close();
+  }
+});
+
+test("mixed Eli mission and owner motivation/goals question uses only synthetic dossier FAQ answers", async () => {
+  const answerCalls = [];
+  let providerCalls = 0;
+  let contextCalls = 0;
+  const h = await serverHarness({
+    env: config({
+      ELI_MINI_APP_TEXT_AI_ENABLED: "true",
+      ELI_MINI_APP_OWNER_DOSSIER_ENABLED: "true",
+      OPENAI_API_KEY: `sk-${"x".repeat(24)}`,
+    }),
+    ownerDossierContext: () => {
+      contextCalls += 1;
+      return "SYNTHETIC_CONTEXT_SHOULD_NOT_BE_USED";
+    },
+    ownerDossierFaq: {
+      detectOwnerDossierQuestion: () => "business_mission",
+      answerOwnerDossierQuestion: (ownerId, intent) => {
+        assert.equal(ownerId, OWNER_ID);
+        answerCalls.push(intent);
+        return intent === "creation_reason"
+          ? "Synthetic personal motivation."
+          : "Synthetic life goal.";
+      },
+    },
+    textAi: async () => {
+      providerCalls += 1;
+      return "This provider response must not be used.";
+    },
+  });
+  try {
+    const question = "Ели, освен твоята мисия да помагаш на хората, каква е моята лична мотивация да създам този бизнес и какво искам да постигна в живота си?";
+    assert.equal((await h.request("/text-ai", { message: question })).status, 401);
+    assert.deepEqual(answerCalls, []);
+
+    const cookie = await ownerCookie(h);
+    const response = await h.request("/text-ai", { message: question }, { cookie });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      reply: "Synthetic personal motivation.\n\nSynthetic life goal.",
+      mode: "owner_dossier_faq",
+    });
+    assert.deepEqual(answerCalls, ["creation_reason", "goals"]);
+    assert.equal(contextCalls, 0);
+    assert.equal(providerCalls, 0);
+  } finally {
+    await h.close();
+  }
+});
+
+test("owner dossier FAQ returns explicit unknowns instead of guessing when facts are missing", async () => {
+  let providerCalls = 0;
+  const h = await serverHarness({
+    env: config({
+      ELI_MINI_APP_TEXT_AI_ENABLED: "true",
+      ELI_MINI_APP_OWNER_DOSSIER_ENABLED: "true",
+      OPENAI_API_KEY: `sk-${"x".repeat(24)}`,
+    }),
+    ownerDossierFaq: {
+      detectOwnerDossierQuestion: () => null,
+      answerOwnerDossierQuestion: (_ownerId, intent) =>
+        intent === "creation_reason"
+          ? "Не знам потвърдената причина; можеш да я добавиш или актуализираш."
+          : "Не знам потвърдени цели; можеш да ги добавиш или актуализираш.",
+    },
+    textAi: async () => {
+      providerCalls += 1;
+      return "Guessed answer.";
+    },
+  });
+  try {
+    const cookie = await ownerCookie(h);
+    const response = await h.request(
+      "/text-ai",
+      { message: "Каква е личната ми мотивация и какво искам да постигна в живота си?" },
+      { cookie },
+    );
+    assert.equal(response.status, 200);
+    assert.match((await response.json()).reply, /Не знам потвърдената причина/);
+    assert.equal(providerCalls, 0);
   } finally {
     await h.close();
   }

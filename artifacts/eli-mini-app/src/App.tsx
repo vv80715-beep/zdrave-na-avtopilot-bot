@@ -380,7 +380,7 @@ function Chat() {
           setStageMode(mode);
         }
 
-        let result: { reply: string; mode: 'mock' | 'test_ai' };
+        let result: { reply: string; mode: 'mock' | 'test_ai' | 'owner_dossier_faq' };
         if (mode === 'live') {
           phase = 'live';
           try {
@@ -417,10 +417,10 @@ function Chat() {
             role: 'assistant',
             text: result.reply,
             attachment: null,
-            replySource: result.mode === 'test_ai' ? 'test_ai' : 'mock',
+            replySource: result.mode === 'mock' ? 'mock' : result.mode,
           },
         ]);
-        setStageMode(result.mode === 'test_ai' ? 'live' : 'mock');
+        setStageMode(result.mode === 'mock' ? 'mock' : 'live');
         setStageError(null);
         setStageErrorCanRetry(false);
         setAmbiguousDraft(null);

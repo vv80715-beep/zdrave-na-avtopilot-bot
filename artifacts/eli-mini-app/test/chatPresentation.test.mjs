@@ -16,6 +16,13 @@ test("verified live replies use a GPT-4o-mini test label in both languages", () 
   assert.equal(translate("en", "liveTextModeNotice").includes("text demo"), false);
 });
 
+test("deterministic owner dossier replies have a distinct non-GPT label", () => {
+  const key = getReplyLabelKey("owner_dossier_faq");
+  assert.equal(key, "ownerDossierFaqReplyLabel");
+  assert.equal(translate("bg", key), "ЕЛИ — отговор от owner досието");
+  assert.equal(translate("en", key), "ELI — answer from owner dossier");
+});
+
 test("only mock replies use the fixed demo label in both languages", () => {
   const key = getReplyLabelKey("mock");
   assert.equal(key, "fixedMockReply");

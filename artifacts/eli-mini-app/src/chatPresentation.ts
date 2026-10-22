@@ -1,10 +1,11 @@
 import type { TranslationKey } from './i18n';
 
-export type ChatReplySource = 'test_ai' | 'mock' | 'unknown';
+export type ChatReplySource = 'test_ai' | 'owner_dossier_faq' | 'mock' | 'unknown';
 export type ChatMessageDelivery = 'api' | 'local';
 
 export function getReplyLabelKey(source?: ChatReplySource): TranslationKey | null {
   if (source === 'test_ai') return 'liveAiReplyLabel';
+  if (source === 'owner_dossier_faq') return 'ownerDossierFaqReplyLabel';
   if (source === 'mock') return 'fixedMockReply';
   return null;
 }

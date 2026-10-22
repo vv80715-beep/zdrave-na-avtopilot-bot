@@ -140,3 +140,18 @@ test("live AI is invoked only by explicit send and fails without mock fallback",
     (error) => error instanceof MiniAppStageError && error.status === 503,
   );
 });
+
+test("dossier FAQ response is accepted without falsely requiring GPT model metadata", async () => {
+  const result = await sendOwnerTextAi(initData, "synthetic dossier question", "bg", async (url) => {
+    return String(url).endsWith("/session")
+      ? new Response(JSON.stringify({ ok: true, expiresAt: "2026-10-22T00:10:00.000Z" }))
+      : new Response(JSON.stringify({
+          reply: "Synthetic dossier FAQ answer.",
+          mode: "owner_dossier_faq",
+        }));
+  });
+  assert.deepEqual(result, {
+    reply: "Synthetic dossier FAQ answer.",
+    mode: "owner_dossier_faq",
+  });
+});

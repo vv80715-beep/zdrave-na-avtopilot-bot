@@ -43,6 +43,29 @@ type TextAiAdapter = (input: {
   language: MiniAppLanguage;
   ownerDossierContext?: string;
 }) => Promise<string>;
+type OwnerDossierFaq = {
+  detectOwnerDossierQuestion: (message: string) => string | null;
+  answerOwnerDossierQuestion: (ownerId: string, intent: string) => string;
+};
+
+function ownerDossierFaqIntents(message: string, detect: OwnerDossierFaq["detectOwnerDossierQuestion"]): string[] {
+  const text = message.toLocaleLowerCase("bg");
+  const asksMotivation =
+    /(личн.{0,25}мотивац|мотивац.{0,50}(бизнес|създа|постиг)|защо.{0,50}(създад|създам|направ|изград).{0,40}(бизнес|ели)|с каква цел.{0,50}(създад|направ|изград))/.test(text);
+  const asksGoals =
+    /(какво.{0,40}(искам|мога|трябва).{0,30}постиг|какви са.{0,30}(цел|мечт)|каква е.{0,30}(цел|мечт)|целите ми|моите цели|мечтата ми)/.test(text);
+  const intents: string[] = [];
+  if (asksMotivation) intents.push("creation_reason");
+  if (asksGoals) intents.push("goals");
+
+  // Prefer explicit personal questions over a mention of Eli's mission, which
+  // the legacy detector can otherwise classify as the business-mission FAQ.
+  if (intents.length) return intents;
+  const legacyIntent = detect(message);
+  return legacyIntent === "creation_reason" || legacyIntent === "goals"
+    ? [legacyIntent]
+    : [];
+}
 
 export function createOpenAiTextAiAdapter(
   apiKey: string,
@@ -191,6 +214,7 @@ export function createMiniAppRouter(
     media?: MiniAppMediaRouteOptions;
     textAi?: TextAiAdapter;
     ownerDossierContext?: (ownerId: string, message: string) => string;
+    ownerDossierFaq?: OwnerDossierFaq;
   } = {},
 ) {
   if (!miniAppConfigEnabled(env)) throw new Error("Mini App staging route is not enabled.");
@@ -319,6 +343,7 @@ export function createMiniAppRouter(
     }).buildOwnerDossierPrompt(verifiedOwnerId, message);
     return dossierPrompt;
   });
+  const ownerDossierFaq = options.ownerDossierFaq || (ownerDossier as OwnerDossierFaq);
 
   registerMiniAppMediaRoutes(router, requireOwnerSession, mediaEnabled, env, options.media);
 
@@ -389,6 +414,17 @@ export function createMiniAppRouter(
         return;
       }
       try {
+        const faqIntents = ownerDossierFaqIntents(
+          body.message.trim(),
+          ownerDossierFaq.detectOwnerDossierQuestion,
+        );
+        if (faqIntents.length) {
+          const reply = faqIntents
+            .map((intent) => ownerDossierFaq.answerOwnerDossierQuestion(verifiedOwnerId, intent))
+            .join("\n\n");
+          res.json({ reply, mode: "owner_dossier_faq" });
+          return;
+        }
         ownerDossierContext = buildOwnerDossierContext(verifiedOwnerId, body.message.trim());
       } catch {
         sendError(res, 503, "owner_memory_unavailable");
