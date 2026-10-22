@@ -8,6 +8,7 @@ import path from "node:path";
 import test from "node:test";
 import {
   createMiniAppRouter,
+  createOpenAiTextAiAdapter,
   miniAppConfigEnabled,
   mountMiniAppRoutes,
 } from "../src/routes/miniApp.ts";
@@ -46,9 +47,9 @@ function signedInitData({ userId = OWNER_ID, authDate = NOW_SECONDS } = {}) {
   return fields.toString();
 }
 
-async function serverHarness({ env = config(), now = () => NOW_SECONDS * 1000, media } = {}) {
+async function serverHarness({ env = config(), now = () => NOW_SECONDS * 1000, media, textAi } = {}) {
   const app = express();
-  const mounted = mountMiniAppRoutes(app, env, { now, media });
+  const mounted = mountMiniAppRoutes(app, env, { now, media, textAi });
   app.use((_req, res) => res.status(404).json({ error: "not_found" }));
   const server = app.listen(0, "127.0.0.1");
   await new Promise((resolve, reject) => {
@@ -473,6 +474,196 @@ test("fixed demo chat limits input and caps each signed session at 20 messages p
   } finally {
     await h.close();
   }
+});
+
+test("text AI is 404 while disabled, requires owner session, and fails closed without a valid key", async () => {
+  let providerCalls = 0;
+  const disabled = await serverHarness({
+    env: config(),
+    textAi: async () => { providerCalls += 1; return "never"; },
+  });
+  try {
+    assert.equal((await disabled.request("/text-ai", { message: "synthetic" })).status, 401);
+    const cookie = await ownerCookie(disabled);
+    assert.equal((await disabled.request("/text-ai", { message: "synthetic" }, { cookie })).status, 404);
+    const status = await disabled.request("/text-ai/status", undefined, { cookie, method: "GET" });
+    assert.deepEqual(await status.json(), { mode: "mock" });
+    assert.equal(providerCalls, 0);
+  } finally {
+    await disabled.close();
+  }
+
+  const missingKey = await serverHarness({
+    env: config({ ELI_MINI_APP_TEXT_AI_ENABLED: "true" }),
+    textAi: async () => { providerCalls += 1; return "never"; },
+  });
+  try {
+    const cookie = await ownerCookie(missingKey);
+    assert.equal((await missingKey.request("/text-ai", { message: "synthetic" }, { cookie })).status, 503);
+    assert.equal((await missingKey.request("/text-ai/status", undefined, { cookie, method: "GET" })).status, 503);
+    assert.equal(providerCalls, 0);
+  } finally {
+    await missingKey.close();
+  }
+});
+
+test("owner text AI validates size and language, uses isolated mock injection, and enforces minute cap", async () => {
+  let providerCalls = 0;
+  const h = await serverHarness({
+    env: config({
+      ELI_MINI_APP_TEXT_AI_ENABLED: "true",
+      OPENAI_API_KEY: `sk-${"x".repeat(24)}`,
+    }),
+    textAi: async ({ message, language }) => {
+      providerCalls += 1;
+      assert.equal(message, "synthetic test");
+      assert.equal(language, "en");
+      return "Synthetic AI reply.";
+    },
+  });
+  try {
+    const cookie = await ownerCookie(h);
+    const status = await h.request("/text-ai/status", undefined, { cookie, method: "GET" });
+    assert.deepEqual(await status.json(), { mode: "test_ai", model: "gpt-4o-mini" });
+    assert.equal((await h.request("/text-ai", { message: "synthetic test" }, {
+      cookie,
+      origin: "https://untrusted.example",
+    })).status, 403);
+    assert.equal((await h.request("/text-ai", { message: "x".repeat(1201) }, { cookie })).status, 400);
+    assert.equal((await h.request("/text-ai", { message: "synthetic test", language: "fr" }, { cookie })).status, 400);
+    for (let index = 0; index < 5; index += 1) {
+      const response = await h.request("/text-ai", { message: "synthetic test", language: "en" }, { cookie });
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), {
+        reply: "Synthetic AI reply.",
+        mode: "test_ai",
+        model: "gpt-4o-mini",
+      });
+    }
+    const limited = await h.request("/text-ai", { message: "synthetic test" }, { cookie });
+    assert.equal(limited.status, 429);
+    assert.equal(providerCalls, 5);
+  } finally {
+    await h.close();
+  }
+});
+
+test("invalid key format and provider failures are safe, generic, and never fall back to mock", async () => {
+  let providerCalls = 0;
+  const invalidKey = await serverHarness({
+    env: config({
+      ELI_MINI_APP_TEXT_AI_ENABLED: "true",
+      OPENAI_API_KEY: "sk-short",
+    }),
+    textAi: async () => { providerCalls += 1; return "never"; },
+  });
+  try {
+    const cookie = await ownerCookie(invalidKey);
+    const response = await invalidKey.request("/text-ai", { message: "synthetic" }, { cookie });
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: "text_ai_unavailable" });
+    assert.equal(providerCalls, 0);
+  } finally {
+    await invalidKey.close();
+  }
+
+  const failingProvider = await serverHarness({
+    env: config({
+      ELI_MINI_APP_TEXT_AI_ENABLED: "true",
+      OPENAI_API_KEY: `sk-${"x".repeat(24)}`,
+    }),
+    textAi: async () => {
+      providerCalls += 1;
+      throw new Error("private provider error detail");
+    },
+  });
+  try {
+    const cookie = await ownerCookie(failingProvider);
+    const response = await failingProvider.request("/text-ai", { message: "synthetic" }, { cookie });
+    assert.equal(response.status, 503);
+    const body = await response.text();
+    assert.deepEqual(JSON.parse(body), { error: "text_ai_provider_unavailable" });
+    assert.equal(body.includes("private provider error detail"), false);
+    assert.equal(providerCalls, 1);
+  } finally {
+    await failingProvider.close();
+  }
+});
+
+test("owner text AI has a 20-per-UTC-day cap and rejects duplicate concurrent work", async () => {
+  let currentTime = NOW_SECONDS * 1000;
+  let providerCalls = 0;
+  const h = await serverHarness({
+    env: config({
+      ELI_MINI_APP_TEXT_AI_ENABLED: "true",
+      OPENAI_API_KEY: `sk-${"x".repeat(24)}`,
+    }),
+    now: () => currentTime,
+    textAi: async () => { providerCalls += 1; return "Synthetic reply."; },
+  });
+  try {
+    const cookie = await ownerCookie(h);
+    for (let index = 0; index < 20; index += 1) {
+      const response = await h.request("/text-ai", { message: "synthetic" }, { cookie });
+      assert.equal(response.status, 200);
+      currentTime += 13_000;
+    }
+    const dailyLimited = await h.request("/text-ai", { message: "synthetic" }, { cookie });
+    assert.equal(dailyLimited.status, 429);
+    assert.deepEqual(await dailyLimited.json(), { error: "text_ai_daily_limit" });
+    assert.equal(providerCalls, 20);
+  } finally {
+    await h.close();
+  }
+
+  let releaseProvider;
+  let enteredProvider;
+  const entered = new Promise((resolve) => { enteredProvider = resolve; });
+  const inFlight = new Promise((resolve) => { releaseProvider = resolve; });
+  const concurrent = await serverHarness({
+    env: config({
+      ELI_MINI_APP_TEXT_AI_ENABLED: "true",
+      OPENAI_API_KEY: `sk-${"x".repeat(24)}`,
+    }),
+    textAi: async () => {
+      enteredProvider();
+      await inFlight;
+      return "Synthetic reply.";
+    },
+  });
+  try {
+    const cookie = await ownerCookie(concurrent);
+    const first = concurrent.request("/text-ai", { message: "synthetic one" }, { cookie });
+    await entered;
+    const second = await concurrent.request("/text-ai", { message: "synthetic two" }, { cookie });
+    assert.equal(second.status, 429);
+    assert.deepEqual(await second.json(), { error: "text_ai_in_progress" });
+    releaseProvider();
+    assert.equal((await first).status, 200);
+  } finally {
+    releaseProvider();
+    await concurrent.close();
+  }
+});
+
+test("OpenAI adapter selects gpt-4o-mini with 400 tokens and never exposes provider error bodies", async () => {
+  let captured;
+  const adapter = createOpenAiTextAiAdapter(`sk-${"x".repeat(24)}`, async (url, init) => {
+    captured = { url: String(url), init, body: JSON.parse(init.body) };
+    return new Response(JSON.stringify({ choices: [{ message: { content: "Synthetic provider answer." } }] }));
+  });
+  assert.equal(await adapter({ message: "synthetic", language: "bg" }), "Synthetic provider answer.");
+  assert.equal(captured.url, "https://api.openai.com/v1/chat/completions");
+  assert.equal(captured.body.model, "gpt-4o-mini");
+  assert.equal(captured.body.max_tokens, 400);
+  assert.equal(captured.body.messages.at(-1).content, "synthetic");
+  assert.match(captured.body.messages[0].content, /no access to synchronized profile/i);
+  assert.doesNotMatch(captured.body.messages[0].content, /OWNER_MEMORY/i);
+  assert.ok(captured.init.signal);
+
+  const failing = createOpenAiTextAiAdapter(`sk-${"x".repeat(24)}`, async () =>
+    new Response("synthetic provider detail must not surface", { status: 500 }));
+  await assert.rejects(failing({ message: "synthetic", language: "en" }), /provider_unavailable/);
 });
 
 test("profile/progress GET remains unavailable even with a valid owner session", async () => {

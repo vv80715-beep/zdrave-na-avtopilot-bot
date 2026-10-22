@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MiniAppStageError, sendOwnerDemoChat, uploadOwnerDemoMedia } from "../src/miniAppSessionClient.ts";
+import {
+  getOwnerTextAiStatus,
+  MiniAppStageError,
+  sendOwnerDemoChat,
+  sendOwnerTextAi,
+  uploadOwnerDemoMedia,
+} from "../src/miniAppSessionClient.ts";
 
 const initData = "signed-data-fixture-not-a-real-credential";
 
@@ -57,4 +63,48 @@ test("empty signed initData is rejected before any request", async () => {
   let calls = 0;
   await assert.rejects(sendOwnerDemoChat("", "synthetic", "bg", async () => { calls += 1; }));
   assert.equal(calls, 0);
+});
+
+test("owner AI status check never calls the AI endpoint and distinguishes mock from live", async () => {
+  for (const mode of ["mock", "test_ai"]) {
+    const paths = [];
+    const result = await getOwnerTextAiStatus(initData, async (url) => {
+      paths.push(String(url));
+      return String(url).endsWith("/session")
+        ? new Response(JSON.stringify({ ok: true, expiresAt: "2026-10-22T00:10:00.000Z" }))
+        : new Response(JSON.stringify({ mode, ...(mode === "test_ai" ? { model: "gpt-4o-mini" } : {}) }));
+    });
+    assert.equal(result, mode);
+    assert.deepEqual(paths, ["/api/mini-app/session", "/api/mini-app/text-ai/status"]);
+    assert.equal(paths.some((path) => path.endsWith("/text-ai")), false);
+  }
+});
+
+test("live AI is invoked only by explicit send and fails without mock fallback", async () => {
+  const requests = [];
+  const result = await sendOwnerTextAi(initData, "synthetic test", "en", async (url, init) => {
+    requests.push({ url: String(url), init });
+    return String(url).endsWith("/session")
+      ? new Response(JSON.stringify({ ok: true, expiresAt: "2026-10-22T00:10:00.000Z" }))
+      : new Response(JSON.stringify({ reply: "Synthetic live test response.", mode: "test_ai", model: "gpt-4o-mini" }));
+  });
+  assert.deepEqual(result, {
+    reply: "Synthetic live test response.",
+    mode: "test_ai",
+    model: "gpt-4o-mini",
+  });
+  assert.deepEqual(requests.map(({ url }) => url), ["/api/mini-app/session", "/api/mini-app/text-ai"]);
+  assert.equal(JSON.parse(requests[1].init.body).message, "synthetic test");
+  assert.equal(requests[1].init.credentials, "same-origin");
+  assert.equal(requests[1].init.redirect, "error");
+
+  await assert.rejects(
+    () => sendOwnerTextAi(initData, "synthetic test", "bg", async (url) => {
+      if (String(url).endsWith("/session")) {
+        return new Response(JSON.stringify({ ok: true, expiresAt: "2026-10-22T00:10:00.000Z" }));
+      }
+      return new Response(JSON.stringify({ error: "text_ai_provider_unavailable" }), { status: 503 });
+    }),
+    (error) => error instanceof MiniAppStageError && error.status === 503,
+  );
 });

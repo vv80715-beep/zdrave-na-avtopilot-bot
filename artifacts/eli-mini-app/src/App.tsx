@@ -27,7 +27,12 @@ import { Route, Switch, Link, useLocation, Router as WouterRouter } from 'wouter
 import { translate, type Language, type TranslationKey } from './i18n';
 import { connectTelegramWebApp } from './telegramWebApp';
 import { useChatMedia, type ChatAttachment } from './useChatMedia';
-import { MiniAppStageError, sendOwnerDemoChat, uploadOwnerDemoMedia } from './miniAppSessionClient';
+import {
+  getOwnerTextAiStatus,
+  MiniAppStageError,
+  sendOwnerDemoChat,
+  sendOwnerTextAi,
+} from './miniAppSessionClient';
 import {
   dailyEntryToDraft,
   emptyDailyEntryDraft,
@@ -263,7 +268,7 @@ function Chat() {
   const [notice, setNotice] = useState<TranslationKey | null>(null);
   const [stageError, setStageError] = useState<TranslationKey | null>(null);
   const [sending, setSending] = useState(false);
-  const [stageConnected, setStageConnected] = useState(false);
+  const [stageMode, setStageMode] = useState<'local' | 'checking' | 'mock' | 'live' | 'unavailable'>('local');
   const [messages, setMessages] = useState<LocalChatMessage[]>([]);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const media = useChatMedia();
@@ -280,6 +285,27 @@ function Chat() {
     Boolean(telegram?.platform && signedInitData);
 
   useEffect(() => {
+    if (!canUseOwnerStage) {
+      setStageMode('local');
+      return;
+    }
+    let current = true;
+    setStageMode('checking');
+    void getOwnerTextAiStatus(signedInitData).then((mode) => {
+      if (current) {
+        setStageMode(mode === 'test_ai' ? 'live' : 'mock');
+        setStageError(null);
+      }
+    }).catch((error) => {
+      if (current) {
+        setStageMode('unavailable');
+        setStageError(stageErrorKey(error));
+      }
+    });
+    return () => { current = false; };
+  }, [canUseOwnerStage, signedInitData]);
+
+  useEffect(() => {
     if (!hasMountedConversation.current) {
       hasMountedConversation.current = true;
       return;
@@ -294,6 +320,7 @@ function Chat() {
     if (error.status === 403) return 'stageOwnerError';
     if (error.status === 429) return 'stageRateLimitError';
     if (error.status === 401 || error.code === 'telegram_auth_required') return 'stageSessionError';
+    if (error.status === 503 || error.status === 502) return 'stageAiUnavailable';
     if (error.code === 'request_timeout') return 'stageTimeoutError';
     return 'stageNetworkError';
   }
@@ -307,25 +334,19 @@ function Chat() {
     }
     const text = draft.trim();
     const attachment = media.attachment;
-    const isImage = attachment?.kind === 'image';
-    const isVoice = attachment?.kind === 'voice' ||
-      (attachment?.kind === 'file' && attachment.mimeType.startsWith('audio/'));
-    const sendMedia = Boolean(attachment && (isImage || isVoice) && canUseOwnerStage);
-    const sendText = canUseOwnerStage && Boolean(text);
+    const sendText = canUseOwnerStage && Boolean(text) && (stageMode === 'mock' || stageMode === 'live');
     setNotice(null);
     setStageError(null);
-    if (sendMedia || sendText) {
+    if (canUseOwnerStage && text && !sendText) {
+      setStageError(stageMode === 'checking' ? 'stageCheckingError' : 'stageAiUnavailable');
+      return;
+    }
+    if (sendText) {
       setSending(true);
       try {
-        const result = sendMedia && attachment
-          ? await uploadOwnerDemoMedia(
-              signedInitData,
-              isImage ? 'image' : 'voice',
-              new File([attachment.blob], attachment.name || 'attachment', { type: attachment.mimeType }),
-              language,
-              text,
-            )
-          : await sendOwnerDemoChat(signedInitData, text, language);
+        const result = stageMode === 'live'
+          ? await sendOwnerTextAi(signedInitData, text, language)
+          : { ...(await sendOwnerDemoChat(signedInitData, text, language)), mode: 'mock' as const };
         const deliveredAttachment = media.detachForMessage();
         setMessages((current) => [
           ...current,
@@ -335,12 +356,13 @@ function Chat() {
             role: 'assistant',
             text: result.reply,
             attachment: null,
-            mock: true,
+            mock: result.mode === 'mock',
           },
         ]);
-        setStageConnected(true);
+        setStageMode(result.mode === 'test_ai' ? 'live' : 'mock');
         setDraft('');
         setAttachmentMenuOpen(false);
+        if (attachment) setNotice('attachmentLocalNotice');
         media.clearError();
       } catch (error) {
         setStageError(stageErrorKey(error));
@@ -356,8 +378,7 @@ function Chat() {
       text,
       attachment: localAttachment,
     }]);
-    if (attachment && !canUseOwnerStage && !text) setNotice('attachmentLocalNotice');
-    else if (attachment && !sendMedia && canUseOwnerStage) setNotice('unsupportedUploadLocalNotice');
+    if (attachment) setNotice('attachmentLocalNotice');
     else setNotice('localDraftNotice');
     setDraft('');
     setAttachmentMenuOpen(false);
@@ -374,7 +395,12 @@ function Chat() {
         <section className="panel chat-panel animate-in delay-1" aria-label={t('chatAria')}>
           <div className="chat-top">
             <div className="coach-ident"><EliAvatar className="coach-avatar" alt={t('avatarChatAlt')} testId="image-eli-chat" /><span><strong>{t('eliName')}</strong><small>{t('coachSubtitle')}</small></span></div>
-            <span className="local-chip"><i className="prototype-dot" /> {t(stageConnected ? 'ownerStageMock' : 'localDemo')}</span>
+            <span className="local-chip"><i className="prototype-dot" /> {t(
+              stageMode === 'live' ? 'ownerAiTest' :
+                stageMode === 'mock' ? 'ownerStageMock' :
+                  stageMode === 'checking' ? 'stageChecking' :
+                    stageMode === 'unavailable' ? 'stageUnavailableShort' : 'localDemo'
+            )}</span>
           </div>
           <div className="chat-mode-actions" role="group" aria-label={t('modeActionsAria')}>
             <button type="button" aria-label={t('actionText')} title={t('actionText')} data-testid="button-chat-mode-text" onClick={() => setNotice('modeTextNotice')}>
@@ -542,7 +568,10 @@ function Chat() {
               {sending ? <Clock3 size={16} /> : <Send size={16} />}
             </button>
           </form>
-          <p className="composer-disclosure">{t(canUseOwnerStage ? 'stagingComposerDisclosure' : 'composerDisclosure')}</p>
+          <p className="composer-disclosure">{t(
+            stageMode === 'live' ? 'stagingLiveDisclosure' :
+              canUseOwnerStage ? 'stagingComposerDisclosure' : 'composerDisclosure'
+          )}</p>
         </section>
       </div>
     </main>

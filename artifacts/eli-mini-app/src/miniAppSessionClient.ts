@@ -1,4 +1,10 @@
 export type MiniAppLanguage = "bg" | "en";
+export type OwnerTextAiMode = "mock" | "test_ai";
+export type OwnerTextAiResult = {
+  reply: string;
+  mode: "test_ai";
+  model: "gpt-4o-mini";
+};
 export type OwnerDemoMediaResult = {
   reply: string;
   transcript?: string;
@@ -101,6 +107,47 @@ export async function sendOwnerDemoChat(
     throw new MiniAppStageError("invalid_response", response.status);
   }
   return { reply: body.reply, demo: true };
+}
+
+export async function getOwnerTextAiStatus(
+  initData: string,
+  fetchFn: FetchLike = fetch,
+): Promise<OwnerTextAiMode> {
+  await ensureOwnerSession(initData, fetchFn);
+  const response = await sameOriginRequest("/api/mini-app/text-ai/status", {
+    method: "GET",
+    headers: { Accept: "application/json" },
+  }, fetchFn);
+  const body = await responseBody(response);
+  if (!response.ok) throw new MiniAppStageError(safeErrorCode(body), response.status);
+  if (body.mode !== "mock" && body.mode !== "test_ai") {
+    throw new MiniAppStageError("invalid_response", response.status);
+  }
+  return body.mode;
+}
+
+export async function sendOwnerTextAi(
+  initData: string,
+  message: string,
+  language: MiniAppLanguage,
+  fetchFn: FetchLike = fetch,
+): Promise<OwnerTextAiResult> {
+  await ensureOwnerSession(initData, fetchFn);
+  const response = await sameOriginRequest("/api/mini-app/text-ai", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ message, language }),
+  }, fetchFn, 28_000);
+  const body = await responseBody(response);
+  if (!response.ok) throw new MiniAppStageError(safeErrorCode(body), response.status);
+  if (typeof body.reply !== "string" || body.mode !== "test_ai" || body.model !== "gpt-4o-mini") {
+    throw new MiniAppStageError("invalid_response", response.status);
+  }
+  return {
+    reply: body.reply,
+    mode: "test_ai",
+    model: "gpt-4o-mini",
+  };
 }
 
 export async function uploadOwnerDemoMedia(
