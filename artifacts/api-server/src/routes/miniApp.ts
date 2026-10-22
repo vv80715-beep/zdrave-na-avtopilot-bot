@@ -2,6 +2,10 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import express, { Router, type Application, type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
 import { validateTelegramInitData } from "../lib/telegramInitData.mjs";
+import {
+  registerMiniAppMediaRoutes,
+  type MiniAppMediaRouteOptions,
+} from "./miniAppMedia";
 
 const COOKIE = "eli_mini_owner_session";
 const SESSION_TTL_SECONDS = 600;
@@ -73,6 +77,7 @@ export function createMiniAppRouter(
   options: {
     now?: () => number;
     validate?: (raw: string, token: string, options: { nowSeconds: number; maxAgeSeconds: number }) => VerifiedInitData;
+    media?: MiniAppMediaRouteOptions;
   } = {},
 ) {
   if (!miniAppConfigEnabled(env)) throw new Error("Mini App staging route is not enabled.");
@@ -82,12 +87,17 @@ export function createMiniAppRouter(
   const sessionSecret = env.SESSION_SECRET!;
   const now = options.now || Date.now;
   const validate = options.validate || validateTelegramInitData;
+  const mediaEnabled = env.ELI_MINI_APP_MEDIA_AI_ENABLED === "true";
   const usedInitData = new Map<string, number>();
   const router = Router();
 
   router.use((req, res, next) => {
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Content-Type-Options", "nosniff");
+    if (req.path.startsWith("/media/") && !mediaEnabled) {
+      sendError(res, 404, "not_found");
+      return;
+    }
     if (req.get("Origin") !== origin) {
       sendError(res, 403, "origin_forbidden");
       return;
@@ -102,7 +112,7 @@ export function createMiniAppRouter(
     maxAge: 300,
   }));
   router.use((req, res, next) => {
-    if (req.method === "POST" && !req.is("application/json")) {
+    if (req.method === "POST" && !req.path.startsWith("/media/") && !req.is("application/json")) {
       sendError(res, 415, "json_required");
       return;
     }
@@ -183,6 +193,8 @@ export function createMiniAppRouter(
     }
     next();
   };
+
+  registerMiniAppMediaRoutes(router, requireOwnerSession, mediaEnabled, env, options.media);
 
   router.post("/demo-chat", requireOwnerSession, (req, res) => {
     const body = req.body;

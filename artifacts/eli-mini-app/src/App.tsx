@@ -6,18 +6,25 @@ import {
   Check,
   CircleHelp,
   Clock3,
+  FileText,
   HeartPulse,
+  ImagePlus,
   Leaf,
+  Mic,
   MessageCircle,
   Moon,
+  Paperclip,
   Send,
   Sparkles,
+  Square,
   Sun,
   Video,
+  X,
 } from 'lucide-react';
 import { Route, Switch, Link, useLocation, Router as WouterRouter } from 'wouter';
 import { translate, type Language, type TranslationKey } from './i18n';
 import { connectTelegramWebApp } from './telegramWebApp';
+import { useChatMedia, type ChatAttachment } from './useChatMedia';
 
 type LanguageContextValue = {
   language: Language;
@@ -204,11 +211,28 @@ function Home() {
   );
 }
 
+type LocalChatMessage = {
+  id: number;
+  text: string;
+  attachment: ChatAttachment | null;
+};
+
+function formatFileSize(bytes: number) {
+  return bytes < 1024 * 1024
+    ? `${Math.max(1, Math.round(bytes / 1024))} KB`
+    : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function Chat() {
   const { t } = useLanguage();
   const [draft, setDraft] = useState('');
   const [notice, setNotice] = useState<TranslationKey | null>(null);
-  const [localMessage, setLocalMessage] = useState('');
+  const [messages, setMessages] = useState<LocalChatMessage[]>([]);
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const media = useChatMedia();
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const nextMessageId = useRef(1);
   const conversationRef = useRef<HTMLDivElement>(null);
   const hasMountedConversation = useRef(false);
 
@@ -219,17 +243,24 @@ function Chat() {
     }
     const conversation = conversationRef.current;
     if (conversation) conversation.scrollTo({ top: conversation.scrollHeight, behavior: 'smooth' });
-  }, [localMessage, notice]);
+  }, [messages, notice, media.attachment]);
 
   function submitDemoMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!draft.trim()) {
+    if (!draft.trim() && !media.attachment) {
       setNotice('emptyDraftNotice');
       return;
     }
-    setLocalMessage(draft.trim());
-    setNotice('localDraftNotice');
+    const attachment = media.detachForMessage();
+    setMessages((current) => [...current, {
+      id: nextMessageId.current++,
+      text: draft.trim(),
+      attachment,
+    }]);
+    setNotice(attachment ? 'attachmentLocalNotice' : 'localDraftNotice');
     setDraft('');
+    setAttachmentMenuOpen(false);
+    media.clearError();
   }
 
   return (
@@ -275,12 +306,129 @@ function Chat() {
                 <div className="prepared-box"><strong>{t('staticExampleStrong')}</strong>{t('staticExampleBody')}</div>
               </div>
             </div>
-            {localMessage && <div className="message user"><div className="message-bubble">{localMessage}</div><span className="message-time">{t('localMessageTime')}</span></div>}
+            {messages.map((message) => (
+              <div className="message user" key={message.id} data-testid="message-local-attachment">
+                <div className="message-bubble attachment-message">
+                  {message.text && <p className="attachment-caption">{message.text}</p>}
+                  {message.attachment?.kind === 'image' && (
+                    <img className="sent-image-preview" src={message.attachment.url} alt={t('imageAttachment')} />
+                  )}
+                  {message.attachment?.kind === 'voice' && (
+                    <div className="sent-file-card">
+                      <Mic size={15} /><span>{t('voiceAttachment')} · {formatFileSize(message.attachment.size)}</span>
+                      <audio controls preload="metadata" src={message.attachment.url} aria-label={t('localAudioPlayback')} />
+                    </div>
+                  )}
+                  {message.attachment?.kind === 'file' && (
+                    <div className="sent-file-card">
+                      <FileText size={16} />
+                      <span className="sent-file-name">{message.attachment.name}</span>
+                      <small>{formatFileSize(message.attachment.size)}</small>
+                    </div>
+                  )}
+                  {message.attachment && !message.attachment.supported && (
+                    <p className="unsupported-file-note">{t('unsupportedFileNotice')}</p>
+                  )}
+                </div>
+                <span className="message-time">{t('localMessageTime')}</span>
+              </div>
+            ))}
             {notice && <div className="local-notice" role="status" data-testid="status-local-message">{t(notice)}</div>}
           </div>
+          {media.attachment && (
+            <div className="attachment-draft" data-testid="attachment-draft">
+              {media.attachment.kind === 'image'
+                ? <img src={media.attachment.url} alt={t('imageAttachment')} />
+                : media.attachment.kind === 'voice'
+                  ? <Mic className="attachment-file-icon" size={17} />
+                  : <FileText className="attachment-file-icon" size={17} />}
+              <div className="attachment-draft-info">
+                <strong>{media.attachment.kind === 'voice' ? t('voiceAttachment') : media.attachment.name}</strong>
+                <span>{formatFileSize(media.attachment.size)}</span>
+                {media.attachment.kind === 'file' && !media.attachment.supported && (
+                  <small>{t('unsupportedFileNotice')}</small>
+                )}
+              </div>
+              {media.attachment.kind === 'voice' && (
+                <audio controls preload="metadata" src={media.attachment.url} aria-label={t('localAudioPlayback')} />
+              )}
+              <button type="button" className="icon-button attachment-remove" aria-label={t('removeAttachment')} onClick={media.discardAttachment}>
+                <X size={15} />
+              </button>
+            </div>
+          )}
+          {media.recording === 'recording' && (
+            <div className="recording-status" role="status" aria-live="polite">
+              <span className="recording-dot" /> {t('recordingIndicator')} · {String(Math.floor(media.elapsedSeconds / 60)).padStart(2, '0')}:{String(media.elapsedSeconds % 60).padStart(2, '0')}
+              <button type="button" className="icon-button" aria-label={t('stopRecording')} onClick={() => media.stopRecording()}>
+                <Square size={14} />
+              </button>
+              <button type="button" className="icon-button" aria-label={t('cancelRecording')} onClick={() => media.stopRecording(true)}>
+                <X size={15} />
+              </button>
+            </div>
+          )}
+          {media.errorKey && <p className="media-error" role="alert">{t(media.errorKey)}</p>}
           <form className="composer" onSubmit={submitDemoMessage}>
-            <input aria-label={t('inputAria')} placeholder={t('inputPlaceholder')} enterKeyHint="send" autoComplete="off" value={draft} onChange={(event) => setDraft(event.target.value)} data-testid="input-demo-message" />
-            <button className="send-button" type="submit" aria-label={t('sendAria')} data-testid="button-demo-send"><Send size={16} /></button>
+            <div className="attachment-menu-wrap">
+              <button
+                type="button"
+                className="icon-button composer-icon-button"
+                aria-label={t('attachButton')}
+                aria-haspopup="menu"
+                aria-expanded={attachmentMenuOpen}
+                onClick={() => setAttachmentMenuOpen((open) => !open)}
+              >
+                <Paperclip size={18} />
+              </button>
+              {attachmentMenuOpen && (
+                <div className="attachment-menu" role="menu" aria-label={t('attachmentMenuAria')}>
+                  <button type="button" role="menuitem" onClick={() => { setAttachmentMenuOpen(false); photoInputRef.current?.click(); }}>
+                    <ImagePlus size={16} /> {t('photoAction')}
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => { setAttachmentMenuOpen(false); fileInputRef.current?.click(); }}>
+                    <FileText size={16} /> {t('fileAction')}
+                  </button>
+                </div>
+              )}
+            </div>
+            <input
+              ref={photoInputRef}
+              className="visually-hidden-file-input"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              capture="environment"
+              aria-label={t('photoAction')}
+              onChange={(event) => { media.selectFile(event.currentTarget.files?.[0], 'image'); event.currentTarget.value = ''; }}
+            />
+            <input
+              ref={fileInputRef}
+              className="visually-hidden-file-input"
+              type="file"
+              aria-label={t('fileAction')}
+              onChange={(event) => { media.selectFile(event.currentTarget.files?.[0], 'file'); event.currentTarget.value = ''; }}
+            />
+            <button
+              type="button"
+              className={`icon-button composer-icon-button${media.recording === 'recording' ? ' is-recording' : ''}`}
+              aria-label={media.recording === 'recording' ? t('stopRecording') : t('startRecording')}
+              disabled={media.recording === 'processing'}
+              onClick={() => media.recording === 'recording' ? media.stopRecording() : void media.startRecording()}
+            >
+              {media.recording === 'recording' ? <Square size={15} /> : <Mic size={18} />}
+            </button>
+            <input
+              aria-label={t('inputAria')}
+              placeholder={t('inputPlaceholder')}
+              enterKeyHint="send"
+              autoComplete="off"
+              value={draft}
+              onChange={(event) => { setDraft(event.target.value); media.clearError(); }}
+              data-testid="input-demo-message"
+            />
+            <button className="send-button" type="submit" aria-label={t('sendAria')} data-testid="button-demo-send" disabled={!draft.trim() && !media.attachment}>
+              <Send size={16} />
+            </button>
           </form>
           <p className="composer-disclosure">{t('composerDisclosure')}</p>
         </section>

@@ -44,3 +44,46 @@ export interface MiniAppDemoChatResponse {
   demo: true;
 }
 
+export type MiniAppImageUploadLanguage = typeof MiniAppImageUploadLanguage[keyof typeof MiniAppImageUploadLanguage];
+
+
+export const MiniAppImageUploadLanguage = {
+  bg: 'bg',
+  en: 'en',
+} as const;
+
+export interface MiniAppImageUpload {
+  /** One JPEG, PNG, or WebP image up to 8 MiB */
+  file: Blob;
+  language?: MiniAppImageUploadLanguage;
+  /** @maxLength 1200 */
+  caption?: string;
+}
+
+export type MiniAppVoiceUploadLanguage = typeof MiniAppVoiceUploadLanguage[keyof typeof MiniAppVoiceUploadLanguage];
+
+
+export const MiniAppVoiceUploadLanguage = {
+  bg: 'bg',
+  en: 'en',
+} as const;
+
+export interface MiniAppVoiceUpload {
+  /** One supported audio recording up to 15 MiB and 90 seconds */
+  file: Blob;
+  language?: MiniAppVoiceUploadLanguage;
+}
+
+export interface MiniAppImageResult {
+  reply: string;
+  mediaType: 'image';
+  staged: true;
+}
+
+export interface MiniAppVoiceResult {
+  transcript: string;
+  reply: string;
+  mediaType: 'voice';
+  staged: true;
+}
+

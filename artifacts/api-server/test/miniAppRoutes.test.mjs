@@ -43,9 +43,9 @@ function signedInitData({ userId = OWNER_ID, authDate = NOW_SECONDS } = {}) {
   return fields.toString();
 }
 
-async function serverHarness({ env = config(), now = () => NOW_SECONDS * 1000 } = {}) {
+async function serverHarness({ env = config(), now = () => NOW_SECONDS * 1000, media } = {}) {
   const app = express();
-  const mounted = mountMiniAppRoutes(app, env, { now });
+  const mounted = mountMiniAppRoutes(app, env, { now, media });
   app.use((_req, res) => res.status(404).json({ error: "not_found" }));
   const server = app.listen(0, "127.0.0.1");
   await new Promise((resolve, reject) => {
@@ -59,18 +59,31 @@ async function serverHarness({ env = config(), now = () => NOW_SECONDS * 1000 } 
     async request(path, body, { origin = ORIGIN, cookie, method = "POST" } = {}) {
       const headers = {};
       if (origin !== null) headers.Origin = origin;
-      if (body !== undefined) headers["Content-Type"] = "application/json";
+      if (body !== undefined && !(body instanceof FormData)) headers["Content-Type"] = "application/json";
       if (cookie) headers.Cookie = cookie;
       return fetch(`${baseUrl}${path}`, {
         method,
         headers,
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        ...(body === undefined ? {} : { body: body instanceof FormData ? body : JSON.stringify(body) }),
       });
     },
     async close() {
       await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     },
   };
+}
+
+async function ownerCookie(h) {
+  const response = await h.request("/session", { initData: signedInitData() });
+  assert.equal(response.status, 200);
+  return response.headers.get("set-cookie").split(";")[0];
+}
+
+function imageForm(bytes, { mime = "image/jpeg", filename = "photo.jpg" } = {}) {
+  const form = new FormData();
+  form.set("file", new Blob([bytes], { type: mime }), filename);
+  form.set("language", "bg");
+  return form;
 }
 
 test("staging API is not mounted when the flag, stage, owner, origin, or secrets are missing", async () => {
@@ -202,6 +215,115 @@ test("session expiry is enforced server-side and demo input is never returned or
     const demo = await h.request("/demo-chat", { message: "do not retain this" }, { cookie });
     assert.equal(demo.status, 401);
     assert.equal((await demo.text()).includes("do not retain this"), false);
+  } finally {
+    await h.close();
+  }
+});
+
+test("media routes return 404 without the separate default-off flag and never call a processor", async () => {
+  let providerCalls = 0;
+  const h = await serverHarness({
+    media: { processor: {
+      analyzeImage: async () => { providerCalls += 1; return { reply: "never" }; },
+      transcribeAndAnswer: async () => { providerCalls += 1; return { transcript: "never", reply: "never" }; },
+    } },
+  });
+  try {
+    const response = await h.request("/media/image", imageForm(Buffer.from([0xff, 0xd8, 0xff])));
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { error: "not_found" });
+    assert.equal(providerCalls, 0);
+  } finally {
+    await h.close();
+  }
+});
+
+test("media endpoint requires the same owner session and verifies image signature before mock processing", async () => {
+  let providerCalls = 0;
+  const h = await serverHarness({
+    env: config({ ELI_MINI_APP_MEDIA_AI_ENABLED: "true" }),
+    media: {
+      processor: {
+        analyzeImage: async () => { providerCalls += 1; return { reply: "mock description" }; },
+        transcribeAndAnswer: async () => { providerCalls += 1; return { transcript: "mock", reply: "mock" }; },
+      },
+    },
+  });
+  try {
+    const unauthenticated = await h.request("/media/image", imageForm(Buffer.from([0xff, 0xd8, 0xff])));
+    assert.equal(unauthenticated.status, 401);
+    assert.equal(providerCalls, 0);
+
+    const cookie = await ownerCookie(h);
+    const spoofed = await h.request("/media/image", imageForm(Buffer.from("not really jpeg")), { cookie });
+    assert.equal(spoofed.status, 415);
+    assert.equal(providerCalls, 0);
+
+    const valid = await h.request(
+      "/media/image",
+      imageForm(Buffer.from([0xff, 0xd8, 0xff, 0xd9]), { filename: "../../private.jpg" }),
+      { cookie },
+    );
+    assert.equal(valid.status, 200);
+    assert.deepEqual(await valid.json(), { reply: "mock description", mediaType: "image", staged: true });
+    assert.equal(providerCalls, 1);
+  } finally {
+    await h.close();
+  }
+});
+
+test("media upload rejects image size overflow before mock processing", async () => {
+  let providerCalls = 0;
+  const h = await serverHarness({
+    env: config({ ELI_MINI_APP_MEDIA_AI_ENABLED: "true" }),
+    media: {
+      processor: {
+        analyzeImage: async () => { providerCalls += 1; return { reply: "never" }; },
+        transcribeAndAnswer: async () => { providerCalls += 1; return { transcript: "never", reply: "never" }; },
+      },
+    },
+  });
+  try {
+    const cookie = await ownerCookie(h);
+    const oversized = imageForm(Buffer.concat([
+      Buffer.from([0xff, 0xd8, 0xff]),
+      Buffer.alloc(8 * 1024 * 1024),
+    ]));
+    const response = await h.request("/media/image", oversized, { cookie });
+    assert.equal(response.status, 413);
+    assert.equal(providerCalls, 0);
+  } finally {
+    await h.close();
+  }
+});
+
+test("voice upload enforces magic bytes and the 90 second limit; responses stay text-only", async () => {
+  let providerCalls = 0;
+  const h = await serverHarness({
+    env: config({ ELI_MINI_APP_MEDIA_AI_ENABLED: "true" }),
+    media: {
+      processor: {
+        analyzeImage: async () => { providerCalls += 1; return { reply: "never" }; },
+        transcribeAndAnswer: async () => { providerCalls += 1; return { transcript: "Здравей, Ели.", reply: "Здравей!" }; },
+      },
+      inspectAudioDuration: async () => 91,
+    },
+  });
+  try {
+    const cookie = await ownerCookie(h);
+    const form = new FormData();
+    form.set("file", new Blob([Buffer.from("OggS-not-a-real-audio-file")], { type: "audio/ogg" }), "ignored.ogg");
+    form.set("language", "bg");
+    const tooLong = await h.request("/media/voice", form, { cookie });
+    assert.equal(tooLong.status, 413);
+    assert.deepEqual(await tooLong.json(), { error: "audio_too_long" });
+    assert.equal(providerCalls, 0);
+
+    const invalid = new FormData();
+    invalid.set("file", new Blob([Buffer.from("not ogg")], { type: "audio/ogg" }), "voice.ogg");
+    const spoofed = await h.request("/media/voice", invalid, { cookie });
+    assert.equal(spoofed.status, 415);
+    assert.equal(providerCalls, 0);
   } finally {
     await h.close();
   }

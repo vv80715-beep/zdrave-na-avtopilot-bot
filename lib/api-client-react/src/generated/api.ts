@@ -23,8 +23,12 @@ import type {
   HealthStatus,
   MiniAppDemoChatInput,
   MiniAppDemoChatResponse,
+  MiniAppImageResult,
+  MiniAppImageUpload,
   MiniAppSession,
-  MiniAppSessionInput
+  MiniAppSessionInput,
+  MiniAppVoiceResult,
+  MiniAppVoiceUpload
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -270,5 +274,160 @@ export const usePostMiniAppDemoChat = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getPostMiniAppDemoChatMutationOptions(options));
+    }
+
+export const getPostMiniAppOwnerImageUrl = () => {
+
+
+
+
+  return `/api/mini-app/media/image`
+}
+
+/**
+ * Disabled by default. Requires the existing owner session and exact configured origin. Uses OpenAI only when the separate media AI flag is explicitly enabled.
+ * @summary Analyze one image in the explicitly enabled owner-only development staging route
+ */
+export const postMiniAppOwnerImage = async (miniAppImageUpload: MiniAppImageUpload, options?: RequestInit): Promise<MiniAppImageResult> => {
+    const formData = new FormData();
+formData.append(`file`, miniAppImageUpload.file);
+if(miniAppImageUpload.language !== undefined) {
+ formData.append(`language`, miniAppImageUpload.language);
+ }
+if(miniAppImageUpload.caption !== undefined) {
+ formData.append(`caption`, miniAppImageUpload.caption);
+ }
+
+  return customFetch<MiniAppImageResult>(getPostMiniAppOwnerImageUrl(),
+  {
+    ...options,
+    method: 'POST'
+    ,
+    body: formData
+  }
+);}
+
+
+
+
+export const getPostMiniAppOwnerImageMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postMiniAppOwnerImage>>, TError,{data: BodyType<MiniAppImageUpload>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof postMiniAppOwnerImage>>, TError,{data: BodyType<MiniAppImageUpload>}, TContext> => {
+
+const mutationKey = ['postMiniAppOwnerImage'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof postMiniAppOwnerImage>>, {data: BodyType<MiniAppImageUpload>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  postMiniAppOwnerImage(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PostMiniAppOwnerImageMutationResult = NonNullable<Awaited<ReturnType<typeof postMiniAppOwnerImage>>>
+    export type PostMiniAppOwnerImageMutationBody = BodyType<MiniAppImageUpload>
+    export type PostMiniAppOwnerImageMutationError = ErrorType<void>
+
+    /**
+ * @summary Analyze one image in the explicitly enabled owner-only development staging route
+ */
+export const usePostMiniAppOwnerImage = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postMiniAppOwnerImage>>, TError,{data: BodyType<MiniAppImageUpload>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof postMiniAppOwnerImage>>,
+        TError,
+        {data: BodyType<MiniAppImageUpload>},
+        TContext
+      > => {
+      return useMutation(getPostMiniAppOwnerImageMutationOptions(options));
+    }
+
+export const getPostMiniAppOwnerVoiceUrl = () => {
+
+
+
+
+  return `/api/mini-app/media/voice`
+}
+
+/**
+ * Disabled by default. Requires the existing owner session and exact configured origin. No TTS or avatar output is used.
+ * @summary Transcribe one voice recording and return a text-only staging response
+ */
+export const postMiniAppOwnerVoice = async (miniAppVoiceUpload: MiniAppVoiceUpload, options?: RequestInit): Promise<MiniAppVoiceResult> => {
+    const formData = new FormData();
+formData.append(`file`, miniAppVoiceUpload.file);
+if(miniAppVoiceUpload.language !== undefined) {
+ formData.append(`language`, miniAppVoiceUpload.language);
+ }
+
+  return customFetch<MiniAppVoiceResult>(getPostMiniAppOwnerVoiceUrl(),
+  {
+    ...options,
+    method: 'POST'
+    ,
+    body: formData
+  }
+);}
+
+
+
+
+export const getPostMiniAppOwnerVoiceMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postMiniAppOwnerVoice>>, TError,{data: BodyType<MiniAppVoiceUpload>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof postMiniAppOwnerVoice>>, TError,{data: BodyType<MiniAppVoiceUpload>}, TContext> => {
+
+const mutationKey = ['postMiniAppOwnerVoice'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof postMiniAppOwnerVoice>>, {data: BodyType<MiniAppVoiceUpload>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  postMiniAppOwnerVoice(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PostMiniAppOwnerVoiceMutationResult = NonNullable<Awaited<ReturnType<typeof postMiniAppOwnerVoice>>>
+    export type PostMiniAppOwnerVoiceMutationBody = BodyType<MiniAppVoiceUpload>
+    export type PostMiniAppOwnerVoiceMutationError = ErrorType<void>
+
+    /**
+ * @summary Transcribe one voice recording and return a text-only staging response
+ */
+export const usePostMiniAppOwnerVoice = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postMiniAppOwnerVoice>>, TError,{data: BodyType<MiniAppVoiceUpload>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof postMiniAppOwnerVoice>>,
+        TError,
+        {data: BodyType<MiniAppVoiceUpload>},
+        TContext
+      > => {
+      return useMutation(getPostMiniAppOwnerVoiceMutationOptions(options));
     }
 

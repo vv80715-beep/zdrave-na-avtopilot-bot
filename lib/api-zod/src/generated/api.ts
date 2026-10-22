@@ -52,3 +52,41 @@ export const PostMiniAppDemoChatResponse = zod.object({
 })
 
 
+/**
+ * Disabled by default. Requires the existing owner session and exact configured origin. Uses OpenAI only when the separate media AI flag is explicitly enabled.
+ * @summary Analyze one image in the explicitly enabled owner-only development staging route
+ */
+export const postMiniAppOwnerImageBodyCaptionMax = 1200;
+
+
+
+export const PostMiniAppOwnerImageBody = zod.object({
+  "file": zod.instanceof(File).describe('One JPEG, PNG, or WebP image up to 8 MiB'),
+  "language": zod.enum(['bg', 'en']).optional(),
+  "caption": zod.string().max(postMiniAppOwnerImageBodyCaptionMax).optional()
+})
+
+export const PostMiniAppOwnerImageResponse = zod.object({
+  "reply": zod.string(),
+  "mediaType": zod.literal("image"),
+  "staged": zod.boolean()
+})
+
+
+/**
+ * Disabled by default. Requires the existing owner session and exact configured origin. No TTS or avatar output is used.
+ * @summary Transcribe one voice recording and return a text-only staging response
+ */
+export const PostMiniAppOwnerVoiceBody = zod.object({
+  "file": zod.instanceof(File).describe('One supported audio recording up to 15 MiB and 90 seconds'),
+  "language": zod.enum(['bg', 'en']).optional()
+})
+
+export const PostMiniAppOwnerVoiceResponse = zod.object({
+  "transcript": zod.string(),
+  "reply": zod.string(),
+  "mediaType": zod.literal("voice"),
+  "staged": zod.boolean()
+})
+
+

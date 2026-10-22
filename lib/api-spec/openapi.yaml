@@ -78,6 +78,84 @@ paths:
           description: Valid owner session required
         "403":
           description: Request is not from the configured origin
+  /mini-app/media/image:
+    post:
+      operationId: postMiniAppOwnerImage
+      tags: [mini-app]
+      summary: Analyze one image in the explicitly enabled owner-only development staging route
+      description: Disabled by default. Requires the existing owner session and exact configured origin. Uses OpenAI only when the separate media AI flag is explicitly enabled.
+      security:
+        - MiniAppSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/MiniAppImageUpload"
+      responses:
+        "200":
+          description: Staging-only image analysis result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniAppImageResult"
+        "400":
+          description: Invalid multipart fields
+        "401":
+          description: Valid owner session required
+        "403":
+          description: Request is not from the configured origin
+        "404":
+          description: Media AI feature is disabled
+        "413":
+          description: Image exceeds the upload limit
+        "415":
+          description: Unsupported or invalid image type
+        "429":
+          description: Staging rate or concurrency limit reached
+        "502":
+          description: Media processing failed
+        "503":
+          description: OpenAI is not configured
+  /mini-app/media/voice:
+    post:
+      operationId: postMiniAppOwnerVoice
+      tags: [mini-app]
+      summary: Transcribe one voice recording and return a text-only staging response
+      description: Disabled by default. Requires the existing owner session and exact configured origin. No TTS or avatar output is used.
+      security:
+        - MiniAppSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/MiniAppVoiceUpload"
+      responses:
+        "200":
+          description: Staging-only transcript and text reply
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniAppVoiceResult"
+        "400":
+          description: Invalid multipart fields
+        "401":
+          description: Valid owner session required
+        "403":
+          description: Request is not from the configured origin
+        "404":
+          description: Media AI feature is disabled
+        "413":
+          description: Audio exceeds the upload or duration limit
+        "415":
+          description: Unsupported or invalid audio type
+        "429":
+          description: Staging rate or concurrency limit reached
+        "502":
+          description: Media processing failed
+        "503":
+          description: OpenAI is not configured
 components:
   securitySchemes:
     MiniAppSessionCookie:
@@ -132,4 +210,55 @@ components:
           type: boolean
           const: true
       required: [reply, demo]
+    MiniAppImageUpload:
+      type: object
+      properties:
+        file:
+          type: string
+          format: binary
+          description: One JPEG, PNG, or WebP image up to 8 MiB
+        language:
+          type: string
+          enum: [bg, en]
+        caption:
+          type: string
+          maxLength: 1200
+      required: [file]
+    MiniAppVoiceUpload:
+      type: object
+      properties:
+        file:
+          type: string
+          format: binary
+          description: One supported audio recording up to 15 MiB and 90 seconds
+        language:
+          type: string
+          enum: [bg, en]
+      required: [file]
+    MiniAppImageResult:
+      type: object
+      properties:
+        reply:
+          type: string
+        mediaType:
+          type: string
+          const: image
+        staged:
+          type: boolean
+          const: true
+      required: [reply, mediaType, staged]
+    MiniAppVoiceResult:
+      type: object
+      properties:
+        transcript:
+          type: string
+        reply:
+          type: string
+        mediaType:
+          type: string
+          const: voice
+        staged:
+          type: boolean
+          const: true
+      required: [transcript, reply, mediaType, staged]
 
