@@ -4,15 +4,12 @@ import {
   ArrowRight,
   AudioLines,
   Check,
-  ChevronDown,
-  ChevronRight,
   CircleHelp,
   Clock3,
   HeartPulse,
   Leaf,
   MessageCircle,
   Moon,
-  NotebookTabs,
   Send,
   Sparkles,
   Sun,
@@ -207,33 +204,11 @@ function Home() {
   );
 }
 
-const preparedExamples = [
-  {
-    titleKey: 'exampleBreathTitle',
-    promptKey: 'exampleBreathPrompt',
-    textKey: 'exampleBreathText',
-  },
-  {
-    titleKey: 'exampleMovementTitle',
-    promptKey: 'exampleMovementPrompt',
-    textKey: 'exampleMovementText',
-  },
-  {
-    titleKey: 'exampleEveningTitle',
-    promptKey: 'exampleEveningPrompt',
-    textKey: 'exampleEveningText',
-  },
-] as const;
-
 function Chat() {
   const { t } = useLanguage();
   const [draft, setDraft] = useState('');
   const [notice, setNotice] = useState<TranslationKey | null>(null);
-  const [activeExample, setActiveExample] = useState<number | null>(null);
-  const [toolsOpen, setToolsOpen] = useState(false);
-  const [scenariosOpen, setScenariosOpen] = useState(false);
   const [localMessage, setLocalMessage] = useState('');
-  const [quickAction, setQuickAction] = useState<'plan' | 'tip' | 'report' | null>(null);
   const conversationRef = useRef<HTMLDivElement>(null);
   const hasMountedConversation = useRef(false);
 
@@ -244,13 +219,7 @@ function Chat() {
     }
     const conversation = conversationRef.current;
     if (conversation) conversation.scrollTo({ top: conversation.scrollHeight, behavior: 'smooth' });
-  }, [activeExample, quickAction, localMessage, notice]);
-
-  const quickContent = {
-    plan: { titleKey: 'quickPlanTitle', textKey: 'quickPlanText' },
-    tip: { titleKey: 'quickTipTitle', textKey: 'quickTipText' },
-    report: { titleKey: 'quickReportTitle', textKey: 'quickReportText' },
-  } as const;
+  }, [localMessage, notice]);
 
   function submitDemoMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -276,39 +245,17 @@ function Chat() {
             <span className="local-chip"><i className="prototype-dot" /> {t('localDemo')}</span>
           </div>
           <div className="chat-mode-actions" role="group" aria-label={t('modeActionsAria')}>
-            <button type="button" data-testid="button-chat-mode-text" onClick={() => setNotice('modeTextNotice')}>
+            <button type="button" aria-label={t('actionText')} title={t('actionText')} data-testid="button-chat-mode-text" onClick={() => setNotice('modeTextNotice')}>
               <MessageCircle size={15} /><span>{t('actionText')}</span>
             </button>
-            <button type="button" data-testid="button-chat-mode-voice" onClick={() => setNotice('modeVoiceNotice')}>
+            <button type="button" aria-label={t('actionVoice')} title={t('actionVoice')} data-testid="button-chat-mode-voice" onClick={() => setNotice('modeVoiceNotice')}>
               <AudioLines size={15} /><span>{t('actionVoice')}</span>
             </button>
-            <button type="button" data-testid="button-chat-mode-avatar" onClick={() => setNotice('modeAvatarNotice')}>
+            <button type="button" aria-label={t('actionAvatar')} title={t('actionAvatar')} data-testid="button-chat-mode-avatar" onClick={() => setNotice('modeAvatarNotice')}>
               <Video size={15} /><span>{t('actionAvatar')}</span>
             </button>
           </div>
           <p className="mode-disclosure">{t('modeDemoDisclosure')}</p>
-          <button className="chat-tools-toggle" type="button" aria-expanded={toolsOpen} aria-controls="chat-tools" onClick={() => setToolsOpen((open) => !open)}>
-            <span>{t('chatTools')}</span><ChevronDown size={14} className={toolsOpen ? 'is-open' : ''} />
-          </button>
-          {toolsOpen && <div className="chat-tools" id="chat-tools">
-          <button className="scenario-toggle" type="button" aria-label={t('scenarioControlAria')} aria-expanded={scenariosOpen} aria-controls="demo-scenarios" onClick={() => setScenariosOpen((open) => !open)}>
-            <span>{t('chooseExample')}</span><ChevronDown size={15} className={scenariosOpen ? 'is-open' : ''} />
-          </button>
-          {scenariosOpen && (
-            <div className="scenario-list" id="demo-scenarios">
-              {preparedExamples.map((example, index) => (
-                <button key={example.titleKey} type="button" className="prompt-button" onClick={() => { setActiveExample(index); setScenariosOpen(false); setToolsOpen(false); }} data-testid={`button-example-${index}`}>
-                  <span>{t(example.titleKey)}</span><ChevronRight size={14} />
-                </button>
-              ))}
-            </div>
-          )}
-          <div className="quick-actions" aria-label={t('quickActionsAria')}>
-            <button type="button" data-testid="button-quick-plan" onClick={() => setQuickAction('plan')}><NotebookTabs size={14} />{t('quickPlan')}</button>
-            <button type="button" data-testid="button-quick-tip" onClick={() => setQuickAction('tip')}><Sparkles size={14} />{t('quickTip')}</button>
-            <button type="button" data-testid="button-quick-report" onClick={() => setQuickAction('report')}><Activity size={14} />{t('quickReport')}</button>
-          </div>
-          </div>}
           <div className="conversation" ref={conversationRef} aria-live="polite" data-testid="content-chat-example">
             <div className="date-divider">{t('dateDivider')}</div>
             <div className="message coach">
@@ -328,26 +275,6 @@ function Chat() {
                 <div className="prepared-box"><strong>{t('staticExampleStrong')}</strong>{t('staticExampleBody')}</div>
               </div>
             </div>
-            {activeExample !== null && (
-              <>
-                <div className="message user"><div className="message-bubble">{t(preparedExamples[activeExample].promptKey)}</div><span className="message-time">{t('sampleAction')}</span></div>
-                <div className="message coach">
-                  <EliAvatar className="message-avatar" alt={t('avatarChatAlt')} testId="image-eli-chat-message-example" />
-                  <div className="coach-message-body">
-                    <div className="message-label"><Sparkles size={11} /> {t('preparedLive')}</div>
-                    <div className="message-bubble">{t(preparedExamples[activeExample].textKey)}</div>
-                    <div className="prepared-box"><strong>{t('preparedContent')}</strong>{t('noAiRequest')}</div>
-                  </div>
-                </div>
-              </>
-            )}
-            {quickAction && (
-              <div className="quick-result" role="status">
-                <div className="quick-result-heading"><span>{t(quickContent[quickAction].titleKey)}</span><span>{t('sampleNotLive')}</span></div>
-                <p>{t(quickContent[quickAction].textKey)}</p>
-                <strong>{t('fixedDemoContent')}</strong>
-              </div>
-            )}
             {localMessage && <div className="message user"><div className="message-bubble">{localMessage}</div><span className="message-time">{t('localMessageTime')}</span></div>}
             {notice && <div className="local-notice" role="status" data-testid="status-local-message">{t(notice)}</div>}
           </div>
