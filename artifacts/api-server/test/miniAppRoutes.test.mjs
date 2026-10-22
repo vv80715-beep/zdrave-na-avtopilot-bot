@@ -205,6 +205,7 @@ test("signed initData can renew the same valid session after its five-minute fre
 test("rejects forged, expired, and non-owner initData", async () => {
   const h = await serverHarness();
   try {
+    assert.equal((await h.request("/session", { initData: "malformed" })).status, 401);
     const forged = new URLSearchParams(signedInitData());
     forged.set("user", JSON.stringify({ id: OWNER_ID, first_name: "forged" }));
     assert.equal((await h.request("/session", { initData: forged.toString() })).status, 401);

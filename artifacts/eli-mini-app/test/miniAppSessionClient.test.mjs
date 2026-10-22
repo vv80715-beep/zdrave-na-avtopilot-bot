@@ -65,6 +65,21 @@ test("empty signed initData is rejected before any request", async () => {
   assert.equal(calls, 0);
 });
 
+test("offline demo send fails once without a backend or provider retry", async () => {
+  const requests = [];
+  await assert.rejects(
+    sendOwnerDemoChat(initData, "synthetic offline text", "bg", async (url) => {
+      requests.push(String(url));
+      if (String(url).endsWith("/session")) {
+        return new Response(JSON.stringify({ ok: true, expiresAt: "2026-10-22T00:10:00.000Z" }));
+      }
+      throw new TypeError("offline");
+    }),
+    (error) => error instanceof MiniAppStageError && error.code === "network_unavailable",
+  );
+  assert.deepEqual(requests, ["/api/mini-app/session", "/api/mini-app/demo-chat"]);
+});
+
 test("owner AI status check never calls the AI endpoint and distinguishes mock from live", async () => {
   for (const mode of ["mock", "test_ai"]) {
     const paths = [];
