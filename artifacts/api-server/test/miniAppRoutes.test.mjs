@@ -498,6 +498,73 @@ test("valid voice upload returns mocked transcript and text reply, then removes 
   }
 });
 
+test("production voice upload validates session and forwards only normalized audio with a voice-bound claim", async () => {
+  const customerId = "987654321";
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "eli-mini-api-voice-test-"));
+  let bridgeInput;
+  const bridgeSecret = "offline-bridge-secret-for-miniapp-tests-at-least-32";
+  const bridgeAuth = require("../../../bot/miniAppBridgeAuth.js");
+  const h = await serverHarness({
+    env: config({
+      NODE_ENV: "production",
+      ELI_MINI_APP_STAGE: "production",
+      ELI_MINI_APP_VOICE_ENABLED: "true",
+    }),
+    bridgeSecret,
+    bridgeFetch: async (url, init) => {
+      const claim = bridgeAuth.verifyClaim(init.headers.Authorization.slice(7), bridgeSecret);
+      bridgeInput = { url: String(url), claim, init };
+      return new Response(JSON.stringify({
+        ok: true,
+        transcript: "Синтетична фраза.",
+        reply: "Синтетичен отговор.",
+        kind: "voice",
+        media: { type: "audio", mimeType: "audio/ogg", data: "c3ludGhldGlj" },
+      }));
+    },
+    media: {
+      tempRoot,
+      inspectAudioDuration: async () => 12,
+      normalizeAudio: async (_inputPath, directory) => {
+        const wav = Buffer.concat([Buffer.from("RIFF"), Buffer.alloc(4), Buffer.from("WAVE"), Buffer.alloc(36)]);
+        const wavPath = path.join(directory, "normalized.wav");
+        await writeFile(wavPath, wav);
+        return wavPath;
+      },
+    },
+  });
+  try {
+    const session = await h.request("/session", { initData: signedInitData({ userId: customerId }) });
+    assert.equal(session.status, 200);
+    const cookie = session.headers.get("set-cookie").split(";")[0];
+    const form = new FormData();
+    form.set("file", new Blob([Buffer.from("OggS-synthetic-audio")], { type: "audio/ogg" }), "voice.ogg");
+    form.set("language", "bg");
+    form.set("mode", "voice");
+    form.set("turnId", "f9b2d7a0-0e22-4e10-a987-7eea4ebf0667");
+    form.set("prompt", "моля, кратко");
+    const response = await h.request("/media/voice", form, { cookie });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      transcript: "Синтетична фраза.",
+      reply: "Синтетичен отговор.",
+      kind: "voice",
+      media: { type: "audio", mimeType: "audio/ogg", data: "c3ludGhldGlj" },
+      mediaType: "voice",
+      staged: false,
+      demo: false,
+    });
+    assert.equal(bridgeInput.claim.userId, customerId);
+    assert.equal(bridgeInput.claim.path, "/internal/mini-app/voice-turn");
+    assert.equal(bridgeInput.init.headers["Content-Type"], "application/octet-stream");
+    assert.equal(Buffer.from(bridgeInput.init.body).toString("ascii", 0, 4), "RIFF");
+    assert.deepEqual(await readdir(tempRoot), []);
+  } finally {
+    await h.close();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("mock-only media flag returns fixed non-analysis copy even when an OpenAI key is present", async () => {
   const h = await serverHarness({
     env: config({

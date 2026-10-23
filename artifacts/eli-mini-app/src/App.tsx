@@ -349,6 +349,9 @@ function Chat() {
     if (error.status === 401 || error.status === 403) return 'stageSessionError';
     if (error.status === 429) return 'stageRateLimitError';
     if (error.code === 'telegram_auth_required') return 'stageSessionError';
+    if (['unsupported_audio_type', 'file_type_or_signature_mismatch', 'invalid_audio'].includes(error.code)) return 'recordingFailed';
+    if (['file_too_large', 'normalized_audio_too_large'].includes(error.code)) return 'recordingSizeError';
+    if (error.code === 'audio_too_long') return 'recordingDurationLimit';
     if (error.status === 503 || error.status === 502) return 'stageAiUnavailable';
     if (error.code === 'request_timeout') return 'stageTimeoutError';
     return 'stageNetworkError';

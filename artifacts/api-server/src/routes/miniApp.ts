@@ -300,7 +300,9 @@ export function createMiniAppRouter(
   const bridgeFetch = options.bridgeFetch ?? fetch;
   const now = options.now || Date.now;
   const validate = options.validate || validateTelegramInitData;
-  const mediaEnabled = env.ELI_MINI_APP_MEDIA_MOCK_ENABLED === "true";
+  const mediaEnabled = env.NODE_ENV === "development" &&
+    env.ELI_MINI_APP_STAGE === "staging" &&
+    env.ELI_MINI_APP_MEDIA_MOCK_ENABLED === "true";
   const voiceTurnEnabled = env.ELI_MINI_APP_VOICE_ENABLED === "true";
   const textAiEnabled = env.ELI_MINI_APP_TEXT_AI_ENABLED === "true";
   const ownerDossierEnabled = env.NODE_ENV === "development" &&

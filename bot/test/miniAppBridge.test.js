@@ -1,7 +1,9 @@
 const assert = require('node:assert/strict');
 const express = require('express');
 const test = require('node:test');
-const { createClaim, verifyClaim, CLAIM_PATH, TEXT_TURN_PATH, MUTATION_PATH } = require('../miniAppBridgeAuth');
+const {
+  createClaim, verifyClaim, CLAIM_PATH, TEXT_TURN_PATH, MUTATION_PATH, VOICE_TURN_PATH,
+} = require('../miniAppBridgeAuth');
 const { createMiniAppBridgeRouter } = require('../miniAppBridge');
 const { createMiniAppSnapshotReader } = require('../miniAppReadModel');
 
@@ -66,6 +68,53 @@ test('internal mutation bridge uses a separate path-bound claim and bot-derived 
     assert.equal((await server.request(token, {}, MUTATION_PATH)).status, 401);
   } finally {
     await server.close();
+  }
+});
+
+test('voice bridge accepts only binary audio on the voice-bound signed claim and keeps user identity server-side', async () => {
+  const calls = [];
+  const app = express();
+  app.use(express.json());
+  app.use(createMiniAppBridgeRouter({
+    secret: SECRET,
+    now: () => NOW,
+    processVoiceTurn: async input => {
+      calls.push(input);
+      return { transcript: 'synthetic transcript', reply: 'synthetic reply', kind: 'eli_text' };
+    },
+  }));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((resolve, reject) => {
+    server.once('listening', resolve);
+    server.once('error', reject);
+  });
+  const { port } = server.address();
+  const turnId = 'f9b2d7a0-0e22-4e10-a987-7eea4ebf0667';
+  const audio = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WAVE'), Buffer.alloc(36)]);
+  const token = createClaim(CLIENT_ONE, SECRET, NOW, VOICE_TURN_PATH);
+  const request = () => fetch(`http://127.0.0.1:${port}${VOICE_TURN_PATH}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/octet-stream',
+      'X-Eli-Mode': 'voice',
+      'X-Eli-Turn-Id': turnId,
+      'X-Eli-Prompt': Buffer.from('synthetic prompt').toString('base64url'),
+    },
+    body: audio,
+  });
+  try {
+    const response = await request();
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      ok: true, transcript: 'synthetic transcript', reply: 'synthetic reply', kind: 'eli_text',
+    });
+    assert.deepEqual(calls, [{
+      userId: CLIENT_ONE, audio, mode: 'voice', turnId, prompt: 'synthetic prompt',
+    }]);
+    assert.equal((await request()).status, 401, 'signed claims are one-use');
+  } finally {
+    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }
 });
 

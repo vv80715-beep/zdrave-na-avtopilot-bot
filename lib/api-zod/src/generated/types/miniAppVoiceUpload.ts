@@ -13,7 +13,7 @@ export interface MiniAppVoiceUpload {
   file: Blob;
   language?: MiniAppVoiceUploadLanguage;
   mode?: MiniAppVoiceUploadMode;
-  turnId?: string;
+  turnId: string;
   /** @maxLength 1200 */
   prompt?: string;
 }

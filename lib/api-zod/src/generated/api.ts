@@ -126,20 +126,20 @@ export const PostMiniAppOwnerImageResponse = zod.object({
  * Disabled unless explicitly enabled. Production identity and entitlements are checked server-side; development staging remains owner-only. Audio is temporary and removed after processing.
  * @summary Send one voice recording through the authenticated bot voice-turn path
  */
-export const postMiniAppOwnerVoiceBodyModeDefault = `text`;
-export const postMiniAppOwnerVoiceBodyPromptMax = 1200;
+export const postMiniAppVoiceTurnBodyModeDefault = `text`;
+export const postMiniAppVoiceTurnBodyPromptMax = 1200;
 
 
 
-export const PostMiniAppOwnerVoiceBody = zod.object({
+export const PostMiniAppVoiceTurnBody = zod.object({
   "file": zod.instanceof(File).describe('One supported audio recording up to 15 MiB and 90 seconds'),
   "language": zod.enum(['bg', 'en']).optional(),
-  "mode": zod.enum(['text', 'voice', 'avatar']).default(postMiniAppOwnerVoiceBodyModeDefault),
-  "turnId": zod.string().uuid().optional(),
-  "prompt": zod.string().max(postMiniAppOwnerVoiceBodyPromptMax).optional()
+  "mode": zod.enum(['text', 'voice', 'avatar']).default(postMiniAppVoiceTurnBodyModeDefault),
+  "turnId": zod.string().uuid(),
+  "prompt": zod.string().max(postMiniAppVoiceTurnBodyPromptMax).optional()
 })
 
-export const PostMiniAppOwnerVoiceResponse = zod.object({
+export const PostMiniAppVoiceTurnResponse = zod.object({
   "transcript": zod.string(),
   "reply": zod.string(),
   "mediaType": zod.literal("voice"),

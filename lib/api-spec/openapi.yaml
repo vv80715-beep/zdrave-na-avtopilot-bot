@@ -182,7 +182,7 @@ paths:
           description: OpenAI is not configured
   /mini-app/media/voice:
     post:
-      operationId: postMiniAppOwnerVoice
+      operationId: postMiniAppVoiceTurn
       tags: [mini-app]
       summary: Send one voice recording through the authenticated bot voice-turn path
       description: Disabled unless explicitly enabled. Production identity and entitlements are checked server-side; development staging remains owner-only. Audio is temporary and removed after processing.

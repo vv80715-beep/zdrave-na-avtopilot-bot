@@ -502,7 +502,7 @@ export const usePostMiniAppOwnerImage = <TError = ErrorType<void>,
       return useMutation(getPostMiniAppOwnerImageMutationOptions(options));
     }
 
-export const getPostMiniAppOwnerVoiceUrl = () => {
+export const getPostMiniAppVoiceTurnUrl = () => {
 
 
 
@@ -514,7 +514,7 @@ export const getPostMiniAppOwnerVoiceUrl = () => {
  * Disabled unless explicitly enabled. Production identity and entitlements are checked server-side; development staging remains owner-only. Audio is temporary and removed after processing.
  * @summary Send one voice recording through the authenticated bot voice-turn path
  */
-export const postMiniAppOwnerVoice = async (miniAppVoiceUpload: MiniAppVoiceUpload, options?: RequestInit): Promise<MiniAppVoiceResult> => {
+export const postMiniAppVoiceTurn = async (miniAppVoiceUpload: MiniAppVoiceUpload, options?: RequestInit): Promise<MiniAppVoiceResult> => {
     const formData = new FormData();
 formData.append(`file`, miniAppVoiceUpload.file);
 if(miniAppVoiceUpload.language !== undefined) {
@@ -523,14 +523,12 @@ if(miniAppVoiceUpload.language !== undefined) {
 if(miniAppVoiceUpload.mode !== undefined) {
  formData.append(`mode`, miniAppVoiceUpload.mode);
  }
-if(miniAppVoiceUpload.turnId !== undefined) {
- formData.append(`turnId`, miniAppVoiceUpload.turnId);
- }
+formData.append(`turnId`, miniAppVoiceUpload.turnId);
 if(miniAppVoiceUpload.prompt !== undefined) {
  formData.append(`prompt`, miniAppVoiceUpload.prompt);
  }
 
-  return customFetch<MiniAppVoiceResult>(getPostMiniAppOwnerVoiceUrl(),
+  return customFetch<MiniAppVoiceResult>(getPostMiniAppVoiceTurnUrl(),
   {
     ...options,
     method: 'POST'
@@ -542,11 +540,11 @@ if(miniAppVoiceUpload.prompt !== undefined) {
 
 
 
-export const getPostMiniAppOwnerVoiceMutationOptions = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postMiniAppOwnerVoice>>, TError,{data: BodyType<MiniAppVoiceUpload>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof postMiniAppOwnerVoice>>, TError,{data: BodyType<MiniAppVoiceUpload>}, TContext> => {
+export const getPostMiniAppVoiceTurnMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postMiniAppVoiceTurn>>, TError,{data: BodyType<MiniAppVoiceUpload>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof postMiniAppVoiceTurn>>, TError,{data: BodyType<MiniAppVoiceUpload>}, TContext> => {
 
-const mutationKey = ['postMiniAppOwnerVoice'];
+const mutationKey = ['postMiniAppVoiceTurn'];
 const {mutation: mutationOptions, request: requestOptions} = options ?
       options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
       options
@@ -556,10 +554,10 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof postMiniAppOwnerVoice>>, {data: BodyType<MiniAppVoiceUpload>}> = (props) => {
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof postMiniAppVoiceTurn>>, {data: BodyType<MiniAppVoiceUpload>}> = (props) => {
           const {data} = props ?? {};
 
-          return  postMiniAppOwnerVoice(data,requestOptions)
+          return  postMiniAppVoiceTurn(data,requestOptions)
         }
 
 
@@ -569,21 +567,21 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
   return  { mutationFn, ...mutationOptions }}
 
-    export type PostMiniAppOwnerVoiceMutationResult = NonNullable<Awaited<ReturnType<typeof postMiniAppOwnerVoice>>>
-    export type PostMiniAppOwnerVoiceMutationBody = BodyType<MiniAppVoiceUpload>
-    export type PostMiniAppOwnerVoiceMutationError = ErrorType<void>
+    export type PostMiniAppVoiceTurnMutationResult = NonNullable<Awaited<ReturnType<typeof postMiniAppVoiceTurn>>>
+    export type PostMiniAppVoiceTurnMutationBody = BodyType<MiniAppVoiceUpload>
+    export type PostMiniAppVoiceTurnMutationError = ErrorType<void>
 
     /**
  * @summary Send one voice recording through the authenticated bot voice-turn path
  */
-export const usePostMiniAppOwnerVoice = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postMiniAppOwnerVoice>>, TError,{data: BodyType<MiniAppVoiceUpload>}, TContext>, request?: SecondParameter<typeof customFetch>}
+export const usePostMiniAppVoiceTurn = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postMiniAppVoiceTurn>>, TError,{data: BodyType<MiniAppVoiceUpload>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
-        Awaited<ReturnType<typeof postMiniAppOwnerVoice>>,
+        Awaited<ReturnType<typeof postMiniAppVoiceTurn>>,
         TError,
         {data: BodyType<MiniAppVoiceUpload>},
         TContext
       > => {
-      return useMutation(getPostMiniAppOwnerVoiceMutationOptions(options));
+      return useMutation(getPostMiniAppVoiceTurnMutationOptions(options));
     }
 
