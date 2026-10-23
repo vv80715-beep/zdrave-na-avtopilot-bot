@@ -35,7 +35,6 @@ import {
 import { connectTelegramWebApp } from './telegramWebApp';
 import { useChatMedia, type ChatAttachment } from './useChatMedia';
 import {
-  ensureOwnerSession,
   getMiniAppProfileSnapshot,
   MiniAppStageError,
   mutateMiniAppRecord,
@@ -445,6 +444,10 @@ function Chat() {
     void getMiniAppProfileSnapshot(signedInitData).then((snapshot) => {
       if (current) {
         setChatEntitlement(snapshot.entitlement);
+        const nextMode = snapshot.entitlement.backendVerified &&
+          snapshot.entitlement.allowedModes.includes(selectedMode) ? selectedMode : 'text';
+        setSelectedMode(nextMode);
+        setPreferredMode(nextMode);
         setStageMode('live');
         setStageError(null);
         setStageErrorCanRetry(false);
@@ -457,7 +460,7 @@ function Chat() {
       }
     });
     return () => { current = false; };
-  }, [canUseTelegramSession, signedInitData]);
+  }, [canUseTelegramSession, signedInitData, selectedMode, setPreferredMode]);
 
   useLayoutEffect(() => {
     if (!hasMountedConversation.current) {
@@ -493,6 +496,11 @@ function Chat() {
     if (sendLock.current || sending) return;
     if (!draft.trim() && !media.attachment) {
       setNotice('emptyDraftNotice');
+      return;
+    }
+    if (canUseTelegramSession && !modeEnabled(selectedMode)) {
+      setStageError('modeAccessDenied');
+      setStageErrorCanRetry(false);
       return;
     }
     const conversation = conversationRef.current;
