@@ -51,6 +51,14 @@ export type MiniAppProfileSnapshot = {
   ownerDossier?: Array<Record<string, unknown>>;
 };
 
+export function isMiniAppModeAllowed(
+  entitlement: MiniAppProfileSnapshot["entitlement"] | null | undefined,
+  mode: MiniAppTurnMode,
+): boolean {
+  return Boolean(entitlement?.backendVerified && entitlement.canChat &&
+    entitlement.allowedModes.includes(mode));
+}
+
 export class MiniAppStageError extends Error {
   readonly code: string;
   readonly status: number;

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   getMiniAppProfileSnapshot,
+  isMiniAppModeAllowed,
   getOwnerTextAiStatus,
   MiniAppStageError,
   sendMiniAppTextTurn,
@@ -215,6 +216,47 @@ test("voice turn uploads multipart audio with session auth and returns bot reply
   assert.equal(requests[1].init.body.get("prompt"), "моля, кратко");
   assert.match(requests[1].init.body.get("turnId"), /^[0-9a-f-]{36}$/i);
   assert.equal(requests[1].init.body.get("file").type, "audio/webm");
+});
+
+test("trial entitlement allows text only and unverified plans never unlock paid modes", () => {
+  const trial = {
+    plan: "five_day_trial", state: "active", allowedModes: ["text"], canChat: true,
+    planExpiresAt: null, trialExpiresAt: null, backendVerified: true,
+  };
+  assert.equal(isMiniAppModeAllowed(trial, "text"), true);
+  assert.equal(isMiniAppModeAllowed(trial, "voice"), false);
+  assert.equal(isMiniAppModeAllowed(trial, "avatar"), false);
+  assert.equal(isMiniAppModeAllowed({ ...trial, backendVerified: false, allowedModes: ["text", "voice", "avatar"] }, "avatar"), false);
+  assert.equal(isMiniAppModeAllowed({ ...trial, canChat: false }, "text"), false);
+});
+
+test("text, voice-output, and avatar buttons all dispatch to the bot text engine with selected mode", async () => {
+  for (const mode of ["text", "voice", "avatar"]) {
+    const requests = [];
+    const payload = mode === "voice"
+      ? { reply: "Synthetic spoken answer", kind: "voice", media: { type: "audio", mimeType: "audio/ogg", data: "c3ludGhldGlj" } }
+      : mode === "avatar"
+        ? { reply: "Synthetic avatar script", kind: "avatar", media: { type: "video", url: "https://media.example/synthetic.mp4" } }
+        : { reply: "Synthetic text answer", kind: "eli_text" };
+    const result = await sendMiniAppTextTurn(initData, "synthetic question", async (url, init) => {
+      requests.push({ url: String(url), init });
+      return String(url).endsWith("/session")
+        ? new Response(JSON.stringify({ ok: true, expiresAt: "2026-10-22T00:10:00.000Z" }))
+        : new Response(JSON.stringify(payload));
+    }, mode);
+    assert.deepEqual(JSON.parse(requests[1].init.body).mode, mode);
+    assert.equal(requests[1].url, "/api/mini-app/chat");
+    assert.equal(result.kind, payload.kind);
+    assert.equal(result.reply, payload.reply);
+  }
+});
+
+test("avatar video URLs and voice media are validated before rendering", async () => {
+  await assert.rejects(sendMiniAppTextTurn(initData, "synthetic", async (url) =>
+    String(url).endsWith("/session")
+      ? new Response(JSON.stringify({ ok: true, expiresAt: "2026-10-22T00:10:00.000Z" }))
+      : new Response(JSON.stringify({ reply: "answer", kind: "avatar", media: { type: "video", url: "http://unsafe.example/video.mp4" } })),
+  "avatar"), error => error instanceof MiniAppStageError && error.code === "invalid_response");
 });
 
 test("empty signed initData is rejected before any request", async () => {

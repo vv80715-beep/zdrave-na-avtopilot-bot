@@ -36,6 +36,7 @@ import { connectTelegramWebApp } from './telegramWebApp';
 import { useChatMedia, type ChatAttachment } from './useChatMedia';
 import {
   getMiniAppProfileSnapshot,
+  isMiniAppModeAllowed,
   MiniAppStageError,
   mutateMiniAppRecord,
   requestMiniAppCoaching,
@@ -432,8 +433,7 @@ function Chat() {
     setPreferredMode(mode);
   }
   function modeEnabled(mode: MiniAppTurnMode) {
-    return Boolean(chatEntitlement?.backendVerified && chatEntitlement.canChat &&
-      chatEntitlement.allowedModes.includes(mode));
+    return isMiniAppModeAllowed(chatEntitlement, mode);
   }
 
   useEffect(() => {
