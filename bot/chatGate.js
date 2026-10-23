@@ -44,6 +44,24 @@ async function resolveAccessStatus(ctx, options = {}) {
   return resolveEntitlementStatus(ctx.from.id, options);
 }
 
+// Read-only status for the Mini App. It bypasses ensureUser() so opening a
+// profile cannot create or change a trial record.
+async function resolveReadOnlyAccessStatus(ctx, options = {}) {
+  if (isOwner(ctx)) {
+    return {
+      plan: 'owner',
+      state: 'owner',
+      allowedModes: [...OWNER_ALLOWED_MODES],
+      canChat: true,
+      planExpiresAt: null,
+      trialExpiresAt: null,
+      backendVerified: false,
+      notice: null,
+    };
+  }
+  return resolveEntitlementStatus(ctx.from.id, { ...options, forceRefresh: true, readOnly: true });
+}
+
 async function gateChat(ctx) {
   const status = await resolveAccessStatus(ctx);
   if (!status.canChat) {
@@ -61,6 +79,7 @@ async function gateChat(ctx) {
 module.exports = {
   gateChat,
   resolveAccessStatus,
+  resolveReadOnlyAccessStatus,
   OWNER_ALLOWED_MODES,
   TRIAL_EXPIRED_MESSAGE,
 };

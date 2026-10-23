@@ -53,6 +53,20 @@ export const PostMiniAppDemoChatResponse = zod.object({
 
 
 /**
+ * Read-only. The Telegram ID comes only from the signed server session. The API forwards a signed internal claim to the existing bot process, which owns legacy JSON access. Owner dossier is included only for the verified owner.
+ * @summary Read the authenticated Telegram user's existing bot profile and progress stores
+ */
+export const ReadMiniAppProfileSnapshotBody = zod.object({
+
+})
+
+export const ReadMiniAppProfileSnapshotResponse = zod.object({
+  "mode": zod.literal("read_only"),
+  "snapshot": zod.record(zod.string(), zod.unknown())
+})
+
+
+/**
  * Disabled by default. Requires the existing owner session and exact configured origin. Uses OpenAI only when the separate media AI flag is explicitly enabled.
  * @summary Analyze one image in the explicitly enabled owner-only development staging route
  */

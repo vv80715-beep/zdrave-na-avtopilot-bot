@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  getMiniAppProfileSnapshot,
   getOwnerTextAiStatus,
   MiniAppStageError,
   sendOwnerDemoChat,
@@ -10,6 +11,42 @@ import {
 import { translate } from "../src/i18n.ts";
 
 const initData = "signed-data-fixture-not-a-real-credential";
+
+test("profile client loads read-only data through the signed session without sending a Telegram ID", async () => {
+  const requests = [];
+  const snapshot = {
+    profile: { firstName: "Synthetic" },
+    legacyMemory: null,
+    relationshipMemory: [],
+    healthLogs: [],
+    checkins: [],
+    reminders: [],
+    entitlement: {
+      plan: "free",
+      state: "trial_expired",
+      allowedModes: [],
+      canChat: false,
+      planExpiresAt: null,
+      trialExpiresAt: null,
+      backendVerified: true,
+    },
+    mode: "text",
+  };
+  const result = await getMiniAppProfileSnapshot(initData, async (url, init) => {
+    requests.push({ url: String(url), init });
+    return String(url).endsWith("/session")
+      ? new Response(JSON.stringify({ ok: true, expiresAt: "2026-10-22T00:10:00.000Z" }))
+      : new Response(JSON.stringify({ mode: "read_only", snapshot }));
+  });
+  assert.deepEqual(result, snapshot);
+  assert.deepEqual(requests.map((request) => request.url), [
+    "/api/mini-app/session",
+    "/api/mini-app/profile",
+  ]);
+  assert.deepEqual(JSON.parse(requests[1].init.body), {});
+  assert.equal(requests[1].init.credentials, "same-origin");
+  assert.equal(requests[1].init.cache, "no-store");
+});
 
 test("owner demo chat obtains an idempotent session and consumes only the fixed mock envelope", async () => {
   const requests = [];

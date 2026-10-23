@@ -4,7 +4,13 @@ import express, { Router, type Application, type NextFunction, type Request, typ
 import cors from "cors";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  ReadMiniAppProfileSnapshotBody,
+  ReadMiniAppProfileSnapshotResponse,
+} from "../../../../lib/api-zod/src/generated/api.ts";
 import { validateTelegramInitData } from "../lib/telegramInitData.mjs";
+// @ts-expect-error Shared HMAC protocol; claims are signed from verified session subjects only.
+import miniAppBridgeAuth from "../../../../bot/miniAppBridgeAuth.js";
 // @ts-expect-error The CommonJS persona module is the canonical prompt shared with the Telegram bot.
 import eliPersona from "../../../../bot/persona.js";
 // @ts-expect-error The selector rechecks the owner and filters dossier facts by message topic.
@@ -57,6 +63,7 @@ type OwnerDossierFaq = {
   detectOwnerDossierQuestion: (message: string) => string | null;
   answerOwnerDossierQuestion: (ownerId: string, intent: string) => string;
 };
+type MiniAppSnapshot = Record<string, unknown>;
 
 function ownerDossierFaqIntents(message: string, detect: OwnerDossierFaq["detectOwnerDossierQuestion"]): string[] {
   const text = message.toLocaleLowerCase("bg");
@@ -273,6 +280,9 @@ export function createMiniAppRouter(
     ownerDossierContext?: (ownerId: string, message: string) => string;
     ownerDossierFaq?: OwnerDossierFaq;
     ownerDossierPath?: string;
+    readProfileSnapshot?: (userId: string) => Promise<MiniAppSnapshot>;
+    bridgeSecret?: string;
+    bridgeFetch?: typeof fetch;
   } = {},
 ) {
   if (!miniAppConfigEnabled(env)) throw new Error("Mini App staging route is not enabled.");
@@ -280,6 +290,8 @@ export function createMiniAppRouter(
   const ownerId = env.OWNER_TELEGRAM_ID!;
   const botToken = env.TELEGRAM_BOT_TOKEN!;
   const sessionSecret = env.SESSION_SECRET!;
+  const bridgeSecret = options.bridgeSecret ?? env.ELI_MEMORY_INTERNAL_SECRET ?? "";
+  const bridgeFetch = options.bridgeFetch ?? fetch;
   const now = options.now || Date.now;
   const validate = options.validate || validateTelegramInitData;
   const mediaEnabled = env.ELI_MINI_APP_MEDIA_MOCK_ENABLED === "true";
@@ -407,6 +419,46 @@ export function createMiniAppRouter(
       next();
     });
   };
+
+  const readProfileSnapshot = options.readProfileSnapshot || (async (userId: string) => {
+    if (bridgeSecret.trim().length < 32) throw new Error("profile_service_unavailable");
+    const claim = (miniAppBridgeAuth as {
+      createClaim: (userId: string, secret: string) => string;
+    }).createClaim(userId, bridgeSecret);
+    const response = await bridgeFetch("http://127.0.0.1:3001/internal/mini-app/profile-snapshot", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${claim}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: "{}",
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok) throw new Error("profile_service_unavailable");
+    const body = await response.json() as { ok?: unknown; snapshot?: unknown };
+    if (body?.ok !== true || !body.snapshot || typeof body.snapshot !== "object" ||
+        Array.isArray(body.snapshot)) throw new Error("profile_service_invalid_response");
+    return body.snapshot as MiniAppSnapshot;
+  });
+
+  router.post("/profile", requireSession, async (req, res): Promise<void> => {
+    const requestBody = ReadMiniAppProfileSnapshotBody.safeParse(req.body);
+    if (!requestBody.success || !req.body || Object.keys(req.body).length !== 0) {
+      sendError(res, 400, "invalid_request");
+      return;
+    }
+    try {
+      const userId = res.locals.miniAppUserId as string;
+      const snapshot = await readProfileSnapshot(userId);
+      res.setHeader("Cache-Control", "no-store");
+      res.json(ReadMiniAppProfileSnapshotResponse.parse({ mode: "read_only", snapshot }));
+    } catch {
+      sendError(res, 503, "profile_service_unavailable");
+    }
+  });
 
   const configuredTextAi: TextAiAdapter = options.textAi ||
     createOpenAiTextAiAdapter(env.OPENAI_API_KEY || "");

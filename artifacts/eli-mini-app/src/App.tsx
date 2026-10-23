@@ -35,10 +35,12 @@ import {
 import { connectTelegramWebApp } from './telegramWebApp';
 import { useChatMedia, type ChatAttachment } from './useChatMedia';
 import {
+  getMiniAppProfileSnapshot,
   getOwnerTextAiStatus,
   MiniAppStageError,
   sendOwnerDemoChat,
   sendOwnerTextAi,
+  type MiniAppProfileSnapshot,
 } from './miniAppSessionClient';
 import {
   dailyEntryToDraft,
@@ -705,7 +707,7 @@ function Chat() {
   );
 }
 
-function Profile() {
+function DemoProfile() {
   const { t, language } = useLanguage();
   const { entries, setEntries } = useProgress();
   const dates = getRecentDateKeys();
@@ -884,6 +886,130 @@ function Profile() {
         </aside>
       </div>
       <p className="footer-note" data-testid="text-profile-session-note">{t('profileSessionFooter')}</p>
+    </main>
+  );
+}
+void DemoProfile;
+
+function Profile() {
+  const { language } = useLanguage();
+  const telegram = window.Telegram?.WebApp;
+  const initData = telegram?.initData?.trim() || '';
+  const [snapshot, setSnapshot] = useState<MiniAppProfileSnapshot | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    if (!initData || !window.isSecureContext) {
+      setLoading(false);
+      setError(true);
+      return;
+    }
+    void getMiniAppProfileSnapshot(initData).then((result) => {
+      if (active) { setSnapshot(result); setError(false); setLoading(false); }
+    }).catch(() => {
+      if (active) { setError(true); setLoading(false); }
+    });
+    return () => { active = false; };
+  }, [initData]);
+
+  const en = language === 'en';
+  const format = (value: unknown): string => {
+    if (value == null || value === '') return en ? 'Not recorded' : 'Няма запис';
+    if (typeof value === 'boolean') return value ? (en ? 'Yes' : 'Да') : (en ? 'No' : 'Не');
+    if (typeof value === 'string' || typeof value === 'number') return String(value);
+    if (Array.isArray(value)) return value.length ? value.map(format).join(', ') : (en ? 'None' : 'Няма');
+    return JSON.stringify(value);
+  };
+  const card = (title: string, rows: Array<[string, unknown]>) => (
+    <section className="panel" key={title}>
+      <h2>{title}</h2>
+      {rows.length ? <dl>{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{format(value)}</dd></div>)}</dl>
+        : <p>{en ? 'No saved records.' : 'Няма записани данни.'}</p>}
+    </section>
+  );
+  const rows = (record: Record<string, unknown> | null, fields: string[]) =>
+    record ? fields.filter((key) => record[key] !== undefined && record[key] !== null && record[key] !== '')
+      .map((key) => [key, record[key]] as [string, unknown]) : [];
+  const statusLabels: Record<string, string> = en ? {
+    owner: 'Owner',
+    paid: 'Active paid plan',
+    trial: 'Trial active',
+    trial_expired: 'Trial expired',
+    paid_expired: 'Paid plan expired',
+    trial_not_started: 'Trial not started',
+    unverified: 'Status not verified',
+    backend_unavailable: 'Billing status unavailable',
+  } : {
+    owner: 'Собственик',
+    paid: 'Активен платен план',
+    trial: 'Активен пробен период',
+    trial_expired: 'Пробният период е изтекъл',
+    paid_expired: 'Платеният план е изтекъл',
+    trial_not_started: 'Пробният период не е започнат',
+    unverified: 'Статусът не е потвърден',
+    backend_unavailable: 'Платежният статус не е достъпен',
+  };
+  const modeLabels: Record<string, string> = en
+    ? { text: 'Text', voice: 'Voice', avatar: 'Avatar' }
+    : { text: 'Текст', voice: 'Глас', avatar: 'Аватар' };
+  const planLabels: Record<string, string> = en
+    ? { owner: 'Owner', free: 'Free', seven_day: '7-day', monthly: 'Monthly', yearly: 'Yearly', unknown: 'Unknown' }
+    : { owner: 'Собственик', free: 'Безплатен', seven_day: '7-дневен', monthly: 'Месечен', yearly: 'Годишен', unknown: 'Неизвестен' };
+  const formatTimestamp = (timestamp: number | null) =>
+    timestamp ? new Date(timestamp).toLocaleString(en ? 'en-GB' : 'bg-BG') : null;
+
+  return (
+    <main className="page-wrap progress-page">
+      <div className="page-heading">
+        <div><div className="eyebrow">{en ? 'Synced from Eli' : 'Свързано с Ели'}</div>
+          <h1>{en ? 'Your profile & progress' : 'Профил и прогрес'}</h1>
+          <p>{en ? 'Read-only view of your existing Telegram bot records.' : 'Само за преглед: съществуващите ти записи от Telegram бота.'}</p>
+        </div>
+        <span className="page-tag">{en ? 'READ ONLY' : 'САМО ЗА ПРЕГЛЕД'}</span>
+      </div>
+      {loading && <section className="panel" role="status">{en ? 'Loading your records…' : 'Зареждам записите…'}</section>}
+      {error && !loading && <section className="panel" role="alert">
+        <h2>{en ? 'Records unavailable' : 'Записите не са достъпни'}</h2>
+        <p>{en ? 'Open Eli from Telegram again. No local or sample data is shown.' : 'Отвори Ели от Telegram отново. Не показваме локални или примерни данни.'}</p>
+      </section>}
+      {snapshot && !loading && <>
+        {card(en ? 'Profile' : 'Профил', rows(snapshot.profile, [
+          'firstName', 'age', 'gender', 'height', 'weight', 'goal', 'activityLevel',
+          'trainingExperience', 'foodPreferences', 'medicalNotes',
+        ]))}
+        {card(en ? 'Legacy memory' : 'Запазена памет', rows(snapshot.legacyMemory, [
+          'injuries', 'allergies', 'favoriteFoods', 'dislikedFoods', 'dailyHabits',
+          'motivationLevel', 'lastWorkout', 'weightLog', 'plans',
+        ]))}
+        {card(en ? 'Relationship memory' : 'Лична памет', snapshot.relationshipMemory.map((entry) =>
+          [String(entry.category || 'memory'), entry.value] as [string, unknown]))}
+        {card(en ? 'Recent check-ins — latest 30' : 'Последни check-in записи — до 30', snapshot.checkins.map((entry) =>
+          [String(entry.date || 'check-in'), entry] as [string, unknown]))}
+        {card(en ? 'Health log — last 30 days' : 'Здравни записи — последните 30 дни', snapshot.healthLogs.map((entry) =>
+          [`${String(entry.date || '')} · ${String(entry.category || '')}`, entry.value]))}
+        {card(en ? 'Reminders' : 'Напомняния', snapshot.reminders.map((entry) =>
+          [String(entry.title || entry.id || 'reminder'), {
+            time: entry.time, days: entry.days, paused: entry.paused,
+          }] as [string, unknown]))}
+        {card(en ? 'Plan access' : 'План и достъп', [
+          [en ? 'Plan' : 'План', planLabels[snapshot.entitlement.plan] || snapshot.entitlement.plan],
+          [en ? 'Status' : 'Статус', statusLabels[snapshot.entitlement.state] || statusLabels.unverified],
+          [en ? 'Available modes' : 'Достъпни режими',
+            snapshot.entitlement.allowedModes.map((mode) => modeLabels[mode] || mode)],
+          [en ? 'Verified by billing service' : 'Потвърдено от платежната услуга', snapshot.entitlement.backendVerified],
+          [en ? 'Trial expires' : 'Пробният период изтича', formatTimestamp(snapshot.entitlement.trialExpiresAt)],
+          [en ? 'Plan expires' : 'Планът изтича', formatTimestamp(snapshot.entitlement.planExpiresAt)],
+        ])}
+        {snapshot.ownerDossier && card(en ? 'Owner dossier' : 'Owner досие',
+          snapshot.ownerDossier.map((entry) => [String(entry.id), entry.value] as [string, unknown]))}
+        <section className="panel">
+          <h2>{en ? 'Editing' : 'Редактиране'}</h2>
+          <p>{en ? 'Editing is temporarily disabled until all writes use the bot-owned storage boundary.' :
+            'Редактирането е временно изключено, докато всички записи не минават през единната bot-owned граница.'}</p>
+        </section>
+      </>}
     </main>
   );
 }

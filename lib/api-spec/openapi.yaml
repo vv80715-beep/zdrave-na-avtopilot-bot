@@ -78,6 +78,35 @@ paths:
           description: Valid owner session required
         "403":
           description: Request is not from the configured origin
+  /mini-app/profile:
+    post:
+      operationId: readMiniAppProfileSnapshot
+      tags: [mini-app]
+      summary: Read the authenticated Telegram user's existing bot profile and progress stores
+      description: Read-only. The Telegram ID comes only from the signed server session. The API forwards a signed internal claim to the existing bot process, which owns legacy JSON access. Owner dossier is included only for the verified owner.
+      security:
+        - MiniAppSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MiniAppProfileRequest"
+      responses:
+        "200":
+          description: Authenticated user's existing read-only bot data and entitlement status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniAppProfileResponse"
+        "400":
+          description: Invalid request or client-supplied identity
+        "401":
+          description: Valid Telegram session required
+        "403":
+          description: Request is not from the configured origin
+        "503":
+          description: Internal bot bridge, legacy store, or entitlement service unavailable
   /mini-app/media/image:
     post:
       operationId: postMiniAppOwnerImage
@@ -201,6 +230,20 @@ components:
           enum: [bg, en]
       required: [message]
       additionalProperties: false
+    MiniAppProfileRequest:
+      type: object
+      additionalProperties: false
+    MiniAppProfileResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        mode:
+          type: string
+          const: read_only
+        snapshot:
+          type: object
+          additionalProperties: true
+      required: [mode, snapshot]
     MiniAppDemoChatResponse:
       type: object
       properties:

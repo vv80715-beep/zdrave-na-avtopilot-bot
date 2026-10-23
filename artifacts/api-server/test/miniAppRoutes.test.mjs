@@ -58,6 +58,9 @@ async function serverHarness({
   ownerDossierFaq,
   ownerDossierPath,
   ownerDossierFixture,
+  readProfileSnapshot,
+  bridgeSecret,
+  bridgeFetch,
 } = {}) {
   let generatedDossierRoot;
   let resolvedDossierPath = ownerDossierPath;
@@ -81,6 +84,9 @@ async function serverHarness({
     ownerDossierContext,
     ownerDossierFaq,
     ownerDossierPath: resolvedDossierPath,
+    readProfileSnapshot,
+    bridgeSecret,
+    bridgeFetch,
   });
   app.use((_req, res) => res.status(404).json({ error: "not_found" }));
   const server = app.listen(0, "127.0.0.1");
@@ -1069,6 +1075,77 @@ test("profile/progress GET remains unavailable even with a valid owner session",
     });
     assert.equal(response.status, 404);
     assert.deepEqual(await response.json(), { error: "not_found" });
+  } finally {
+    await h.close();
+  }
+});
+
+test("read-only profile snapshot uses only the verified session identity and isolates owner plus two clients", async () => {
+  const snapshots = new Map([
+    [OWNER_ID, { profile: { label: "synthetic owner" }, ownerDossier: ["owner-only"] }],
+    ["987654321", { profile: { label: "synthetic client one" } }],
+    ["876543219", { profile: { label: "synthetic client two" } }],
+  ]);
+  const h = await serverHarness({
+    readProfileSnapshot: async userId => snapshots.get(userId),
+  });
+  try {
+    const users = [OWNER_ID, "987654321", "876543219"];
+    for (const [index, userId] of users.entries()) {
+      const login = await h.request("/session", {
+        initData: signedInitData({ userId, authDate: NOW_SECONDS - 100 - index }),
+      });
+      assert.equal(login.status, 200);
+      const cookie = login.headers.get("set-cookie").split(";")[0];
+      const response = await h.request("/profile", {}, { cookie });
+      assert.equal(response.status, 200);
+      const body = await response.json();
+      assert.equal(body.mode, "read_only");
+      assert.deepEqual(body.snapshot, snapshots.get(userId));
+    }
+
+    const clientLogin = await h.request("/session", {
+      initData: signedInitData({ userId: "987654321", authDate: NOW_SECONDS - 200 }),
+    });
+    const clientCookie = clientLogin.headers.get("set-cookie").split(";")[0];
+    const spoof = await h.request("/profile", { userId: OWNER_ID }, { cookie: clientCookie });
+    assert.equal(spoof.status, 400);
+    assert.deepEqual(await spoof.json(), { error: "invalid_request" });
+  } finally {
+    await h.close();
+  }
+});
+
+test("API signs the verified session subject for the loopback bot bridge", async () => {
+  const bridgeSecret = "synthetic-api-bridge-key-with-more-than-32-characters";
+  const { verifyClaim } = require("../../../bot/miniAppBridgeAuth.js");
+  let bridgeCall;
+  const h = await serverHarness({
+    bridgeSecret,
+    bridgeFetch: async (url, init) => {
+      bridgeCall = { url: String(url), init };
+      const claim = init.headers.Authorization.slice("Bearer ".length);
+      const verified = verifyClaim(claim, bridgeSecret, Math.floor(Date.now() / 1000));
+      assert.equal(verified.userId, "987654321");
+      assert.equal(init.body, "{}");
+      return new Response(JSON.stringify({
+        ok: true,
+        snapshot: { profile: { label: "synthetic bot-owned data" } },
+      }));
+    },
+  });
+  try {
+    const login = await h.request("/session", {
+      initData: signedInitData({ userId: "987654321" }),
+    });
+    const cookie = login.headers.get("set-cookie").split(";")[0];
+    const response = await h.request("/profile", {}, { cookie });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      mode: "read_only",
+      snapshot: { profile: { label: "synthetic bot-owned data" } },
+    });
+    assert.equal(bridgeCall.url, "http://127.0.0.1:3001/internal/mini-app/profile-snapshot");
   } finally {
     await h.close();
   }

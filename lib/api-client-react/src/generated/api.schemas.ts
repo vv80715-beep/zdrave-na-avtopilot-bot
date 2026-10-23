@@ -39,6 +39,15 @@ export interface MiniAppDemoChatInput {
   language?: MiniAppDemoChatInputLanguage;
 }
 
+export interface MiniAppProfileRequest { [key: string]: unknown }
+
+export type MiniAppProfileResponseSnapshot = { [key: string]: unknown };
+
+export interface MiniAppProfileResponse {
+  mode: 'read_only';
+  snapshot: MiniAppProfileResponseSnapshot;
+}
+
 export interface MiniAppDemoChatResponse {
   reply: string;
   demo: true;

@@ -72,6 +72,12 @@ function ensureUser(userId, now = Date.now()) {
   return data[key];
 }
 
+// Read-only lookup for Mini App status views. Unlike ensureUser, this never
+// creates a trial record as a side effect of reading the profile.
+function getExistingUserEntitlement(userId) {
+  return load()[String(userId)] || null;
+}
+
 // Local activation path for owner/admin testing only. Customer purchases are
 // fulfilled by the Bolt backend and must never call this function.
 function activatePlan(userId, plan, { activatedAt, expiresAt } = {}) {
@@ -194,6 +200,7 @@ function checkQuota(userId, feature) {
 
 module.exports = {
   ensureUser,
+  getExistingUserEntitlement,
   activatePlan,
   getStatus,
   isModeAllowed,

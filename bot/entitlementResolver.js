@@ -4,7 +4,7 @@
 // text access, but Voice/Avatar always fail closed.
 
 const { EliPlatformClient, CANONICAL_PLAN_IDS } = require('./boltPlatformClient');
-const { ensureUser, PLAN_RULES } = require('./entitlements');
+const { ensureUser, getExistingUserEntitlement, PLAN_RULES } = require('./entitlements');
 
 const CACHE_TTL_MS = 30 * 1000;
 const cache = new Map();
@@ -47,7 +47,7 @@ function modesFrom(entitlement, planId) {
   return unique;
 }
 
-function activePaidStatus(userId, entitlement, now) {
+function activePaidStatus(userId, entitlement, now, readOnly = false) {
   if (!entitlement) return null;
   // Authorization is deliberately strict: malformed/unknown objects never
   // grant paid access. Bolt must explicitly identify this Telegram user and
@@ -67,7 +67,7 @@ function activePaidStatus(userId, entitlement, now) {
   if (startsAt > now || now >= planExpiresAt) return null;
   const allowedModes = modesFrom(entitlement, plan);
   if (!allowedModes.includes('text')) throw new Error('invalid entitlement modes');
-  const local = ensureUser(userId, now);
+  const local = readOnly ? getExistingUserEntitlement(userId) : ensureUser(userId, now);
   return {
     plan,
     state: 'paid',
@@ -79,8 +79,27 @@ function activePaidStatus(userId, entitlement, now) {
   };
 }
 
-function localFallbackStatus(userId, now, { hadPaid = false, backendVerified = false } = {}) {
-  const local = ensureUser(userId, now);
+function localFallbackStatus(userId, now, {
+  hadPaid = false,
+  backendVerified = false,
+  readOnly = false,
+} = {}) {
+  const local = readOnly ? getExistingUserEntitlement(userId) : ensureUser(userId, now);
+  if (!local) {
+    return {
+      plan: 'free',
+      state: hadPaid
+        ? 'paid_expired'
+        : backendVerified
+          ? 'trial_not_started'
+          : 'unverified',
+      allowedModes: [],
+      canChat: false,
+      planExpiresAt: null,
+      trialExpiresAt: null,
+      backendVerified,
+    };
+  }
   const trialActive = Boolean(local.trialExpiresAt && now < local.trialExpiresAt);
   const localHadPaid = local.plan && local.plan !== 'free';
   return {
@@ -98,7 +117,11 @@ function localFallbackStatus(userId, now, { hadPaid = false, backendVerified = f
   };
 }
 
-async function resolveEntitlementStatus(userId, { forceRefresh = false, now = Date.now() } = {}) {
+async function resolveEntitlementStatus(userId, {
+  forceRefresh = false,
+  now = Date.now(),
+  readOnly = false,
+} = {}) {
   const key = String(userId);
   const prior = cache.get(key);
   const priorCacheExpiresAt = prior
@@ -107,25 +130,27 @@ async function resolveEntitlementStatus(userId, { forceRefresh = false, now = Da
       prior.status.planExpiresAt || Number.POSITIVE_INFINITY
     )
     : 0;
-  if (!forceRefresh && prior && now < priorCacheExpiresAt) {
+  if (!readOnly && !forceRefresh && prior && now < priorCacheExpiresAt) {
     return { ...prior.status, allowedModes: [...prior.status.allowedModes] };
   }
 
   try {
     const response = await platformClient().getEntitlement(key);
-    const paid = activePaidStatus(key, response.entitlement, now);
+    const paid = activePaidStatus(key, response.entitlement, now, readOnly);
     const status =
       paid ||
       localFallbackStatus(key, now, {
         hadPaid: Boolean(response.entitlement),
         backendVerified: true,
+        readOnly,
       });
-    cache.set(key, { cachedAt: now, status });
+    if (!readOnly) cache.set(key, { cachedAt: now, status });
     return { ...status, allowedModes: [...status.allowedModes] };
   } catch (_) {
     // A previously verified paid response can keep TEXT available briefly, but
     // paid provider modes are stripped on every backend failure.
     if (
+      !readOnly &&
       prior?.status?.state === 'paid' &&
       prior.status.canChat &&
       now < priorCacheExpiresAt
@@ -141,6 +166,7 @@ async function resolveEntitlementStatus(userId, { forceRefresh = false, now = Da
     const status = localFallbackStatus(key, now, {
       hadPaid: prior?.status?.state === 'paid',
       backendVerified: false,
+      readOnly,
     });
     return status;
   }

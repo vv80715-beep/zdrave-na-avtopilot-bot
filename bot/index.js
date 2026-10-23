@@ -105,6 +105,7 @@ const userMemory = require('./commands/userMemory');
 const coach = require('./commands/coach');
 const reminders = require('./commands/reminders');
 const { startBotRuntimeWithHealthServer } = require('./startup');
+const { createMiniAppBridgeRouter } = require('./miniAppBridge');
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const PORT = process.env.PORT || 3001;
@@ -889,6 +890,10 @@ bot.catch((err, ctx) => {
 
 const app = express();
 app.use(express.json());
+// Mini App reads go through the existing bot process, which owns legacy stores.
+// The bridge binds to this process's already-singleton health listener and
+// independently requires loopback + a signed, short-lived internal claim.
+app.use(createMiniAppBridgeRouter());
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', bot: 'running' });

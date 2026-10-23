@@ -25,6 +25,8 @@ import type {
   MiniAppDemoChatResponse,
   MiniAppImageResult,
   MiniAppImageUpload,
+  MiniAppProfileRequest,
+  MiniAppProfileResponse,
   MiniAppSession,
   MiniAppSessionInput,
   MiniAppVoiceResult,
@@ -274,6 +276,77 @@ export const usePostMiniAppDemoChat = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getPostMiniAppDemoChatMutationOptions(options));
+    }
+
+export const getReadMiniAppProfileSnapshotUrl = () => {
+
+
+
+
+  return `/api/mini-app/profile`
+}
+
+/**
+ * Read-only. The Telegram ID comes only from the signed server session. The API forwards a signed internal claim to the existing bot process, which owns legacy JSON access. Owner dossier is included only for the verified owner.
+ * @summary Read the authenticated Telegram user's existing bot profile and progress stores
+ */
+export const readMiniAppProfileSnapshot = async (miniAppProfileRequest: MiniAppProfileRequest, options?: RequestInit): Promise<MiniAppProfileResponse> => {
+
+  return customFetch<MiniAppProfileResponse>(getReadMiniAppProfileSnapshotUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(miniAppProfileRequest)
+  }
+);}
+
+
+
+
+export const getReadMiniAppProfileSnapshotMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof readMiniAppProfileSnapshot>>, TError,{data: BodyType<MiniAppProfileRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof readMiniAppProfileSnapshot>>, TError,{data: BodyType<MiniAppProfileRequest>}, TContext> => {
+
+const mutationKey = ['readMiniAppProfileSnapshot'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof readMiniAppProfileSnapshot>>, {data: BodyType<MiniAppProfileRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  readMiniAppProfileSnapshot(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReadMiniAppProfileSnapshotMutationResult = NonNullable<Awaited<ReturnType<typeof readMiniAppProfileSnapshot>>>
+    export type ReadMiniAppProfileSnapshotMutationBody = BodyType<MiniAppProfileRequest>
+    export type ReadMiniAppProfileSnapshotMutationError = ErrorType<void>
+
+    /**
+ * @summary Read the authenticated Telegram user's existing bot profile and progress stores
+ */
+export const useReadMiniAppProfileSnapshot = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof readMiniAppProfileSnapshot>>, TError,{data: BodyType<MiniAppProfileRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof readMiniAppProfileSnapshot>>,
+        TError,
+        {data: BodyType<MiniAppProfileRequest>},
+        TContext
+      > => {
+      return useMutation(getReadMiniAppProfileSnapshotMutationOptions(options));
     }
 
 export const getPostMiniAppOwnerImageUrl = () => {

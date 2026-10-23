@@ -19,6 +19,25 @@ export type OwnerDemoMediaResult = {
   staged: true;
   demo: true;
 };
+export type MiniAppProfileSnapshot = {
+  profile: Record<string, unknown> | null;
+  legacyMemory: Record<string, unknown> | null;
+  relationshipMemory: Array<Record<string, unknown>>;
+  healthLogs: Array<Record<string, unknown>>;
+  checkins: Array<Record<string, unknown>>;
+  reminders: Array<Record<string, unknown>>;
+  entitlement: {
+    plan: string;
+    state: string;
+    allowedModes: string[];
+    canChat: boolean;
+    planExpiresAt: number | null;
+    trialExpiresAt: number | null;
+    backendVerified: boolean;
+  };
+  mode: string;
+  ownerDossier?: Array<Record<string, unknown>>;
+};
 
 export class MiniAppStageError extends Error {
   readonly code: string;
@@ -94,6 +113,25 @@ export async function ensureOwnerSession(
   if (body.ok !== true || typeof body.expiresAt !== "string") {
     throw new MiniAppStageError("invalid_response", response.status);
   }
+}
+
+export async function getMiniAppProfileSnapshot(
+  initData: string,
+  fetchFn: FetchLike = fetch,
+): Promise<MiniAppProfileSnapshot> {
+  await ensureOwnerSession(initData, fetchFn);
+  const response = await sameOriginRequest("/api/mini-app/profile", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({}),
+  }, fetchFn);
+  const body = await responseBody(response);
+  if (!response.ok) throw new MiniAppStageError(safeErrorCode(body), response.status);
+  if (body.mode !== "read_only" || !body.snapshot || typeof body.snapshot !== "object" ||
+      Array.isArray(body.snapshot)) {
+    throw new MiniAppStageError("invalid_response", response.status);
+  }
+  return body.snapshot as MiniAppProfileSnapshot;
 }
 
 export async function sendOwnerDemoChat(
