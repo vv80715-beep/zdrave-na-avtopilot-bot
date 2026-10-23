@@ -715,6 +715,7 @@ async function askEli(ctx, question, opts = {}) {
         ...priorMessages,
         { role: 'user', content: question },
       ],
+      ...(opts.forceTextDelivery ? { signal: AbortSignal.timeout(30_000) } : {}),
       // Technical response-length control (cost): free-trial answers are
       // hard-capped shorter than premium ones, independent of prompt wording.
       max_tokens: avatarMode ? 125 : voiceMode ? 300 : freePlan ? 250 : 600,

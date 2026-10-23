@@ -58,6 +58,7 @@ test('internal bridge requires valid short-lived signed claims and rejects repla
     assert.deepEqual(verifyClaim(token, SECRET, NOW), {
       userId: CLIENT_ONE,
       nonce: verifyClaim(token, SECRET, NOW).nonce,
+      path: CLAIM_PATH,
     });
     const response = await server.request(token, { userId: OWNER });
     assert.equal(response.status, 200);

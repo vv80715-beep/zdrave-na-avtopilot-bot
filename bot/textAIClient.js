@@ -116,7 +116,7 @@ function createGeminiClient({ apiKey, model, userId, fetchFn = global.fetch, log
                 'x-goog-api-key': apiKey,
               },
               body: JSON.stringify(body),
-              signal: AbortSignal.timeout(30_000),
+              signal: options.signal || AbortSignal.timeout(30_000),
             });
           } catch {
             throw new Error('gemini_network_error');
@@ -181,7 +181,11 @@ function getTextAIClient(userId, env = process.env) {
       chat: {
         completions: {
           async create(options = {}) {
-            const result = await openai.chat.completions.create(options);
+            const { signal, ...parameters } = options;
+            const result = await openai.chat.completions.create(
+              parameters,
+              signal ? { signal } : undefined,
+            );
             const modelName = options.model || 'unknown';
             const prices = MODEL_PRICES[modelName];
             const promptTokens = Number(result?.usage?.prompt_tokens) || 0;

@@ -507,7 +507,10 @@ export function createMiniAppRouter(
         return;
       }
       const body = await response.json() as { ok?: unknown; reply?: unknown; kind?: unknown };
-      res.json(PostMiniAppTextTurnResponse.parse(body));
+      res.json(PostMiniAppTextTurnResponse.parse({
+        reply: body.reply,
+        kind: body.kind,
+      }));
     } catch (error) {
       const timeout = error instanceof Error && error.name === "TimeoutError";
       sendError(res, timeout ? 504 : 503, timeout ? "text_engine_timeout" : "text_engine_unavailable");
