@@ -220,8 +220,10 @@ function isPublicHttpsOrigin(value: string | undefined): value is string {
 }
 
 export function miniAppConfigEnabled(env: Env): boolean {
-  return env.NODE_ENV === "development" &&
-    env.ELI_MINI_APP_STAGE === "staging" &&
+  const stageMatchesRuntime =
+    (env.NODE_ENV === "development" && env.ELI_MINI_APP_STAGE === "staging") ||
+    (env.NODE_ENV === "production" && env.ELI_MINI_APP_STAGE === "production");
+  return stageMatchesRuntime &&
     env.ELI_MINI_APP_SESSION_ENABLED === "true" &&
     isPublicHttpsOrigin(env.ELI_MINI_APP_ORIGIN) &&
     /^[1-9]\d{4,19}$/.test(env.OWNER_TELEGRAM_ID || "") &&
@@ -301,7 +303,10 @@ export function createMiniAppRouter(
   const mediaEnabled = env.ELI_MINI_APP_MEDIA_MOCK_ENABLED === "true";
   const textAiEnabled = env.ELI_MINI_APP_TEXT_AI_ENABLED === "true";
   const ownerDossierEnabled = env.NODE_ENV === "development" &&
+    env.ELI_MINI_APP_STAGE === "staging" &&
     env.ELI_MINI_APP_OWNER_DOSSIER_ENABLED === "true";
+  const ownerOnlyStage = env.NODE_ENV === "development" &&
+    env.ELI_MINI_APP_STAGE === "staging";
   const ownerDossierPath = ownerDossierEnabled
     ? options.ownerDossierPath || canonicalOwnerDossierPath()
     : undefined;
@@ -357,8 +362,9 @@ export function createMiniAppRouter(
     const previousUse = usedInitData.get(fingerprint);
     if (previousUse) {
       const existing = readValidSession(req, sessionSecret, Math.floor(timestamp / 1000));
-      if (previousUse.userId === ownerId &&
-          "session" in existing && existing.session.sub === ownerId) {
+      if ("session" in existing &&
+          previousUse.userId === existing.session.sub &&
+          (!ownerOnlyStage || existing.session.sub === ownerId)) {
         res.json({
           ok: true,
           expiresAt: new Date(existing.session.exp * 1000).toISOString(),
@@ -382,7 +388,7 @@ export function createMiniAppRouter(
       sendError(res, 401, "invalid_init_data");
       return;
     }
-    if (identity.telegramUserId !== ownerId) {
+    if (ownerOnlyStage && identity.telegramUserId !== ownerId) {
       sendError(res, 403, "owner_only");
       return;
     }
@@ -429,11 +435,13 @@ export function createMiniAppRouter(
     });
   };
 
-  // This router is a development-only owner canary. Require the owner session
-  // for every route registered after this point, including routes added later.
+  // Keep development staging owner-only. Production uses the validated
+  // per-user Telegram session for every route registered after this point.
   router.use((req, res, next) => {
     if (req.path === "/session") return next();
-    return requireOwnerSession(req, res, next);
+    return ownerOnlyStage
+      ? requireOwnerSession(req, res, next)
+      : requireSession(req, res, next);
   });
 
   const readProfileSnapshot = options.readProfileSnapshot || (async (userId: string) => {
@@ -460,7 +468,7 @@ export function createMiniAppRouter(
     return body.snapshot as MiniAppSnapshot;
   });
 
-  router.post("/profile", requireOwnerSession, async (req, res): Promise<void> => {
+  router.post("/profile", requireSession, async (req, res): Promise<void> => {
     const requestBody = ReadMiniAppProfileSnapshotBody.safeParse(req.body);
     if (!requestBody.success || !req.body || Object.keys(req.body).length !== 0) {
       sendError(res, 400, "invalid_request");
@@ -476,7 +484,7 @@ export function createMiniAppRouter(
     }
   });
 
-  router.post("/chat", requireOwnerSession, async (req, res): Promise<void> => {
+  router.post("/chat", requireSession, async (req, res): Promise<void> => {
     const parsed = PostMiniAppTextTurnBody.safeParse(req.body);
     if (!parsed.success) {
       sendError(res, 400, "invalid_request");
@@ -487,7 +495,7 @@ export function createMiniAppRouter(
       return;
     }
     try {
-      const userId = res.locals.miniAppOwnerId as string;
+      const userId = res.locals.miniAppUserId as string;
       const claim = (miniAppBridgeAuth as {
         createClaim: (userId: string, secret: string, now?: number, path?: string) => string;
       }).createClaim(userId, bridgeSecret, undefined, "/internal/mini-app/text-turn");
@@ -529,14 +537,14 @@ export function createMiniAppRouter(
     }
   });
 
-  router.post("/mutations", requireOwnerSession, async (req, res): Promise<void> => {
+  router.post("/mutations", requireSession, async (req, res): Promise<void> => {
     const parsed = PostMiniAppMutationBody.safeParse(req.body);
     if (!parsed.success || !bridgeSecret.trim() || bridgeSecret.trim().length < 32) {
       sendError(res, parsed.success ? 503 : 400, parsed.success ? "mutation_unavailable" : "invalid_request");
       return;
     }
     try {
-      const userId = res.locals.miniAppOwnerId as string;
+      const userId = res.locals.miniAppUserId as string;
       const claim = (miniAppBridgeAuth as {
         createClaim: (userId: string, secret: string, now?: number, path?: string) => string;
       }).createClaim(userId, bridgeSecret, undefined, "/internal/mini-app/mutate");

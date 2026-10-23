@@ -21,8 +21,8 @@ const HEYGEN_BASE = 'https://api.heygen.com';
 // Avatar-only script limits. Keep complete Bulgarian sentences; if an
 // over-limit answer has no safe sentence boundary, skip video rather than
 // submitting an ugly or semantically incomplete fragment.
-const MAX_AVATAR_TEXT_CHARS = 180;
-const MAX_AVATAR_WORDS = 22;
+const MAX_AVATAR_TEXT_CHARS = 220;
+const MAX_AVATAR_WORDS = 30;
 
 function countWords(text) {
   return (String(text || '').match(/\S+/gu) || []).length;

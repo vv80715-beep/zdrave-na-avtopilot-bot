@@ -175,6 +175,10 @@ test("staging API is not mounted when the flag, stage, owner, origin, or secrets
   assert.equal(miniAppConfigEnabled(config({ SESSION_SECRET: "" })), false);
   assert.equal(miniAppConfigEnabled(config({ ELI_MINI_APP_ORIGIN: "http://eli-stage.replit.dev" })), false);
   assert.equal(miniAppConfigEnabled(config({ ELI_MINI_APP_ORIGIN: "https://localhost" })), false);
+  assert.equal(miniAppConfigEnabled(config({
+    NODE_ENV: "production",
+    ELI_MINI_APP_STAGE: "production",
+  })), true);
 
   const h = await serverHarness({ env: config({ ELI_MINI_APP_SESSION_ENABLED: "false" }) });
   try {
@@ -1000,6 +1004,63 @@ test("staging profile snapshot reads owner data only and rejects client identiti
       const stale = await h.request("/profile", {}, { cookie: legacyCookieFor(userId) });
       assert.equal(stale.status, 403);
     }
+  } finally {
+    await h.close();
+  }
+});
+
+test("production Mini App sessions are per-user and bind profile reads and chat claims to that user", async () => {
+  const customerId = "987654321";
+  const bridgeSecret = "synthetic-api-bridge-key-with-more-than-32-characters";
+  const seenProfileIds = [];
+  let chatClaim;
+  const h = await serverHarness({
+    env: config({ NODE_ENV: "production", ELI_MINI_APP_STAGE: "production" }),
+    readProfileSnapshot: async userId => {
+      seenProfileIds.push(userId);
+      return { profile: { label: "synthetic customer" } };
+    },
+    bridgeSecret,
+    bridgeFetch: async (_url, init) => {
+      const bearer = init.headers.Authorization.slice("Bearer ".length);
+      const encodedClaims = bearer.split(".")[0];
+      const claims = JSON.parse(Buffer.from(encodedClaims, "base64url").toString("utf8"));
+      chatClaim = { userId: claims.sub, path: claims.path };
+      return new Response(JSON.stringify({
+        ok: true,
+        reply: "synthetic customer reply",
+        kind: "eli_text",
+      }), { status: 200 });
+    },
+  });
+  try {
+    const login = await h.request("/session", {
+      initData: signedInitData({ userId: customerId }),
+    });
+    assert.equal(login.status, 200);
+    const cookie = login.headers.get("set-cookie").split(";")[0];
+
+    const repeatedSession = await h.request(
+      "/session",
+      { initData: signedInitData({ userId: customerId }) },
+      { cookie },
+    );
+    assert.equal(repeatedSession.status, 200);
+    assert.equal(repeatedSession.headers.get("set-cookie"), null);
+
+    const profile = await h.request("/profile", {}, { cookie });
+    assert.equal(profile.status, 200);
+    assert.deepEqual(seenProfileIds, [customerId]);
+
+    const chat = await h.request("/chat", {
+      message: "synthetic customer prompt",
+      mode: "text",
+      turnId: "f9b2d7a0-0e22-4e10-a987-7eea4ebf0667",
+    }, { cookie });
+    assert.equal(chat.status, 200);
+    assert.equal((await chat.json()).reply, "synthetic customer reply");
+    assert.equal(chatClaim.userId, customerId);
+    assert.equal(chatClaim.path, "/internal/mini-app/text-turn");
   } finally {
     await h.close();
   }

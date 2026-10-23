@@ -38,8 +38,8 @@ test("failed or unknown reply sources are never labeled as AI or mock", () => {
 test("API-delivered user messages never receive a local-only status", () => {
   const apiKey = getUserMessageTimeKey("api");
   assert.equal(apiKey, "apiMessageTime");
-  assert.equal(translate("bg", apiKey), "изпратено към тестовия чат");
-  assert.equal(translate("en", apiKey), "sent to the test chat");
+  assert.equal(translate("bg", apiKey), "изпратено към Ели");
+  assert.equal(translate("en", apiKey), "sent to Eli");
   assert.equal(translate("bg", getUserMessageTimeKey("local")), "локално · не е изпратено");
   assert.equal(getUserMessageTimeKey(undefined), null);
 });

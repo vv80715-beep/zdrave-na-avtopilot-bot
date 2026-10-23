@@ -220,11 +220,11 @@ function Home() {
               <span className="mode-action-copy"><strong>{t('actionText')}</strong><small>{t('actionTextHint')}</small></span>
               <ArrowRight className="mode-action-arrow" size={15} />
             </Link>
-            <button className="mode-action" type="button" data-testid="button-home-mode-voice" onClick={() => setModeNotice('modeVoiceNotice')}>
+            <button className="mode-action" type="button" data-testid="button-home-mode-voice" onClick={() => setModeNotice(import.meta.env.PROD ? 'modeVoiceNotice' : 'modeVoiceDemoNotice')}>
               <AudioLines className="mode-action-icon" size={18} />
               <span className="mode-action-copy"><strong>{t('actionVoice')}</strong><small>{t('actionVoiceHint')}</small></span>
             </button>
-            <button className="mode-action" type="button" data-testid="button-home-mode-avatar" onClick={() => setModeNotice('modeAvatarNotice')}>
+            <button className="mode-action" type="button" data-testid="button-home-mode-avatar" onClick={() => setModeNotice(import.meta.env.PROD ? 'modeAvatarNotice' : 'modeAvatarDemoNotice')}>
               <Video className="mode-action-icon" size={18} />
               <span className="mode-action-copy"><strong>{t('actionAvatar')}</strong><small>{t('actionAvatarHint')}</small></span>
             </button>
@@ -296,13 +296,16 @@ function Chat() {
   const shouldFollowConversationRef = useRef(true);
   const telegram = window.Telegram?.WebApp;
   const signedInitData = telegram?.initData?.trim() || '';
-  const canUseOwnerStage = import.meta.env.VITE_ELI_MINI_APP_STAGING_ENABLED === 'true' &&
+  const canUseTelegramSession = (
+    import.meta.env.VITE_ELI_MINI_APP_STAGING_ENABLED === 'true' ||
+    import.meta.env.PROD
+  ) &&
     window.isSecureContext &&
     window.location.protocol === 'https:' &&
     Boolean(telegram?.platform && signedInitData);
 
   useEffect(() => {
-    if (!canUseOwnerStage) {
+    if (!canUseTelegramSession) {
       setStageMode('local');
       return;
     }
@@ -322,7 +325,7 @@ function Chat() {
       }
     });
     return () => { current = false; };
-  }, [canUseOwnerStage, signedInitData]);
+  }, [canUseTelegramSession, signedInitData]);
 
   useLayoutEffect(() => {
     if (!hasMountedConversation.current) {
@@ -362,7 +365,7 @@ function Chat() {
       conversation.scrollHeight - conversation.clientHeight - conversation.scrollTop <= 72;
     const text = draft.trim();
     const attachment = media.attachment;
-    const sendText = canUseOwnerStage && Boolean(text);
+    const sendText = canUseTelegramSession && Boolean(text);
     if (sendText && ambiguousDraft === text) {
       setStageError('stageProviderUncertain');
       setStageErrorCanRetry(false);
@@ -653,7 +656,7 @@ function Chat() {
               }}
               data-testid="input-demo-message"
             />
-            <button className="send-button" type="submit" aria-label={t(canUseOwnerStage ? 'sendAriaStage' : 'sendAria')} data-testid="button-demo-send" disabled={sending || (canUseOwnerStage && stageMode === 'checking') || (ambiguousDraft !== null && ambiguousDraft === draft.trim()) || (!draft.trim() && !media.attachment)}>
+            <button className="send-button" type="submit" aria-label={t(canUseTelegramSession ? 'sendAriaStage' : 'sendAria')} data-testid="button-demo-send" disabled={sending || (canUseTelegramSession && stageMode === 'checking') || (ambiguousDraft !== null && ambiguousDraft === draft.trim()) || (!draft.trim() && !media.attachment)}>
               {sending ? <Clock3 size={16} /> : <Send size={16} />}
             </button>
           </form>
@@ -661,7 +664,7 @@ function Chat() {
             stageMode === 'live'
               ? 'stagingLiveDisclosure'
               :
-              canUseOwnerStage ? 'stagingComposerDisclosure' : 'composerDisclosure'
+              canUseTelegramSession ? 'stagingComposerDisclosure' : 'composerDisclosure'
           )}</p>
         </section>
       </div>

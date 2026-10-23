@@ -39,20 +39,19 @@ function createCaptureContext(userId, message, updateId) {
 }
 
 function createMiniAppTextTurnHandler({
-  isOwnerId,
   hasTextAIProvider,
   gateChat,
   askEli,
 }) {
-  if (![isOwnerId, hasTextAIProvider, gateChat, askEli].every((fn) => typeof fn === 'function')) {
+  if (![hasTextAIProvider, gateChat, askEli].every((fn) => typeof fn === 'function')) {
     throw new TypeError('Mini App text-turn dependencies are required.');
   }
 
   return async function processMiniAppTextTurn({ userId, message, mode = 'text', turnId }) {
     const id = String(userId);
-    if (!/^[1-9]\d{4,19}$/.test(id) || !isOwnerId(id)) {
-      const error = new Error('owner_only');
-      error.code = 'owner_only';
+    if (!/^[1-9]\d{4,19}$/.test(id)) {
+      const error = new Error('invalid_request');
+      error.code = 'invalid_request';
       throw error;
     }
     if (typeof message !== 'string' || !message.trim() || message.length > 1200) {
@@ -67,12 +66,6 @@ function createMiniAppTextTurnHandler({
       error.code = 'invalid_request';
       throw error;
     }
-    if (!hasTextAIProvider(id)) {
-      const error = new Error('text_ai_unavailable');
-      error.code = 'text_ai_unavailable';
-      throw error;
-    }
-
     const digest = crypto.createHash('sha256').update(`${id}:${turnId}`).digest();
     const updateId = Number(digest.readBigUInt64BE(0) % BigInt(Number.MAX_SAFE_INTEGER - 1)) + 1;
     const ctx = createCaptureContext(id, message.trim(), updateId);
@@ -80,6 +73,12 @@ function createMiniAppTextTurnHandler({
     if (!status) {
       if (ctx.replies.length !== 1) throw new Error('text_turn_no_gate_reply');
       return { reply: ctx.replies[0], kind: 'access_denied' };
+    }
+
+    if (!hasTextAIProvider(id)) {
+      const error = new Error('text_ai_unavailable');
+      error.code = 'text_ai_unavailable';
+      throw error;
     }
 
     await askEli(ctx, message.trim(), {

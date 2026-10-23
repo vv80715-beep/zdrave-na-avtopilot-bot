@@ -111,7 +111,6 @@ const { createMiniAppSnapshotReader } = require('./miniAppReadModel');
 const { createMiniAppTextTurnHandler } = require('./miniAppTextTurn');
 
 const processMiniAppTextTurn = createMiniAppTextTurnHandler({
-  isOwnerId,
   hasTextAIProvider,
   gateChat,
   askEli,
@@ -704,7 +703,7 @@ async function askEli(ctx, question, opts = {}) {
   if (avatarMode) {
     systemContent +=
       '\n\nВАЖНО ЗА ВИДЕО АВАТАРА: Напиши естествен говорим текст на български, ' +
-      'обикновено за 8–15 секунди и ориентировъчно 20–22 думи. Изрази една основна ' +
+      'обикновено за 8–15 секунди и до 30 думи/220 знака. Изрази една основна ' +
       'мисъл и една конкретна следваща стъпка; без подробен списък, повторения, ' +
       'представяне или пълнеж. Използвай кратки, завършени изречения и запази топлия ' +
       'естествен тон и обичайната скорост на говор. Не съкращавай дума или изречение.' +
@@ -779,11 +778,13 @@ async function askEli(ctx, question, opts = {}) {
       let pendingAvatar = false;
       let insufficientAvatarTime = false;
       let avatarDurationExceeded = false;
+      let avatarProviderBillingIssue = false;
       const ok = await sendAvatarReply(ctx, finalAnswer, {
         lookId, onQuotaExceeded: () => { avatarTimeExhausted = true; },
         onPending: () => { pendingAvatar = true; },
         onInsufficientTime: () => { insufficientAvatarTime = true; },
         onDurationExceeded: () => { avatarDurationExceeded = true; },
+        onProviderBillingIssue: () => { avatarProviderBillingIssue = true; },
       });
       if (!ok) {
         await ctx.reply(avatarTimeExhausted
@@ -794,6 +795,8 @@ async function askEli(ctx, question, opts = {}) {
               ? `${finalAnswer}\n\n🎬 Готовото видео надхвърли лимита от 20 секунди, затова не го изпращам. Отчитам реалната продължителност и ти давам пълния отговор с текст; няма да стартирам второ видео автоматично.`
           : pendingAvatar
             ? `${finalAnswer}\n\n🎬 Предишно видео все още се проверява. Няма да започвам ново, докато състоянието му не е потвърдено.`
+          : avatarProviderBillingIssue
+            ? `${finalAnswer}\n\n🎬 Видео аватарът е временно недостъпен заради billing ограничение при видео доставчика. Провери кредита или плана на услугата отделно; текстовият отговор е наличен.`
           : finalAnswer);
       }
     } else if (voiceMode) {

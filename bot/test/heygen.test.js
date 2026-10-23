@@ -32,6 +32,16 @@ test('short Bulgarian text passes through unchanged', () => {
   assert.strictEqual(capForAvatar(t), t);
 });
 
+test('avatar accepts the approved 30-word and 220-character ceiling', () => {
+  const words = Array(29).fill('да');
+  words.push(`${'а'.repeat(132)}.`);
+  const exactLimit = words.join(' ');
+  assert.equal(exactLimit.length, 220);
+  assert.equal(words.length, 30);
+  assert.equal(capForAvatar(exactLimit), exactLimit);
+  assert.equal(capForAvatar(`${exactLimit} а`), exactLimit);
+});
+
 test('long text is capped under the limit', () => {
   const long = 'Едно дълго изречение за здравето и съня. '.repeat(30);
   const capped = capForAvatar(long);
@@ -47,7 +57,7 @@ test('long Bulgarian answers keep only complete sentences within word and charac
   const capped = capForAvatar(long);
   assert.equal(
     capped,
-    'Пази умерено темпо и следи дишането си. Започни с три серии по десет повторения и почивай минута между тях.'
+    'Пази умерено темпо и следи дишането си. Започни с три серии по десет повторения и почивай минута между тях. Добавяй тежест постепенно всяка седмица.'
   );
   assert.ok(capped.length <= MAX_AVATAR_TEXT_CHARS);
   assert.ok(capped.split(/\s+/u).length <= MAX_AVATAR_WORDS);

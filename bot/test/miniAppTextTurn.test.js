@@ -7,7 +7,6 @@ const OWNER = '123456789';
 function setup({ provider = true, status = { canChat: true, allowedModes: ['text'] } } = {}) {
   const calls = [];
   const handler = createMiniAppTextTurnHandler({
-    isOwnerId: id => id === OWNER,
     hasTextAIProvider: () => provider,
     gateChat: async ctx => {
       calls.push('gate');
@@ -25,7 +24,7 @@ function setup({ provider = true, status = { canChat: true, allowedModes: ['text
   return { handler, calls };
 }
 
-test('Mini App turn is owner-gated, uses the Telegram gate, and forces bot text delivery', async () => {
+test('Mini App turn uses the per-user Telegram gate and forces bot text delivery', async () => {
   const { handler, calls } = setup();
   const turnId = 'f9b2d7a0-0e22-4e10-a987-7eea4ebf0667';
   const result = await handler({ userId: OWNER, message: 'synthetic prompt', mode: 'text', turnId });
@@ -34,10 +33,12 @@ test('Mini App turn is owner-gated, uses the Telegram gate, and forces bot text 
     'gate',
     { message: 'synthetic prompt', mode: 'text' },
   ]);
-  await assert.rejects(
-    handler({ userId: '987654321', message: 'synthetic prompt', mode: 'text', turnId }),
-    error => error.code === 'owner_only',
-  );
+  const customer = await handler({ userId: '987654321', message: 'synthetic customer prompt', mode: 'text', turnId });
+  assert.deepEqual(customer, { reply: 'synthetic Eli reply', kind: 'eli_text' });
+  assert.deepEqual(calls.slice(-2), [
+    'gate',
+    { message: 'synthetic customer prompt', mode: 'text' },
+  ]);
 });
 
 test('expired access returns only the gate reply and never invokes the engine', async () => {
@@ -55,14 +56,13 @@ test('unavailable provider fails closed without an AI or demo fallback', async (
     handler({ userId: OWNER, message: 'synthetic prompt', mode: 'text', turnId: 'f9b2d7a0-0e22-4e10-a987-7eea4ebf0667' }),
     error => error.code === 'text_ai_unavailable',
   );
-  assert.deepEqual(calls, []);
+  assert.deepEqual(calls, ['gate']);
 });
 
 test('voice and avatar payloads are captured for Mini App playback without Telegram delivery', async () => {
   const turnId = 'f9b2d7a0-0e22-4e10-a987-7eea4ebf0667';
   const captured = [];
   const handler = createMiniAppTextTurnHandler({
-    isOwnerId: id => id === OWNER,
     hasTextAIProvider: () => true,
     gateChat: async () => ({ canChat: true, allowedModes: ['text', 'voice', 'avatar'] }),
     askEli: async (ctx, _message, options) => {

@@ -130,6 +130,9 @@ async function sendAvatarReply(ctx, replyText, opts = {}) {
         // or a successful POST with a missing job ID are NOT safe to retry.
         const definite = /^HeyGen generate: HTTP (400|401|402|403|404|422|429)$/.test(String(error?.message || ''));
         const httpStatus = /^HeyGen generate: HTTP (\d{3})$/.exec(String(error?.message || ''))?.[1];
+        if (httpStatus === '402' || error?.avatarReason === 'provider_billing') {
+          opts.onProviderBillingIssue?.();
+        }
         console.warn('Avatar submission outcome', {
           httpStatus: httpStatus ? Number(httpStatus) : undefined,
           state: definite ? 'failed' : 'uncertain',

@@ -63,12 +63,14 @@ test('fallback wording describes total funds without promising next-period deliv
   const source = fs.readFileSync(require.resolve('../index'), 'utf8');
   assert.match(source, /Общото налично време.*включено и допълнително закупено/);
   assert.match(source, /Общото оставащо време за видео аватара/);
+  assert.match(source, /billing ограничение при видео доставчика/);
+  assert.match(source, /кредита или плана на услугата отделно/);
   assert.doesNotMatch(source, /Включените минути за видео аватара|до началото на следващия период/);
 });
 test('Avatar-only script prompt requests 8–15 seconds and a concise idea with one next step', () => {
   const index = fs.readFileSync(require.resolve('../index'), 'utf8');
   assert.match(index, /8–15 секунди/);
-  assert.match(index, /20–22 думи/);
+  assert.match(index, /до 30 думи\/220 знака/);
   assert.match(index, /една основна/);
   assert.match(index, /една конкретна следваща стъпка/);
   assert.match(index, /max_tokens: avatarMode \? 125 : voiceMode \? 300/);
@@ -158,10 +160,14 @@ test('explicit 402/429 rejection finalizes only its request and permits a new re
   for (const status of [402, 429]) {
     const c = ctx();
     const before = providerCalls;
+    let billingNotices = 0;
     submissionError = new Error(`HeyGen generate: HTTP ${status}`);
     try {
-      assert.equal(await sendAvatarReply(c, 'Здравей'), false);
+      assert.equal(await sendAvatarReply(c, 'Здравей', {
+        onProviderBillingIssue: () => { billingNotices++; },
+      }), false);
       assert.equal(state.get(`tg:900000001:${c.update.update_id}`).status, 'failed');
+      assert.equal(billingNotices, status === 402 ? 1 : 0);
       assert.equal(await sendAvatarReply(c, 'Здравей'), false);
       assert.equal(providerCalls, before + 1);
     } finally { submissionError = null; }
