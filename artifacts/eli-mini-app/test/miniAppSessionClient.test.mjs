@@ -38,6 +38,28 @@ test("Mini App mutations obtain an owner session and send no client identity", a
   });
 });
 
+test("reminder mutations use authenticated session payloads without browser identity", async () => {
+  const requests = [];
+  await mutateMiniAppRecord(initData, {
+    action: "reminder.create",
+    payload: { title: "Drink water", time: "09:05", days: "пн, ср, пт", category: "water" },
+  }, async (url, init) => {
+    requests.push({ url: String(url), init });
+    return String(url).endsWith("/session")
+      ? new Response(JSON.stringify({ ok: true, expiresAt: "2026-10-22T00:10:00.000Z" }))
+      : new Response(JSON.stringify({ ok: true, action: "reminder.create", record: { id: "reminder-1" } }));
+  });
+  assert.deepEqual(requests.map(({ url }) => url), [
+    "/api/mini-app/session", "/api/mini-app/mutations",
+  ]);
+  assert.equal(requests[1].init.credentials, "same-origin");
+  assert.deepEqual(JSON.parse(requests[1].init.body), {
+    action: "reminder.create",
+    payload: { title: "Drink water", time: "09:05", days: "пн, ср, пт", category: "water" },
+  });
+  assert.equal(JSON.stringify(JSON.parse(requests[1].init.body)).includes("telegramId"), false);
+});
+
 test("Mini App text turn uses the bot chat route and sends no browser identity", async () => {
   const requests = [];
   const result = await sendMiniAppTextTurn(initData, "synthetic question", async (url, init) => {

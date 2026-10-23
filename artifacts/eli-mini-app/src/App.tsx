@@ -68,12 +68,15 @@ const LanguageContext = createContext<LanguageContextValue | null>(null);
 type ProgressContextValue = {
   entries: DailyEntry[];
   setEntries: (entries: DailyEntry[]) => void;
+  preferredMode: MiniAppTurnMode;
+  setPreferredMode: (mode: MiniAppTurnMode) => void;
 };
 const ProgressContext = createContext<ProgressContextValue | null>(null);
 
 function ProgressProvider({ children }: { children: ReactNode }) {
   const [entries, setEntries] = useState<DailyEntry[]>([]);
-  return <ProgressContext.Provider value={{ entries, setEntries }}>{children}</ProgressContext.Provider>;
+  const [preferredMode, setPreferredMode] = useState<MiniAppTurnMode>('text');
+  return <ProgressContext.Provider value={{ entries, setEntries, preferredMode, setPreferredMode }}>{children}</ProgressContext.Provider>;
 }
 
 function useProgress() {
@@ -205,8 +208,33 @@ function EliAvatar({
 }
 
 function Home() {
-  const { t } = useLanguage();
-  const [modeNotice, setModeNotice] = useState<TranslationKey | null>(null);
+  const { t, language } = useLanguage();
+  const { setPreferredMode } = useProgress();
+  const [, setLocation] = useLocation();
+  const signedInitData = window.Telegram?.WebApp?.initData?.trim() || '';
+  const [snapshot, setSnapshot] = useState<MiniAppProfileSnapshot | null>(null);
+  const [snapshotLoading, setSnapshotLoading] = useState(true);
+  const [snapshotUnavailable, setSnapshotUnavailable] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    if (!signedInitData || !window.isSecureContext) {
+      setSnapshotLoading(false);
+      setSnapshotUnavailable(true);
+      return;
+    }
+    void getMiniAppProfileSnapshot(signedInitData).then((result) => {
+      if (!active) return;
+      setSnapshot(result);
+      setSnapshotUnavailable(false);
+    }).catch(() => {
+      if (active) setSnapshotUnavailable(true);
+    }).finally(() => {
+      if (active) setSnapshotLoading(false);
+    });
+    return () => { active = false; };
+  }, [signedInitData]);
+  const en = language === 'en';
   return (
     <main className="page-wrap">
       <section className="home-grid">
@@ -221,16 +249,15 @@ function Home() {
               <span className="mode-action-copy"><strong>{t('actionText')}</strong><small>{t('actionTextHint')}</small></span>
               <ArrowRight className="mode-action-arrow" size={15} />
             </Link>
-            <button className="mode-action" type="button" data-testid="button-home-mode-voice" onClick={() => setModeNotice(import.meta.env.PROD ? 'modeVoiceNotice' : 'modeVoiceDemoNotice')}>
+            <button className="mode-action" type="button" data-testid="button-home-mode-voice" aria-label={t('actionVoice')} onClick={() => { setPreferredMode('voice'); setLocation('/chat'); }}>
               <AudioLines className="mode-action-icon" size={18} />
               <span className="mode-action-copy"><strong>{t('actionVoice')}</strong><small>{t('actionVoiceHint')}</small></span>
             </button>
-            <button className="mode-action" type="button" data-testid="button-home-mode-avatar" onClick={() => setModeNotice(import.meta.env.PROD ? 'modeAvatarNotice' : 'modeAvatarDemoNotice')}>
+            <button className="mode-action" type="button" data-testid="button-home-mode-avatar" aria-label={t('actionAvatar')} onClick={() => { setPreferredMode('avatar'); setLocation('/chat'); }}>
               <Video className="mode-action-icon" size={18} />
               <span className="mode-action-copy"><strong>{t('actionAvatar')}</strong><small>{t('actionAvatarHint')}</small></span>
             </button>
           </div>
-          {modeNotice && <p className="mode-action-status" role="status" aria-live="polite">{t(modeNotice)}</p>}
           <p className="quiet-note">{t('quietNote')}</p>
         </div>
         <div className="orbit-stage animate-in delay-1" aria-label={t('orbitAlt')} data-testid="visual-orbit">
@@ -243,6 +270,36 @@ function Home() {
           <div className="float-card metric"><small>{t('dailyFocus')}</small><strong className="metric-value">+ {t('movement').toLowerCase()}</strong></div>
           <div className="float-card streak"><small>{t('consistency')}</small><strong>{t('dayByDay')}</strong></div>
         </div>
+      </section>
+      <section className="home-live-panel panel" aria-labelledby="home-live-title" data-testid="content-home-live">
+        <div className="home-live-heading">
+          <div>
+            <div className="eyebrow">{en ? 'Connected to Eli' : 'Свързано с Ели'}</div>
+            <h2 id="home-live-title">{en ? 'Your account at a glance' : 'Твоят профил накратко'}</h2>
+          </div>
+          {snapshot?.entitlement.backendVerified && <span className="page-tag" data-testid="status-home-verified">{en ? 'VERIFIED' : 'ПОТВЪРДЕН'}</span>}
+        </div>
+        {snapshotLoading
+          ? <p role="status" data-testid="status-home-loading">{en ? 'Loading your bot records…' : 'Зареждам записите от бота…'}</p>
+          : snapshot && !snapshotUnavailable
+            ? <div className="home-live-grid" data-testid="content-home-account">
+              <div><span>{en ? 'Plan' : 'План'}</span><strong data-testid="value-home-plan">{snapshot.entitlement.backendVerified ? snapshot.entitlement.plan : (en ? 'Unverified' : 'Непотвърден')}</strong></div>
+              <div><span>{en ? 'Chat access' : 'Достъп до чат'}</span><strong data-testid="value-home-chat-access">{snapshot.entitlement.backendVerified
+                ? (snapshot.entitlement.canChat ? (en ? 'Available' : 'Достъпен') : (en ? 'Unavailable' : 'Недостъпен'))
+                : (en ? 'Unverified' : 'Непотвърден')}</strong></div>
+              <div><span>{en ? 'Saved check-ins' : 'Записани check-in-и'}</span><strong data-testid="value-home-checkins">{snapshot.checkins.length}</strong></div>
+              <div><span>{en ? 'Reminders' : 'Напомняния'}</span><strong data-testid="value-home-reminders">{snapshot.reminders.length}</strong></div>
+              <div className="home-live-actions">
+                <Link href="/chat" className="secondary-button" data-testid="link-home-live-chat">{en ? 'Open chat' : 'Отвори разговора'}</Link>
+                <Link href="/profile" className="secondary-button" data-testid="link-home-live-records">{en ? 'Manage records' : 'Управлявай записите'}</Link>
+              </div>
+            </div>
+            : <div className="home-live-unavailable" role="status" data-testid="status-home-session">
+              <p>{en
+                ? 'Open Eli from the Telegram Mini App to connect your account. No sample records are shown here.'
+                : 'Отвори Ели от Telegram Mini App, за да свържеш профила си. Тук не показваме примерни записи.'}</p>
+              <Link href="/chat" className="secondary-button" data-testid="link-home-unavailable-chat">{en ? 'Go to chat' : 'Към разговора'}</Link>
+            </div>}
       </section>
       <section className="home-bottom animate-in delay-2" aria-label={t('demoSection')}>
         <div className="intro-card">
@@ -277,12 +334,13 @@ function formatFileSize(bytes: number) {
 
 function Chat() {
   const { t, language } = useLanguage();
+  const { preferredMode, setPreferredMode } = useProgress();
   const [draft, setDraft] = useState('');
   const [notice, setNotice] = useState<TranslationKey | null>(null);
   const [stageError, setStageError] = useState<TranslationKey | null>(null);
   const [stageErrorCanRetry, setStageErrorCanRetry] = useState(false);
   const [ambiguousDraft, setAmbiguousDraft] = useState<string | null>(null);
-  const [selectedMode, setSelectedMode] = useState<MiniAppTurnMode>('text');
+  const [selectedMode, setSelectedMode] = useState<MiniAppTurnMode>(preferredMode);
   const [sending, setSending] = useState(false);
   const [stageMode, setStageMode] = useState<'local' | 'checking' | 'live' | 'unavailable'>('local');
   const [messages, setMessages] = useState<LocalChatMessage[]>([]);
@@ -304,6 +362,10 @@ function Chat() {
     window.isSecureContext &&
     window.location.protocol === 'https:' &&
     Boolean(telegram?.platform && signedInitData);
+  function chooseMode(mode: MiniAppTurnMode) {
+    setSelectedMode(mode);
+    setPreferredMode(mode);
+  }
 
   useEffect(() => {
     if (!canUseTelegramSession) {
@@ -472,13 +534,13 @@ function Chat() {
             )}</span>
           </div>
           <div className="chat-mode-actions" role="group" aria-label={t('modeActionsAria')}>
-            <button type="button" aria-pressed={selectedMode === 'text'} aria-label={t('actionText')} title={t('actionText')} data-testid="button-chat-mode-text" onClick={() => setSelectedMode('text')}>
+            <button type="button" aria-pressed={selectedMode === 'text'} aria-label={t('actionText')} title={t('actionText')} data-testid="button-chat-mode-text" onClick={() => chooseMode('text')}>
               <MessageCircle size={15} /><span>{t('actionText')}</span>
             </button>
-            <button type="button" aria-pressed={selectedMode === 'voice'} aria-label={t('actionVoice')} title={t('actionVoice')} data-testid="button-chat-mode-voice" onClick={() => setSelectedMode('voice')}>
+            <button type="button" aria-pressed={selectedMode === 'voice'} aria-label={t('actionVoice')} title={t('actionVoice')} data-testid="button-chat-mode-voice" onClick={() => chooseMode('voice')}>
               <AudioLines size={15} /><span>{t('actionVoice')}</span>
             </button>
-            <button type="button" aria-pressed={selectedMode === 'avatar'} aria-label={t('actionAvatar')} title={t('actionAvatar')} data-testid="button-chat-mode-avatar" onClick={() => setSelectedMode('avatar')}>
+            <button type="button" aria-pressed={selectedMode === 'avatar'} aria-label={t('actionAvatar')} title={t('actionAvatar')} data-testid="button-chat-mode-avatar" onClick={() => chooseMode('avatar')}>
               <Video size={15} /><span>{t('actionAvatar')}</span>
             </button>
           </div>
@@ -920,7 +982,7 @@ function Profile() {
     }
   }, [todayCheckin]);
 
-  async function saveMutation(action: 'profile.update' | 'memory.update' | 'health.append' | 'checkin.save' | 'checkin.delete', payload: Record<string, unknown>): Promise<boolean> {
+  async function saveMutation(action: 'profile.update' | 'memory.update' | 'health.append' | 'checkin.save' | 'checkin.delete' | 'reminder.create' | 'reminder.update' | 'reminder.delete', payload: Record<string, unknown>): Promise<boolean> {
     if (!initData || !window.isSecureContext || mutationBusy) return false;
     setMutationBusy(true);
     setMutationMessage('');
@@ -987,20 +1049,31 @@ function Profile() {
     : { owner: 'Собственик', free: 'Безплатен', seven_day: '7-дневен', monthly: 'Месечен', yearly: 'Годишен', unknown: 'Неизвестен' };
   const formatTimestamp = (timestamp: number | null) =>
     timestamp ? new Date(timestamp).toLocaleString(en ? 'en-GB' : 'bg-BG') : null;
+  const isOwner = snapshot?.entitlement.plan === 'owner' || snapshot?.entitlement.state === 'owner';
+  const [reminderTitle, setReminderTitle] = useState('');
+  const [reminderTime, setReminderTime] = useState('09:00');
+  const [reminderDays, setReminderDays] = useState<number[]>([1, 2, 3, 4, 5]);
+  const [reminderCategory, setReminderCategory] = useState('custom');
+  const [editingReminder, setEditingReminder] = useState<string | null>(null);
+  const [deleteReminderId, setDeleteReminderId] = useState<string | null>(null);
+  const reminderWeekdays = en
+    ? [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [0, 'Sun']] as const
+    : [[1, 'Пн'], [2, 'Вт'], [3, 'Ср'], [4, 'Чт'], [5, 'Пт'], [6, 'Сб'], [0, 'Нд']] as const;
 
   return (
     <main className="page-wrap progress-page">
       <div className="page-heading">
         <div><div className="eyebrow">{en ? 'Synced from Eli' : 'Свързано с Ели'}</div>
           <h1>{en ? 'Your profile & progress' : 'Профил и прогрес'}</h1>
-          <p>{en ? 'Read-only view of your existing Telegram bot records.' : 'Само за преглед: съществуващите ти записи от Telegram бота.'}</p>
+          <p>{en ? 'Your Telegram records, updated through Eli’s existing bot services.' : 'Твоите записи от Telegram, управлявани чрез съществуващите услуги на бота Ели.'}</p>
         </div>
-        <span className="page-tag">{en ? 'READ ONLY' : 'САМО ЗА ПРЕГЛЕД'}</span>
+        <span className="page-tag">{en ? 'BOT-SYNCED' : 'СИНХРОНИЗИРАНО С БОТА'}</span>
       </div>
-      {loading && <section className="panel" role="status">{en ? 'Loading your records…' : 'Зареждам записите…'}</section>}
-      {error && !loading && <section className="panel" role="alert">
+      {loading && <section className="panel records-loading" role="status" data-testid="status-profile-loading"><span className="skeleton-line" /><span className="skeleton-line short" />{en ? 'Loading your records…' : 'Зареждам записите…'}</section>}
+      {error && !loading && <section className="panel" role="alert" data-testid="status-profile-unavailable">
         <h2>{en ? 'Records unavailable' : 'Записите не са достъпни'}</h2>
         <p>{en ? 'Open Eli from Telegram again. No local or sample data is shown.' : 'Отвори Ели от Telegram отново. Не показваме локални или примерни данни.'}</p>
+        <button type="button" className="primary-button" data-testid="button-profile-retry" onClick={() => { setLoading(true); setError(false); void getMiniAppProfileSnapshot(initData).then(setSnapshot).catch(() => setError(true)).finally(() => setLoading(false)); }}>{en ? 'Try again' : 'Опитай отново'}</button>
       </section>}
       {snapshot && !loading && <>
         {mutationMessage && <p role="status" aria-live="polite" className="panel">{mutationMessage}</p>}
@@ -1012,7 +1085,7 @@ function Profile() {
           'injuries', 'allergies', 'favoriteFoods', 'dislikedFoods', 'dailyHabits',
           'motivationLevel', 'lastWorkout', 'weightLog', 'plans',
         ]))}
-        {card(en ? 'Relationship memory' : 'Лична памет', snapshot.relationshipMemory.map((entry) =>
+        {card(en ? 'Relationship memory · read only' : 'Памет за отношения · само за преглед', snapshot.relationshipMemory.map((entry) =>
           [String(entry.category || 'memory'), entry.value] as [string, unknown]))}
         {card(en ? 'Recent chat history' : 'Последна история на разговора', (snapshot.history ?? []).map((turn, index) =>
           [`${index + 1} · ${turn.role}`, turn.content] as [string, unknown]))}
@@ -1026,9 +1099,15 @@ function Profile() {
           }] as [string, unknown]))}
         {card(en ? 'Plan access' : 'План и достъп', [
           [en ? 'Plan' : 'План', planLabels[snapshot.entitlement.plan] || snapshot.entitlement.plan],
-          [en ? 'Status' : 'Статус', statusLabels[snapshot.entitlement.state] || statusLabels.unverified],
-          [en ? 'Available modes' : 'Достъпни режими',
-            snapshot.entitlement.allowedModes.map((mode) => modeLabels[mode] || mode)],
+          [en ? 'Status' : 'Статус', snapshot.entitlement.backendVerified
+            ? (statusLabels[snapshot.entitlement.state] || statusLabels.unverified)
+            : statusLabels.unverified],
+          [en ? 'Available modes' : 'Достъпни режими', snapshot.entitlement.backendVerified
+            ? snapshot.entitlement.allowedModes.map((mode) => modeLabels[mode] || mode)
+            : (en ? 'Unverified' : 'Непотвърдени')],
+          [en ? 'Chat access' : 'Достъп до чат', snapshot.entitlement.backendVerified
+            ? (snapshot.entitlement.canChat ? (en ? 'Available' : 'Достъпен') : (en ? 'Unavailable' : 'Недостъпен'))
+            : (en ? 'Unverified' : 'Непотвърден')],
           [en ? 'Verified by billing service' : 'Потвърдено от платежната услуга', snapshot.entitlement.backendVerified],
           [en ? 'Trial expires' : 'Пробният период изтича', formatTimestamp(snapshot.entitlement.trialExpiresAt)],
           [en ? 'Plan expires' : 'Планът изтича', formatTimestamp(snapshot.entitlement.planExpiresAt)],
@@ -1140,7 +1219,66 @@ function Profile() {
         </section>
         <section className="panel">
           <h2>{en ? 'Reminders' : 'Напомняния'}</h2>
-          <p>{en ? 'Bot policy does not permit the owner account to manage reminders. No reminder changes were sent.' : 'Правилата на бота не позволяват на owner акаунта да управлява напомняния. Не е изпратена промяна.'}</p>
+          {isOwner ? <p className="policy-note" data-testid="text-reminder-policy">{en ? 'Reminder management is disabled for the owner account by existing bot policy. These records are read-only.' : 'Съществуващите правила на бота изключват управлението на напомняния за owner акаунта. Записите са само за преглед.'}</p> : <>
+            <p>{en ? 'Changes are saved through Eli’s existing bot records.' : 'Промените се записват чрез съществуващите данни на бота Ели.'}</p>
+            <form className="reminder-form" data-testid="form-reminder" onSubmit={(event) => {
+              event.preventDefault();
+              const days = reminderDays.map((day) => ['нд', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'][day]).join(' ');
+              const payload = { title: reminderTitle, time: reminderTime, days, category: reminderCategory };
+              void saveMutation(editingReminder ? 'reminder.update' : 'reminder.create',
+                editingReminder ? { id: editingReminder, patch: payload } : payload).then((saved) => {
+                  if (saved) { setEditingReminder(null); setReminderTitle(''); }
+                });
+            }}>
+              <h3>{editingReminder ? (en ? 'Edit reminder' : 'Редакция на напомняне') : (en ? 'Add a reminder' : 'Добави напомняне')}</h3>
+              <label className="entry-field">{en ? 'Reminder' : 'Напомняне'}
+                <input data-testid="input-reminder-title" aria-label={en ? 'Reminder title' : 'Заглавие на напомнянето'} value={reminderTitle} maxLength={80} required onChange={(event) => setReminderTitle(event.target.value)} />
+              </label>
+              <div className="reminder-fields">
+                <label className="entry-field">{en ? 'Time' : 'Час'}
+                  <input data-testid="input-reminder-time" aria-label={en ? 'Reminder time' : 'Час на напомнянето'} type="time" required value={reminderTime} onChange={(event) => setReminderTime(event.target.value)} />
+                </label>
+                <label className="entry-field">{en ? 'Category' : 'Категория'}
+                  <select data-testid="select-reminder-category" aria-label={en ? 'Reminder category' : 'Категория на напомнянето'} value={reminderCategory} onChange={(event) => setReminderCategory(event.target.value)}>
+                    {[
+                      ['water', en ? 'Water' : 'Вода'], ['workout', en ? 'Workout' : 'Тренировка'],
+                      ['meal', en ? 'Meal' : 'Хранене'], ['sleep', en ? 'Sleep' : 'Сън'],
+                      ['medication', en ? 'Medication' : 'Лекарство'], ['custom', en ? 'Custom' : 'Друго'],
+                    ].map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                  </select>
+                </label>
+              </div>
+              <fieldset className="entry-field reminder-day-picker">
+                <legend>{en ? 'Repeat on' : 'Повтаряй в'}</legend>
+                {reminderWeekdays.map(([day, label]) => <label key={day}>
+                  <input type="checkbox" data-testid={`checkbox-reminder-day-${day}`} checked={reminderDays.includes(day)}
+                    onChange={(event) => setReminderDays((current) => event.target.checked
+                      ? [...current, day].sort((left, right) => left - right)
+                      : current.filter((value) => value !== day))} />
+                  {label}
+                </label>)}
+              </fieldset>
+              <div className="reminder-actions">
+                <button className="primary-button" type="submit" data-testid="button-reminder-save" disabled={mutationBusy || !reminderTitle.trim() || !reminderDays.length}>{mutationBusy ? (en ? 'Saving…' : 'Записвам…') : (editingReminder ? (en ? 'Save changes' : 'Запази промените') : (en ? 'Create reminder' : 'Създай напомняне'))}</button>
+                {editingReminder && <button type="button" className="secondary-button" data-testid="button-reminder-cancel" onClick={() => { setEditingReminder(null); setReminderTitle(''); }}>{en ? 'Cancel' : 'Отказ'}</button>}
+              </div>
+            </form>
+          </>}
+          {!snapshot.reminders.length && <p className="empty-records" data-testid="empty-reminders">{en ? 'No reminders in the synced records.' : 'Няма напомняния в синхронизираните записи.'}</p>}
+          <div className="reminder-list">
+            {snapshot.reminders.map((entry, index) => {
+              const id = String(entry.id ?? '');
+              return <article className="reminder-row" key={id || index} data-testid={`reminder-${id || index}`}>
+                <div><strong>{String(entry.title ?? (en ? 'Untitled reminder' : 'Напомняне'))}</strong><span>{String(entry.time ?? '—')} · {format(entry.days)} · {String(entry.category ?? 'custom')}</span></div>
+                {!isOwner && <div className="reminder-actions">
+                  {deleteReminderId === id
+                    ? <><button type="button" className="delete-button" data-testid={`button-reminder-confirm-delete-${id}`} disabled={mutationBusy} onClick={() => { void saveMutation('reminder.delete', { id }).then((saved) => { if (saved) setDeleteReminderId(null); }); }}>{en ? 'Confirm delete' : 'Потвърди изтриване'}</button><button type="button" className="secondary-button" onClick={() => setDeleteReminderId(null)}>{en ? 'Cancel' : 'Отказ'}</button></>
+                    : <><button type="button" className="secondary-button" data-testid={`button-reminder-edit-${id}`} aria-label={`${en ? 'Edit reminder' : 'Редактирай напомнянето'} ${String(entry.title ?? '')}`} onClick={() => { setEditingReminder(id); setReminderTitle(String(entry.title ?? '')); setReminderTime(String(entry.time ?? '09:00')); setReminderDays(Array.isArray(entry.days) ? entry.days.map(Number).filter((day): day is 0 | 1 | 2 | 3 | 4 | 5 | 6 => Number.isInteger(day) && day >= 0 && day <= 6) : []); setReminderCategory(String(entry.category ?? 'custom')); }}>{en ? 'Edit' : 'Редакция'}</button><button type="button" className="delete-button" data-testid={`button-reminder-delete-${id}`} aria-label={`${en ? 'Delete reminder' : 'Изтрий напомнянето'} ${String(entry.title ?? '')}`} onClick={() => setDeleteReminderId(id)}>{en ? 'Delete' : 'Изтрий'}</button></>}
+                </div>}
+              </article>;
+            })}
+          </div>
+          {mutationMessage && <p role="status" aria-live="polite" data-testid="status-mutation" className="mutation-status">{mutationMessage}</p>}
         </section>
       </>}
     </main>
