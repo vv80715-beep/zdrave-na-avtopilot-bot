@@ -79,6 +79,35 @@ paths:
           description: Valid owner session required
         "403":
           description: Request is not from the configured origin
+  /mini-app/coaching:
+    post:
+      operationId: postMiniAppCoaching
+      tags: [mini-app]
+      summary: Run one explicit coaching action through the existing bot coaching service
+      description: Requires the authenticated user session and active chat entitlement. The bot reuses its existing coaching generators; no action runs automatically from opening the app.
+      security:
+        - MiniAppSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MiniAppCoachingInput"
+      responses:
+        "200":
+          description: Coaching response or no-data result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniAppCoachingResponse"
+        "401":
+          description: Valid Telegram session required
+        "403":
+          description: Request is not from the configured origin
+        "429":
+          description: Coaching request rate limit reached
+        "503":
+          description: Bot bridge or text AI provider unavailable
   /mini-app/profile:
     post:
       operationId: readMiniAppProfileSnapshot
@@ -269,6 +298,25 @@ components:
           type: string
           enum: [bg, en]
       required: [message, turnId]
+      additionalProperties: false
+    MiniAppCoachingInput:
+      type: object
+      properties:
+        action:
+          type: string
+          enum: [coach, motivate, nextstep, weeklyreview]
+      required: [action]
+      additionalProperties: false
+    MiniAppCoachingResponse:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum: [coaching, no_data, access_denied]
+        text:
+          type: string
+          maxLength: 12000
+      required: [kind, text]
       additionalProperties: false
     MiniAppProfileRequest:
       type: object

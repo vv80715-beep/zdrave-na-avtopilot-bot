@@ -11,6 +11,8 @@ import {
   PostMiniAppTextTurnResponse,
   PostMiniAppMutationBody,
   PostMiniAppMutationResponse,
+  PostMiniAppCoachingBody,
+  PostMiniAppCoachingResponse,
 } from "../../../../lib/api-zod/src/generated/api.ts";
 import { validateTelegramInitData } from "../lib/telegramInitData.mjs";
 // @ts-expect-error Shared HMAC protocol; claims are signed from verified session subjects only.
@@ -538,6 +540,50 @@ export function createMiniAppRouter(
     } catch (error) {
       const timeout = error instanceof Error && error.name === "TimeoutError";
       sendError(res, timeout ? 504 : 503, timeout ? "text_engine_timeout" : "text_engine_unavailable");
+    }
+  });
+
+  router.post("/coaching", requireSession, async (req, res): Promise<void> => {
+    const parsed = PostMiniAppCoachingBody.safeParse(req.body);
+    if (!parsed.success || bridgeSecret.trim().length < 32) {
+      sendError(res, parsed.success ? 503 : 400, parsed.success ? "coach_unavailable" : "invalid_request");
+      return;
+    }
+    try {
+      const userId = res.locals.miniAppUserId as string;
+      const claim = (miniAppBridgeAuth as {
+        createClaim: (userId: string, secret: string, now?: number, path?: string) => string;
+      }).createClaim(userId, bridgeSecret, undefined, "/internal/mini-app/coach-turn");
+      const response = await bridgeFetch("http://127.0.0.1:3001/internal/mini-app/coach-turn", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${claim}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(parsed.data),
+        cache: "no-store",
+        redirect: "error",
+        signal: AbortSignal.timeout(260_000),
+      });
+      let body: unknown;
+      try { body = await response.json(); } catch { body = null; }
+      if (!response.ok) {
+        const code = body && typeof body === "object" && "error" in body &&
+          typeof body.error === "string" && /^[a-z0-9_]{1,48}$/.test(body.error)
+          ? body.error : "coach_unavailable";
+        sendError(res, response.status === 429 ? 429 : response.status === 400 ? 400 : 503, code);
+        return;
+      }
+      if (!body || typeof body !== "object") {
+        sendError(res, 503, "coach_unavailable");
+        return;
+      }
+      const result = body as { kind?: unknown; text?: unknown };
+      res.json(PostMiniAppCoachingResponse.parse({ kind: result.kind, text: result.text }));
+    } catch (error) {
+      const timeout = error instanceof Error && error.name === "TimeoutError";
+      sendError(res, timeout ? 504 : 503, timeout ? "coach_timeout" : "coach_unavailable");
     }
   });
 

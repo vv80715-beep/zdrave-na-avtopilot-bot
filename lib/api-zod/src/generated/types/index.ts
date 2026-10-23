@@ -7,6 +7,10 @@
  */
 
 export * from './healthStatus';
+export * from './miniAppCoachingInput';
+export * from './miniAppCoachingInputAction';
+export * from './miniAppCoachingResponse';
+export * from './miniAppCoachingResponseKind';
 export * from './miniAppImageResult';
 export * from './miniAppImageUpload';
 export * from './miniAppImageUploadLanguage';

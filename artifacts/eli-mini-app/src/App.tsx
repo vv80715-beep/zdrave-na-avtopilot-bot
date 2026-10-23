@@ -39,8 +39,10 @@ import {
   getMiniAppProfileSnapshot,
   MiniAppStageError,
   mutateMiniAppRecord,
+  requestMiniAppCoaching,
   sendMiniAppVoiceTurn,
   sendMiniAppTextTurn,
+  type MiniAppCoachingAction,
   type MiniAppTurnMode,
   type MiniAppProfileSnapshot,
 } from './miniAppSessionClient';
@@ -215,6 +217,30 @@ function Home() {
   const [snapshot, setSnapshot] = useState<MiniAppProfileSnapshot | null>(null);
   const [snapshotLoading, setSnapshotLoading] = useState(true);
   const [snapshotUnavailable, setSnapshotUnavailable] = useState(false);
+  const [coachLoading, setCoachLoading] = useState<MiniAppCoachingAction | null>(null);
+  const [coachResult, setCoachResult] = useState<{ action: MiniAppCoachingAction; kind: string; text: string } | null>(null);
+  const [coachError, setCoachError] = useState(false);
+  const canRunCoaching = (import.meta.env.VITE_ELI_MINI_APP_STAGING_ENABLED === 'true' || import.meta.env.PROD) &&
+    window.isSecureContext && window.location.protocol === 'https:' &&
+    Boolean(window.Telegram?.WebApp?.platform && signedInitData);
+
+  async function runCoaching(action: MiniAppCoachingAction) {
+    if (!canRunCoaching || coachLoading) return;
+    setCoachLoading(action);
+    setCoachError(false);
+    setCoachResult(null);
+    try {
+      const result = await requestMiniAppCoaching(signedInitData, action);
+      setCoachResult({ action, ...result });
+    } catch (error) {
+      setCoachError(true);
+      if (error instanceof MiniAppStageError && error.status === 429) {
+        setCoachError(true);
+      }
+    } finally {
+      setCoachLoading(null);
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -300,6 +326,42 @@ function Home() {
                 : 'Отвори Ели от Telegram Mini App, за да свържеш профила си. Тук не показваме примерни записи.'}</p>
               <Link href="/chat" className="secondary-button" data-testid="link-home-unavailable-chat">{en ? 'Go to chat' : 'Към разговора'}</Link>
             </div>}
+      </section>
+      <section className="home-live-panel panel" aria-labelledby="home-coach-title" data-testid="content-home-coaching">
+        <div className="home-live-heading">
+          <div>
+            <div className="eyebrow">{en ? 'Bot coaching tools' : 'Коучинг от бота'}</div>
+            <h2 id="home-coach-title">{en ? 'Get a focused coaching response' : 'Избери коучинг отговор'}</h2>
+          </div>
+        </div>
+        <div className="coach-action-grid" role="group" aria-label={en ? 'Coaching actions' : 'Коучинг действия'}>
+          {([
+            ['coach', en ? 'Daily coaching' : 'Дневен коучинг'],
+            ['motivate', en ? 'Motivate me' : 'Мотивирай ме'],
+            ['nextstep', en ? 'One step today' : 'Една стъпка днес'],
+            ['weeklyreview', en ? 'Weekly review' : 'Седмичен преглед'],
+          ] as const).map(([action, label]) => (
+            <button key={action} type="button" className="secondary-button" data-testid={`button-coach-${action}`}
+              disabled={!canRunCoaching || coachLoading !== null}
+              aria-busy={coachLoading === action}
+              onClick={() => { void runCoaching(action); }}>
+              {coachLoading === action ? (en ? 'Working…' : 'Подготвям…') : label}
+            </button>
+          ))}
+        </div>
+        {!canRunCoaching && <p className="coach-result-note" role="status">{en
+          ? 'Open the secure Telegram Mini App to use coaching. Requests run only when you choose an action.'
+          : 'Отвори защитения Telegram Mini App за коучинг. Заявка се изпраща само след избор на действие.'}</p>}
+        {coachError && <p className="coach-result-note" role="alert" data-testid="status-coach-error">{en
+          ? 'The request could not be completed. Wait a moment and try again.'
+          : 'Заявката не беше изпълнена. Изчакай малко и опитай отново.'}</p>}
+        {coachResult && <div className="coach-result" role="status" data-testid="result-coaching">
+          {coachResult.kind === 'no_data'
+            ? (en ? 'Add a few check-ins before requesting a weekly review.' : 'Добави няколко check-in записа, преди да поискаш седмичен преглед.')
+            : coachResult.kind === 'access_denied'
+              ? (en ? 'Chat access is not currently active.' : 'Достъпът до чата не е активен.')
+              : coachResult.text}
+        </div>}
       </section>
       <section className="home-bottom animate-in delay-2" aria-label={t('demoSection')}>
         <div className="intro-card">

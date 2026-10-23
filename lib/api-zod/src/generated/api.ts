@@ -69,6 +69,24 @@ export const PostMiniAppTextTurnResponse = zod.object({
 
 
 /**
+ * Requires the authenticated user session and active chat entitlement. The bot reuses its existing coaching generators; no action runs automatically from opening the app.
+ * @summary Run one explicit coaching action through the existing bot coaching service
+ */
+export const PostMiniAppCoachingBody = zod.object({
+  "action": zod.enum(['coach', 'motivate', 'nextstep', 'weeklyreview'])
+})
+
+export const postMiniAppCoachingResponseTextMax = 12000;
+
+
+
+export const PostMiniAppCoachingResponse = zod.object({
+  "kind": zod.enum(['coaching', 'no_data', 'access_denied']),
+  "text": zod.string().max(postMiniAppCoachingResponseTextMax)
+})
+
+
+/**
  * Read-only. The Telegram ID comes only from the signed server session. The API forwards a signed internal claim to the existing bot process, which owns legacy JSON access. Owner dossier is included only for the verified owner.
  * @summary Read the authenticated Telegram user's existing bot profile and progress stores
  */

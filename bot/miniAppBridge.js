@@ -2,7 +2,7 @@
 
 const express = require('express');
 const {
-  CLAIM_PATH, TEXT_TURN_PATH, MUTATION_PATH, VOICE_TURN_PATH, verifyClaim,
+  CLAIM_PATH, TEXT_TURN_PATH, MUTATION_PATH, VOICE_TURN_PATH, COACH_TURN_PATH, verifyClaim,
 } = require('./miniAppBridgeAuth');
 const { readMiniAppSnapshot } = require('./miniAppReadModel');
 
@@ -17,6 +17,7 @@ function createMiniAppBridgeRouter({
   processTextTurn,
   processVoiceTurn,
   processMutation,
+  processCoachTurn,
 } = {}) {
   const router = express.Router();
   const usedNonces = new Map();
@@ -54,6 +55,8 @@ function createMiniAppBridgeRouter({
     } catch (error) {
       if (error?.code === 'owner_only') {
         res.status(403).json({ error: 'owner_only' });
+      } else if (error?.code === 'coach_rate_limited') {
+        res.status(429).json({ error: error.code });
       } else if (error?.code === 'profile_not_found' || error?.code === 'record_not_found') {
         res.status(404).json({ error: error.code });
       } else if (error?.code === 'invalid_request') {
@@ -64,6 +67,7 @@ function createMiniAppBridgeRouter({
         res.status(503).json({ error: expectedPath === CLAIM_PATH
           ? 'legacy_store_unavailable'
           : expectedPath === MUTATION_PATH ? 'mutation_unavailable'
+            : expectedPath === COACH_TURN_PATH ? 'coach_unavailable'
             : expectedPath === VOICE_TURN_PATH ? 'voice_turn_unavailable' : 'text_turn_unavailable' });
       }
     }
@@ -131,6 +135,18 @@ function createMiniAppBridgeRouter({
       }
       if (typeof processMutation !== 'function') throw new Error('mini_app_mutation_unavailable');
       return processMutation({ userId, action: body.action, payload: body.payload });
+    });
+  });
+
+  router.post(COACH_TURN_PATH, async (req, res) => {
+    await authorizeAndRun(req, res, COACH_TURN_PATH, async (userId, body) => {
+      if (!body || typeof body !== 'object' || Array.isArray(body) ||
+          Object.keys(body).some((key) => key !== 'action') ||
+          !['coach', 'motivate', 'nextstep', 'weeklyreview'].includes(body.action)) {
+        throw Object.assign(new Error('invalid_request'), { code: 'invalid_request' });
+      }
+      if (typeof processCoachTurn !== 'function') throw new Error('mini_app_coach_unavailable');
+      return processCoachTurn({ userId, action: body.action });
     });
   });
 

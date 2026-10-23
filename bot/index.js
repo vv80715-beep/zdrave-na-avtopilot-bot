@@ -29,6 +29,7 @@ const { ensureUser } = require('./entitlements');
 const {
   gateChat,
   resolveAccessStatus,
+  resolveReadOnlyAccessStatus,
   TRIAL_EXPIRED_MESSAGE,
 } = require('./chatGate');
 const {
@@ -112,6 +113,8 @@ const { processMiniAppMutation } = require('./miniAppMutations');
 const { createMiniAppSnapshotReader } = require('./miniAppReadModel');
 const { createMiniAppTextTurnHandler } = require('./miniAppTextTurn');
 const { createMiniAppVoiceTurnHandler } = require('./miniAppVoiceTurn');
+const { createMiniAppCoachTurnHandler } = require('./miniAppCoachTurn');
+const { generateCoach, generateMotivate, generateNextStep, generateWeeklyReview, computeWeekly } = require('./coachService');
 
 const processMiniAppTextTurn = createMiniAppTextTurnHandler({
   hasTextAIProvider,
@@ -125,6 +128,17 @@ const processMiniAppVoiceTurn = createMiniAppVoiceTurnHandler({
   looksLikeBulgarian,
   askEli,
   isOwnerId,
+});
+const processMiniAppCoachTurn = createMiniAppCoachTurnHandler({
+  resolveReadOnlyAccessStatus,
+  hasTextAIProvider,
+  getTextAIClient,
+  isOwnerId,
+  generateCoach,
+  generateMotivate,
+  generateNextStep,
+  generateWeeklyReview,
+  hasWeeklyData: (userId) => computeWeekly(userId).count > 0,
 });
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -930,6 +944,7 @@ app.use(createMiniAppBridgeRouter({
   processTextTurn: processMiniAppTextTurn,
   processVoiceTurn: processMiniAppVoiceTurn,
   processMutation: processMiniAppMutation,
+  processCoachTurn: processMiniAppCoachTurn,
   readSnapshot: createMiniAppSnapshotReader({ getRecentHistory: ownerRecentTurns }),
 }));
 

@@ -50,6 +50,35 @@ export interface MiniAppTextTurnInput {
   language?: MiniAppTextTurnInputLanguage;
 }
 
+export type MiniAppCoachingInputAction = typeof MiniAppCoachingInputAction[keyof typeof MiniAppCoachingInputAction];
+
+
+export const MiniAppCoachingInputAction = {
+  coach: 'coach',
+  motivate: 'motivate',
+  nextstep: 'nextstep',
+  weeklyreview: 'weeklyreview',
+} as const;
+
+export interface MiniAppCoachingInput {
+  action: MiniAppCoachingInputAction;
+}
+
+export type MiniAppCoachingResponseKind = typeof MiniAppCoachingResponseKind[keyof typeof MiniAppCoachingResponseKind];
+
+
+export const MiniAppCoachingResponseKind = {
+  coaching: 'coaching',
+  no_data: 'no_data',
+  access_denied: 'access_denied',
+} as const;
+
+export interface MiniAppCoachingResponse {
+  kind: MiniAppCoachingResponseKind;
+  /** @maxLength 12000 */
+  text: string;
+}
+
 export interface MiniAppProfileRequest { [key: string]: unknown }
 
 export type MiniAppProfileResponseSnapshot = { [key: string]: unknown };

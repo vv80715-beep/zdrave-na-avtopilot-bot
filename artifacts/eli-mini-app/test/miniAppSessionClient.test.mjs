@@ -5,6 +5,7 @@ import {
   getOwnerTextAiStatus,
   MiniAppStageError,
   sendMiniAppTextTurn,
+  requestMiniAppCoaching,
   sendMiniAppVoiceTurn,
   mutateMiniAppRecord,
   sendOwnerDemoChat,
@@ -14,6 +15,22 @@ import {
 import { translate } from "../src/i18n.ts";
 
 const initData = "signed-data-fixture-not-a-real-credential";
+
+test("coaching requests use the authenticated session and the bot coaching endpoint", async () => {
+  const requests = [];
+  const result = await requestMiniAppCoaching(initData, "weeklyreview", async (url, init) => {
+    requests.push({ url: String(url), init });
+    return String(url).endsWith("/session")
+      ? new Response(JSON.stringify({ ok: true, expiresAt: "2026-10-22T00:10:00.000Z" }))
+      : new Response(JSON.stringify({ kind: "coaching", text: "Synthetic review" }));
+  });
+  assert.deepEqual(result, { kind: "coaching", text: "Synthetic review" });
+  assert.deepEqual(requests.map(({ url }) => url), [
+    "/api/mini-app/session", "/api/mini-app/coaching",
+  ]);
+  assert.equal(requests[1].init.credentials, "same-origin");
+  assert.deepEqual(JSON.parse(requests[1].init.body), { action: "weeklyreview" });
+});
 
 test("Mini App mutations obtain an owner session and send no client identity", async () => {
   const requests = [];

@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const express = require('express');
 const test = require('node:test');
 const {
-  createClaim, verifyClaim, CLAIM_PATH, TEXT_TURN_PATH, MUTATION_PATH, VOICE_TURN_PATH,
+  createClaim, verifyClaim, CLAIM_PATH, TEXT_TURN_PATH, MUTATION_PATH, VOICE_TURN_PATH, COACH_TURN_PATH,
 } = require('../miniAppBridgeAuth');
 const { createMiniAppBridgeRouter } = require('../miniAppBridge');
 const { createMiniAppSnapshotReader } = require('../miniAppReadModel');
@@ -13,7 +13,7 @@ const OWNER = '123456789';
 const CLIENT_ONE = '987654321';
 const CLIENT_TWO = '876543219';
 
-async function listen(readSnapshot, processTextTurn, processMutation) {
+async function listen(readSnapshot, processTextTurn, processMutation, processCoachTurn) {
   const app = express();
   app.use(express.json());
   app.use(createMiniAppBridgeRouter({
@@ -22,6 +22,7 @@ async function listen(readSnapshot, processTextTurn, processMutation) {
     readSnapshot,
     processTextTurn,
     processMutation,
+    processCoachTurn,
   }));
   const server = app.listen(0, '127.0.0.1');
   await new Promise((resolve, reject) => {
@@ -46,6 +47,26 @@ async function listen(readSnapshot, processTextTurn, processMutation) {
     },
   };
 }
+
+test('coaching bridge verifies the user-bound claim and forwards only the chosen coaching action', async () => {
+  let received;
+  const server = await listen(undefined, undefined, undefined, async (input) => {
+    received = input;
+    return { kind: 'coaching', text: 'Synthetic coaching response' };
+  });
+  try {
+    const token = createClaim(CLIENT_ONE, SECRET, NOW, COACH_TURN_PATH);
+    const response = await server.request(token, { action: 'weeklyreview' }, COACH_TURN_PATH);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      ok: true, kind: 'coaching', text: 'Synthetic coaching response',
+    });
+    assert.deepEqual(received, { userId: CLIENT_ONE, action: 'weeklyreview' });
+    assert.equal((await server.request(token, { action: 'coach' }, COACH_TURN_PATH)).status, 401);
+  } finally {
+    await server.close();
+  }
+});
 
 test('internal mutation bridge uses a separate path-bound claim and bot-derived identity', async () => {
   let received;

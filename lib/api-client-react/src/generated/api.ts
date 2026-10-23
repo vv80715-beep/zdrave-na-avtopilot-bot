@@ -21,6 +21,8 @@ import type {
 
 import type {
   HealthStatus,
+  MiniAppCoachingInput,
+  MiniAppCoachingResponse,
   MiniAppImageResult,
   MiniAppImageUpload,
   MiniAppMutationInput,
@@ -279,6 +281,77 @@ export const usePostMiniAppTextTurn = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getPostMiniAppTextTurnMutationOptions(options));
+    }
+
+export const getPostMiniAppCoachingUrl = () => {
+
+
+
+
+  return `/api/mini-app/coaching`
+}
+
+/**
+ * Requires the authenticated user session and active chat entitlement. The bot reuses its existing coaching generators; no action runs automatically from opening the app.
+ * @summary Run one explicit coaching action through the existing bot coaching service
+ */
+export const postMiniAppCoaching = async (miniAppCoachingInput: MiniAppCoachingInput, options?: RequestInit): Promise<MiniAppCoachingResponse> => {
+
+  return customFetch<MiniAppCoachingResponse>(getPostMiniAppCoachingUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(miniAppCoachingInput)
+  }
+);}
+
+
+
+
+export const getPostMiniAppCoachingMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postMiniAppCoaching>>, TError,{data: BodyType<MiniAppCoachingInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof postMiniAppCoaching>>, TError,{data: BodyType<MiniAppCoachingInput>}, TContext> => {
+
+const mutationKey = ['postMiniAppCoaching'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof postMiniAppCoaching>>, {data: BodyType<MiniAppCoachingInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  postMiniAppCoaching(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PostMiniAppCoachingMutationResult = NonNullable<Awaited<ReturnType<typeof postMiniAppCoaching>>>
+    export type PostMiniAppCoachingMutationBody = BodyType<MiniAppCoachingInput>
+    export type PostMiniAppCoachingMutationError = ErrorType<void>
+
+    /**
+ * @summary Run one explicit coaching action through the existing bot coaching service
+ */
+export const usePostMiniAppCoaching = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postMiniAppCoaching>>, TError,{data: BodyType<MiniAppCoachingInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof postMiniAppCoaching>>,
+        TError,
+        {data: BodyType<MiniAppCoachingInput>},
+        TContext
+      > => {
+      return useMutation(getPostMiniAppCoachingMutationOptions(options));
     }
 
 export const getReadMiniAppProfileSnapshotUrl = () => {

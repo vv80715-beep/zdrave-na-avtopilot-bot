@@ -2,6 +2,8 @@ import type { MiniAppMutationInput, MiniAppMutationResponse } from "@workspace/a
 
 export type MiniAppLanguage = "bg" | "en";
 export type MiniAppTurnMode = "text" | "voice" | "avatar";
+export type MiniAppCoachingAction = "coach" | "motivate" | "nextstep" | "weeklyreview";
+export type MiniAppCoachingResult = { kind: "coaching" | "no_data" | "access_denied"; text: string };
 export type OwnerTextAiMode = "mock" | "test_ai";
 export type OwnerTextAiStatus = {
   mode: OwnerTextAiMode;
@@ -211,6 +213,26 @@ export async function sendMiniAppTextTurn(
     kind: body.kind as "eli_text" | "access_denied" | "voice" | "avatar",
     ...(media ? { media } : {}),
   };
+}
+
+export async function requestMiniAppCoaching(
+  initData: string,
+  action: MiniAppCoachingAction,
+  fetchFn: FetchLike = fetch,
+): Promise<MiniAppCoachingResult> {
+  await ensureOwnerSession(initData, fetchFn);
+  const response = await sameOriginRequest("/api/mini-app/coaching", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ action }),
+  }, fetchFn, 270_000);
+  const body = await responseBody(response);
+  if (!response.ok) throw new MiniAppStageError(safeErrorCode(body), response.status);
+  if (!["coaching", "no_data", "access_denied"].includes(String(body.kind)) ||
+      typeof body.text !== "string") {
+    throw new MiniAppStageError("invalid_response", response.status);
+  }
+  return { kind: body.kind as MiniAppCoachingResult["kind"], text: body.text };
 }
 
 export async function sendOwnerDemoChat(
