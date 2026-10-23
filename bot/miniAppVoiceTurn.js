@@ -46,6 +46,13 @@ function createMiniAppVoiceTurnHandler({
         kind: 'access_denied',
       };
     }
+    if (!isOwnerId(id) && mode === 'avatar' && !status.allowedModes?.includes('avatar')) {
+      return {
+        transcript: '',
+        reply: 'Видео аватарът не е включен в активния ти план.',
+        kind: 'access_denied',
+      };
+    }
     if (!hasTextAIProvider(id)) {
       const error = new Error('text_ai_unavailable');
       error.code = 'text_ai_unavailable';

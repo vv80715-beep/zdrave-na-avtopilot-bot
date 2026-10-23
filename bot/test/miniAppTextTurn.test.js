@@ -70,6 +70,7 @@ test('voice and avatar payloads are captured for Mini App playback without Teleg
     gateChat: async () => ({ canChat: true, allowedModes: ['text', 'voice', 'avatar'] }),
     askEli: async (ctx, _message, options) => {
       captured.push({ mode: options.mode, updateId: ctx.update.update_id });
+      ctx.captureText('Синтетичен отговор в текста.');
       if (options.mode === 'voice') {
         await ctx.replyWithVoice({ source: Buffer.from('synthetic-audio') });
       } else {
@@ -81,13 +82,38 @@ test('voice and avatar payloads are captured for Mini App playback without Teleg
 
   const voice = await handler({ userId: OWNER, message: 'say hello', mode: 'voice', turnId });
   assert.equal(voice.kind, 'voice');
+  assert.equal(voice.reply, 'Синтетичен отговор в текста.');
   assert.deepEqual(voice.media, {
     type: 'audio',
     mimeType: 'audio/ogg',
     data: Buffer.from('synthetic-audio').toString('base64'),
   });
-  const video = await handler({ userId: OWNER, message: 'say hello', mode: 'avatar', turnId });
+  const video = await handler({
+    userId: OWNER, message: 'say hello', mode: 'avatar',
+    turnId: 'cbe7a061-850d-44bc-9b75-8d78045b88f4',
+  });
   assert.equal(video.kind, 'avatar');
+  assert.equal(video.reply, 'Синтетичен отговор в текста.');
   assert.deepEqual(video.media, { type: 'video', url: 'https://media.example/synthetic.mp4' });
-  assert.equal(captured[0].updateId, captured[1].updateId);
+  assert.notEqual(captured[0].updateId, captured[1].updateId);
+});
+
+test('text-only trial cannot invoke a paid voice or avatar mode', async () => {
+  let aiCalls = 0;
+  const handler = createMiniAppTextTurnHandler({
+    runTurn: createMiniAppTurnCoordinator(),
+    hasTextAIProvider: () => true,
+    gateChat: async () => ({ canChat: true, allowedModes: ['text'] }),
+    askEli: async () => { aiCalls += 1; },
+  });
+  for (const mode of ['voice', 'avatar']) {
+    const result = await handler({
+      userId: OWNER,
+      message: 'synthetic request',
+      mode,
+      turnId: mode === 'voice' ? 'cbe7a061-850d-44bc-9b75-8d78045b88f4' : '22fa9e42-f07d-4157-927e-121f5664afcc',
+    });
+    assert.equal(result.kind, 'access_denied');
+  }
+  assert.equal(aiCalls, 0);
 });

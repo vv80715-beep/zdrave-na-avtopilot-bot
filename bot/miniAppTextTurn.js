@@ -79,6 +79,16 @@ function createMiniAppTextTurnHandler({
       if (ctx.replies.length !== 1) throw new Error('text_turn_no_gate_reply');
       return { reply: ctx.replies[0], kind: 'access_denied' };
     }
+    if (Array.isArray(status.allowedModes) && !status.allowedModes.includes(mode)) {
+      return {
+        reply: mode === 'avatar'
+          ? 'Видео аватарът не е включен в активния ти план.'
+          : mode === 'voice'
+            ? 'Гласовият режим не е включен в активния ти план.'
+            : 'Текстовият чат не е включен в активния ти план.',
+        kind: 'access_denied',
+      };
+    }
 
     if (!hasTextAIProvider(id)) {
       const error = new Error('text_ai_unavailable');

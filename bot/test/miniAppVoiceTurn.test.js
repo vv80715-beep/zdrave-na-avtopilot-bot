@@ -61,6 +61,17 @@ test('expired plan and text-only plan never invoke transcription or AI', async (
   assert.deepEqual(textOnly.calls, ['gate']);
 });
 
+test('voice recording submitted in avatar mode requires both voice and avatar entitlement before STT', async () => {
+  const restricted = makeHandler({
+    status: { canChat: true, allowedModes: ['text', 'voice'] },
+  });
+  const result = await restricted.handler({
+    userId: '987654321', audio: AUDIO, mode: 'avatar', turnId: TURN_ID,
+  });
+  assert.equal(result.kind, 'access_denied');
+  assert.deepEqual(restricted.calls, ['gate']);
+});
+
 test('owner voice input and voice output are captured without Telegram delivery', async () => {
   const owner = makeHandler({
     owner: true,
