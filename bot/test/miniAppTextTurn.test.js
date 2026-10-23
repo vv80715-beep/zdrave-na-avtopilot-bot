@@ -1,12 +1,14 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createMiniAppTextTurnHandler } = require('../miniAppTextTurn');
+const { createMiniAppTurnCoordinator } = require('../miniAppTurnIdempotency');
 
 const OWNER = '123456789';
 
 function setup({ provider = true, status = { canChat: true, allowedModes: ['text'] } } = {}) {
   const calls = [];
   const handler = createMiniAppTextTurnHandler({
+    runTurn: createMiniAppTurnCoordinator(),
     hasTextAIProvider: () => provider,
     gateChat: async ctx => {
       calls.push('gate');
@@ -63,6 +65,7 @@ test('voice and avatar payloads are captured for Mini App playback without Teleg
   const turnId = 'f9b2d7a0-0e22-4e10-a987-7eea4ebf0667';
   const captured = [];
   const handler = createMiniAppTextTurnHandler({
+    runTurn: createMiniAppTurnCoordinator(),
     hasTextAIProvider: () => true,
     gateChat: async () => ({ canChat: true, allowedModes: ['text', 'voice', 'avatar'] }),
     askEli: async (ctx, _message, options) => {

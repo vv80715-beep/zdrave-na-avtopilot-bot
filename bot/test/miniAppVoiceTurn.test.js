@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createMiniAppVoiceTurnHandler } = require('../miniAppVoiceTurn');
+const { createMiniAppTurnCoordinator } = require('../miniAppTurnIdempotency');
 
 const TURN_ID = 'f9b2d7a0-0e22-4e10-a987-7eea4ebf0667';
 const AUDIO = Buffer.concat([
@@ -19,6 +20,7 @@ function makeHandler({
 } = {}) {
   const calls = [];
   const handler = createMiniAppVoiceTurnHandler({
+    runTurn: createMiniAppTurnCoordinator(),
     gateChat: async (ctx) => { calls.push('gate'); return status; },
     hasTextAIProvider: () => { calls.push('provider'); return provider; },
     transcribeAudioBuffer: async (audio) => { calls.push(['transcribe', audio]); return transcribe(); },

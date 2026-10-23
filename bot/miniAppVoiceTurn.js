@@ -13,8 +13,9 @@ function createMiniAppVoiceTurnHandler({
   looksLikeBulgarian,
   askEli,
   isOwnerId,
+  runTurn = runMiniAppTurn,
 }) {
-  if (![gateChat, hasTextAIProvider, transcribeAudioBuffer, looksLikeBulgarian, askEli, isOwnerId]
+  if (![gateChat, hasTextAIProvider, transcribeAudioBuffer, looksLikeBulgarian, askEli, isOwnerId, runTurn]
     .every((fn) => typeof fn === 'function')) {
     throw new TypeError('Mini App voice-turn dependencies are required.');
   }
@@ -82,7 +83,7 @@ function createMiniAppVoiceTurnHandler({
       .update(audio)
       .update(JSON.stringify([input.mode || 'text', input.prompt || '']))
       .digest('hex');
-    return runMiniAppTurn({
+    return runTurn({
       userId: input.userId,
       turnId: input.turnId,
       fingerprint: `voice:${fingerprint}`,

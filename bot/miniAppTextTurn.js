@@ -46,8 +46,9 @@ function createMiniAppTextTurnHandler({
   hasTextAIProvider,
   gateChat,
   askEli,
+  runTurn = runMiniAppTurn,
 }) {
-  if (![hasTextAIProvider, gateChat, askEli].every((fn) => typeof fn === 'function')) {
+  if (![hasTextAIProvider, gateChat, askEli, runTurn].every((fn) => typeof fn === 'function')) {
     throw new TypeError('Mini App text-turn dependencies are required.');
   }
 
@@ -106,7 +107,7 @@ function createMiniAppTextTurnHandler({
     const fingerprint = crypto.createHash('sha256')
       .update(JSON.stringify([input.message, input.mode || 'text']))
       .digest('hex');
-    return runMiniAppTurn({
+    return runTurn({
       userId: input.userId,
       turnId: input.turnId,
       fingerprint: `text:${fingerprint}`,
