@@ -184,8 +184,8 @@ paths:
     post:
       operationId: postMiniAppOwnerVoice
       tags: [mini-app]
-      summary: Transcribe one voice recording and return a text-only staging response
-      description: Disabled by default. Requires the existing owner session and exact configured origin. No TTS or avatar output is used.
+      summary: Send one voice recording through the authenticated bot voice-turn path
+      description: Disabled unless explicitly enabled. Production identity and entitlements are checked server-side; development staging remains owner-only. Audio is temporary and removed after processing.
       security:
         - MiniAppSessionCookie: []
       requestBody:
@@ -196,7 +196,7 @@ paths:
               $ref: "#/components/schemas/MiniAppVoiceUpload"
       responses:
         "200":
-          description: Staging-only transcript and text reply
+          description: Transcript, Eli response, and optional audio or avatar media
           content:
             application/json:
               schema:
@@ -204,7 +204,7 @@ paths:
         "400":
           description: Invalid multipart fields
         "401":
-          description: Valid owner session required
+          description: Valid Mini App session required
         "403":
           description: Request is not from the configured origin
         "404":
@@ -214,11 +214,11 @@ paths:
         "415":
           description: Unsupported or invalid audio type
         "429":
-          description: Staging rate or concurrency limit reached
+          description: Voice request rate or concurrency limit reached
         "502":
           description: Media processing failed
         "503":
-          description: OpenAI is not configured
+          description: Bot bridge or a required provider is unavailable
 components:
   securitySchemes:
     MiniAppSessionCookie:
@@ -388,6 +388,16 @@ components:
         language:
           type: string
           enum: [bg, en]
+        mode:
+          type: string
+          enum: [text, voice, avatar]
+          default: text
+        turnId:
+          type: string
+          format: uuid
+        prompt:
+          type: string
+          maxLength: 1200
       required: [file]
     MiniAppImageResult:
       type: object
@@ -413,6 +423,14 @@ components:
           const: voice
         staged:
           type: boolean
-          const: true
-      required: [transcript, reply, mediaType, staged]
+        demo:
+          type: boolean
+        kind:
+          type: string
+          enum: [eli_text, voice, avatar, access_denied, transcription_unclear]
+        media:
+          type: object
+          additionalProperties: true
+      required: [transcript, reply, mediaType, staged, demo, kind]
+      additionalProperties: false
 

@@ -39,6 +39,7 @@ import {
   getMiniAppProfileSnapshot,
   MiniAppStageError,
   mutateMiniAppRecord,
+  sendMiniAppVoiceTurn,
   sendMiniAppTextTurn,
   type MiniAppTurnMode,
   type MiniAppProfileSnapshot,
@@ -275,7 +276,7 @@ function formatFileSize(bytes: number) {
 }
 
 function Chat() {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [draft, setDraft] = useState('');
   const [notice, setNotice] = useState<TranslationKey | null>(null);
   const [stageError, setStageError] = useState<TranslationKey | null>(null);
@@ -366,6 +367,7 @@ function Chat() {
     const text = draft.trim();
     const attachment = media.attachment;
     const sendText = canUseTelegramSession && Boolean(text);
+    const sendVoice = canUseTelegramSession && attachment?.kind === 'voice';
     if (sendText && ambiguousDraft === text) {
       setStageError('stageProviderUncertain');
       setStageErrorCanRetry(false);
@@ -374,20 +376,27 @@ function Chat() {
     setNotice(null);
     setStageError(null);
     setStageErrorCanRetry(false);
-    if (sendText && stageMode === 'checking') {
+    if ((sendText || sendVoice) && stageMode === 'checking') {
       setStageError('stageCheckingError');
       setStageErrorCanRetry(true);
       return;
     }
-    if (sendText) {
+    if (sendText || sendVoice) {
       sendLock.current = true;
       setSending(true);
       try {
-        const result = await sendMiniAppTextTurn(signedInitData, text, fetch, selectedMode);
+        const result = sendVoice && attachment
+          ? await sendMiniAppVoiceTurn(
+            signedInitData, attachment.blob, attachment.name, language, selectedMode, text, fetch,
+          )
+          : await sendMiniAppTextTurn(signedInitData, text, fetch, selectedMode);
         const deliveredAttachment = media.detachForMessage();
+        const visibleUserText = sendVoice
+          ? (result.transcript || t('voiceAttachment'))
+          : text;
         setMessages((current) => [
           ...current,
-          { id: nextMessageId.current++, role: 'user', text, attachment: deliveredAttachment, delivery: 'api' },
+          { id: nextMessageId.current++, role: 'user', text: visibleUserText, attachment: deliveredAttachment, delivery: 'api' },
           {
             id: nextMessageId.current++,
             role: 'assistant',
@@ -404,7 +413,7 @@ function Chat() {
         setAmbiguousDraft(null);
         setDraft('');
         setAttachmentMenuOpen(false);
-        if (attachment) setNotice('attachmentLocalNotice');
+        if (attachment && attachment.kind !== 'voice') setNotice('attachmentLocalNotice');
         media.clearError();
       } catch (error) {
         const uncertain = error instanceof MiniAppStageError &&
