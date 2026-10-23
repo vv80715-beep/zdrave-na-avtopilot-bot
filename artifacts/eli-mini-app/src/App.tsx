@@ -616,28 +616,18 @@ function Chat() {
               value={draft}
               disabled={sending}
               onChange={(event) => {
-                const nextDraft = event.target.value;
-                setDraft(nextDraft);
-                if (ambiguousDraft !== null) {
-                  if (nextDraft.trim() === ambiguousDraft) {
-                    setStageError('stageProviderUncertain');
-                    setStageErrorCanRetry(false);
-                  } else {
-                    setStageError(null);
-                    setStageErrorCanRetry(false);
-                  }
-                }
+                setDraft(event.target.value);
                 media.clearError();
               }}
               data-testid="input-demo-message"
             />
-            <button className="send-button" type="submit" aria-label={t(canUseOwnerStage ? 'sendAriaStage' : 'sendAria')} data-testid="button-demo-send" disabled={sending || (canUseOwnerStage && stageMode === 'checking') || (ambiguousDraft !== null && ambiguousDraft === draft.trim()) || (!draft.trim() && !media.attachment)}>
+            <button className="send-button" type="submit" aria-label={t(canUseOwnerStage ? 'sendAriaStage' : 'sendAria')} data-testid="button-demo-send" disabled={sending || (canUseOwnerStage && stageMode === 'checking') || (!draft.trim() && !media.attachment)}>
               {sending ? <Clock3 size={16} /> : <Send size={16} />}
             </button>
           </form>
           <p className="composer-disclosure">{t(
             stageMode === 'live'
-              ? ownerDossierContext ? 'stagingLiveMemoryDisclosure' : 'stagingLiveDisclosure'
+              ? 'stagingLiveDisclosure'
               :
               canUseOwnerStage ? 'stagingComposerDisclosure' : 'composerDisclosure'
           )}</p>
