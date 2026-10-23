@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  createOpenAiTextAiAdapter,
   createMiniAppRouter,
   miniAppConfigEnabled,
   mountMiniAppRoutes,
@@ -519,33 +520,23 @@ test("mock-only media flag returns fixed non-analysis copy even when an OpenAI k
   }
 });
 
-test("fixed demo chat limits input and caps each signed session at 20 messages per minute", async () => {
-  const h = await serverHarness();
+test("retired demo chat always returns 404 without calling a provider", async () => {
+  let providerCalls = 0;
+  const h = await serverHarness({
+    textAi: async () => { providerCalls += 1; return "must not run"; },
+  });
   try {
     const cookie = await ownerCookie(h);
-    const oversized = await h.request(
-      "/demo-chat",
-      { message: "x".repeat(1201), language: "en" },
-      { cookie },
-    );
-    assert.equal(oversized.status, 400);
-    for (let index = 0; index < 20; index += 1) {
-      const response = await h.request(
-        "/demo-chat",
-        { message: `synthetic ${index}`, language: "en" },
-        { cookie },
-      );
-      assert.equal(response.status, 200);
-    }
-    const limited = await h.request("/demo-chat", { message: "twenty-first", language: "en" }, { cookie });
-    assert.equal(limited.status, 429);
-    assert.deepEqual(await limited.json(), { error: "chat_rate_limited" });
+    const response = await h.request("/demo-chat", { message: "synthetic" }, { cookie });
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { error: "not_found" });
+    assert.equal(providerCalls, 0);
   } finally {
     await h.close();
   }
 });
 
-test("text AI is 404 while disabled, requires owner session, and fails closed without a valid key", async () => {
+test("retired text AI routes always return 404 and never call a provider", async () => {
   let providerCalls = 0;
   const disabled = await serverHarness({
     env: config(),
@@ -557,7 +548,8 @@ test("text AI is 404 while disabled, requires owner session, and fails closed wi
     const cookie = await ownerCookie(disabled);
     assert.equal((await disabled.request("/text-ai", { message: "synthetic" }, { cookie })).status, 404);
     const status = await disabled.request("/text-ai/status", {}, { cookie });
-    assert.deepEqual(await status.json(), { mode: "mock", ownerDossierContext: false });
+    assert.equal(status.status, 404);
+    assert.deepEqual(await status.json(), { error: "not_found" });
     assert.equal((await disabled.request("/text-ai/status", undefined, { cookie, method: "GET" })).status, 404);
     assert.equal((await disabled.request("/text-ai/status", {}, { cookie, origin: null })).status, 403);
     assert.equal(providerCalls, 0);
@@ -571,15 +563,15 @@ test("text AI is 404 while disabled, requires owner session, and fails closed wi
   });
   try {
     const cookie = await ownerCookie(missingKey);
-    assert.equal((await missingKey.request("/text-ai", { message: "synthetic" }, { cookie })).status, 503);
-     assert.equal((await missingKey.request("/text-ai/status", {}, { cookie })).status, 503);
+    assert.equal((await missingKey.request("/text-ai", { message: "synthetic" }, { cookie })).status, 404);
+    assert.equal((await missingKey.request("/text-ai/status", {}, { cookie })).status, 404);
     assert.equal(providerCalls, 0);
   } finally {
     await missingKey.close();
   }
 });
 
-test("owner text AI validates size and language, uses isolated mock injection, and enforces minute cap", async () => {
+test("retired text AI route stays 404 even with its old feature flag enabled", async () => {
   let providerCalls = 0;
   const h = await serverHarness({
     env: config({
@@ -597,35 +589,28 @@ test("owner text AI validates size and language, uses isolated mock injection, a
   try {
     const cookie = await ownerCookie(h);
     const status = await h.request("/text-ai/status", {}, { cookie });
-    assert.deepEqual(await status.json(), {
-      mode: "test_ai",
-      model: "gpt-4o-mini",
-      ownerDossierContext: false,
-    });
+    assert.equal(status.status, 404);
+    assert.deepEqual(await status.json(), { error: "not_found" });
     assert.equal((await h.request("/text-ai", { message: "synthetic test" }, {
       cookie,
       origin: "https://untrusted.example",
     })).status, 403);
-    assert.equal((await h.request("/text-ai", { message: "x".repeat(1201) }, { cookie })).status, 400);
-    assert.equal((await h.request("/text-ai", { message: "synthetic test", language: "fr" }, { cookie })).status, 400);
+    assert.equal((await h.request("/text-ai", { message: "x".repeat(1201) }, { cookie })).status, 404);
+    assert.equal((await h.request("/text-ai", { message: "synthetic test", language: "fr" }, { cookie })).status, 404);
     for (let index = 0; index < 5; index += 1) {
       const response = await h.request("/text-ai", { message: "synthetic test", language: "en" }, { cookie });
-      assert.equal(response.status, 200);
-      assert.deepEqual(await response.json(), {
-        reply: "Synthetic AI reply.",
-        mode: "test_ai",
-        model: "gpt-4o-mini",
-      });
+      assert.equal(response.status, 404);
+      assert.deepEqual(await response.json(), { error: "not_found" });
     }
     const limited = await h.request("/text-ai", { message: "synthetic test" }, { cookie });
-    assert.equal(limited.status, 429);
-    assert.equal(providerCalls, 5);
+    assert.equal(limited.status, 404);
+    assert.equal(providerCalls, 0);
   } finally {
     await h.close();
   }
 });
 
-test("owner dossier context is dev-only, session-gated, topic-selected, and never returned to the browser", async () => {
+test("retired owner dossier text route stays 404 without reading dossier or calling a provider", async () => {
   const syntheticContext = "SYNTHETIC_OWNER_DOSSIER_FIXTURE";
   let contextReads = 0;
   let receivedInput;
@@ -651,30 +636,19 @@ test("owner dossier context is dev-only, session-gated, topic-selected, and neve
     assert.equal(contextReads, 0);
     const cookie = await ownerCookie(h);
     const status = await h.request("/text-ai/status", {}, { cookie });
-    const statusBody = await status.json();
-    assert.deepEqual(statusBody, {
-      mode: "test_ai",
-      model: "gpt-4o-mini",
-      ownerDossierContext: true,
-    });
+    assert.equal(status.status, 404);
+    assert.deepEqual(await status.json(), { error: "not_found" });
     const response = await h.request("/text-ai", { message: "synthetic goal question" }, { cookie });
-    assert.equal(response.status, 200);
-    const responseBody = await response.json();
-    assert.deepEqual(responseBody, {
-      reply: "Synthetic answer.",
-      mode: "test_ai",
-      model: "gpt-4o-mini",
-    });
-    assert.equal(contextReads, 1);
-    assert.equal(receivedInput.ownerDossierContext, syntheticContext);
-    assert.equal(JSON.stringify(responseBody).includes(syntheticContext), false);
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { error: "not_found" });
+    assert.equal(contextReads, 0);
+    assert.equal(receivedInput, undefined);
   } finally {
     await h.close();
   }
 });
 
-test("owner name and creator questions use canonical owner identity without calling OpenAI", async () => {
-  const ownerContext = require("../../../bot/ownerContext.js");
+test("staging rejects a foreign Telegram identity before issuing a session", async () => {
   let providerCalls = 0;
   const h = await serverHarness({
     env: config({
@@ -690,38 +664,20 @@ test("owner name and creator questions use canonical owner identity without call
     const clientSession = await h.request("/session", {
       initData: signedInitData({ userId: "987654321" }),
     });
-    assert.equal(clientSession.status, 200);
-    const clientCookie = clientSession.headers.get("set-cookie").split(";")[0];
-    const clientText = await h.request(
-      "/text-ai",
-      { message: "synthetic client request" },
-      { cookie: clientCookie },
-    );
-    assert.equal(clientText.status, 403);
-    assert.deepEqual(await clientText.json(), { error: "owner_only" });
+    assert.equal(clientSession.status, 403);
+    assert.deepEqual(await clientSession.json(), { error: "owner_only" });
+    assert.equal(clientSession.headers.get("set-cookie"), null);
     assert.equal(providerCalls, 0);
     const cookie = await ownerCookie(h);
-    for (const [message, expected] of [
-      ["Как се казвам?", `Казваш се ${ownerContext.OWNER_NAME}.`],
-      [
-        "Кой създаде Ели?",
-        `Ели е създадена от ${ownerContext.OWNER_NAME} — ${ownerContext.OWNER_CREATOR_FACT.toLocaleLowerCase("bg")}.`,
-      ],
-    ]) {
-      const response = await h.request("/text-ai", { message }, { cookie });
-      assert.equal(response.status, 200);
-      assert.deepEqual(await response.json(), {
-        reply: expected,
-        mode: "owner_identity_faq",
-      });
-    }
+    const response = await h.request("/text-ai", { message: "synthetic" }, { cookie });
+    assert.equal(response.status, 404);
     assert.equal(providerCalls, 0);
   } finally {
     await h.close();
   }
 });
 
-test("mixed Eli mission and owner motivation/goals question uses only synthetic dossier FAQ answers", async () => {
+test("retired mixed dossier query cannot invoke FAQ, dossier, or provider callbacks", async () => {
   const answerCalls = [];
   let providerCalls = 0;
   let contextCalls = 0;
@@ -757,12 +713,9 @@ test("mixed Eli mission and owner motivation/goals question uses only synthetic 
 
     const cookie = await ownerCookie(h);
     const response = await h.request("/text-ai", { message: question }, { cookie });
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), {
-      reply: "Synthetic personal motivation.\n\nSynthetic life goal.",
-      mode: "owner_dossier_faq",
-    });
-    assert.deepEqual(answerCalls, ["creation_reason", "goals"]);
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { error: "not_found" });
+    assert.deepEqual(answerCalls, []);
     assert.equal(contextCalls, 0);
     assert.equal(providerCalls, 0);
   } finally {
@@ -770,7 +723,7 @@ test("mixed Eli mission and owner motivation/goals question uses only synthetic 
   }
 });
 
-test("owner dossier FAQ returns explicit unknowns instead of guessing when facts are missing", async () => {
+test("retired dossier FAQ route returns 404 without provider fallback", async () => {
   let providerCalls = 0;
   const h = await serverHarness({
     env: config({
@@ -797,15 +750,15 @@ test("owner dossier FAQ returns explicit unknowns instead of guessing when facts
       { message: "Каква е личната ми мотивация и какво искам да постигна в живота си?" },
       { cookie },
     );
-    assert.equal(response.status, 200);
-    assert.match((await response.json()).reply, /Не знам потвърдената причина/);
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { error: "not_found" });
     assert.equal(providerCalls, 0);
   } finally {
     await h.close();
   }
 });
 
-test("canonical owner dossier functions read only a synthetic fixture for motivation, goals, and mixed questions", async () => {
+test("legacy dossier route remains 404 when owner dossier is enabled", async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "eli-mini-canonical-dossier-"));
   const fixturePath = path.join(tempRoot, "fixture.json");
   const fixture = {
@@ -841,35 +794,22 @@ test("canonical owner dossier functions read only a synthetic fixture for motiva
     const clientSession = await h.request("/session", {
       initData: signedInitData({ userId: "987654321" }),
     });
-    assert.equal(clientSession.status, 200);
-    const clientCookie = clientSession.headers.get("set-cookie").split(";")[0];
-    const clientText = await h.request(
-      "/text-ai",
-      { message: "synthetic client request" },
-      { cookie: clientCookie },
-    );
-    assert.equal(clientText.status, 403);
-    assert.deepEqual(await clientText.json(), { error: "owner_only" });
+    assert.equal(clientSession.status, 403);
+    assert.deepEqual(await clientSession.json(), { error: "owner_only" });
+    assert.equal(clientSession.headers.get("set-cookie"), null);
     assert.equal(providerCalls, 0);
 
     const cookie = await ownerCookie(h);
     const questions = [
-      ["Каква е моята лична мотивация да създам този бизнес?", ["SYNTHETIC_PERSONAL_MOTIVATION"]],
-      ["Какво искам да постигна в живота си?", ["SYNTHETIC_LIFE_GOAL"]],
-      ["Каква е бизнес мисията?", ["SYNTHETIC_BUSINESS_MISSION"]],
-      [
-        "Ели, освен твоята мисия, каква е моята лична мотивация и какво искам да постигна в живота си?",
-        ["SYNTHETIC_PERSONAL_MOTIVATION", "SYNTHETIC_LIFE_GOAL"],
-      ],
+      "Каква е моята лична мотивация да създам този бизнес?",
+      "Какво искам да постигна в живота си?",
+      "Каква е бизнес мисията?",
+      "Ели, освен твоята мисия, каква е моята лична мотивация и какво искам да постигна в живота си?",
     ];
-    for (const [message, expectedMarkers] of questions) {
+    for (const message of questions) {
       const response = await h.request("/text-ai", { message }, { cookie });
-      assert.equal(response.status, 200);
-      const body = await response.json();
-      assert.deepEqual(Object.keys(body).sort(), ["mode", "reply"]);
-      assert.equal(body.mode, "owner_dossier_faq");
-      for (const marker of expectedMarkers) assert.ok(body.reply.includes(marker));
-      assert.equal(body.reply.includes("SYNTHETIC_UNRELATED_FACT"), false);
+      assert.equal(response.status, 404);
+      assert.deepEqual(await response.json(), { error: "not_found" });
     }
     assert.equal(providerCalls, 0);
 
@@ -878,12 +818,8 @@ test("canonical owner dossier functions read only a synthetic fixture for motiva
       { message: "Моля използвай името ми в отговора." },
       { cookie },
     );
-    assert.equal(nameContextResponse.status, 200);
-    const nameContextBody = await nameContextResponse.json();
-    assert.equal(nameContextBody.mode, "test_ai");
-    assert.match(nameContextBody.reply, /SYNTHETIC_PREFERRED_NAME/);
-    assert.doesNotMatch(nameContextBody.reply, /SYNTHETIC_UNRELATED_FACT/);
-    assert.equal(providerCalls, 1);
+    assert.equal(nameContextResponse.status, 404);
+    assert.equal(providerCalls, 0);
     assert.equal((await readFile(fixturePath, "utf8")), originalFixture);
   } finally {
     await h.close();
@@ -891,7 +827,7 @@ test("canonical owner dossier functions read only a synthetic fixture for motiva
   }
 });
 
-test("owner dossier read failures return a safe error without answering or calling AI", async () => {
+test("retired dossier read route returns 404 without answering or calling AI", async () => {
   const missingPath = path.join(os.tmpdir(), `eli-mini-missing-${process.pid}`, "dossier.json");
   let faqCalls = 0;
   let providerCalls = 0;
@@ -921,8 +857,8 @@ test("owner dossier read failures return a safe error without answering or calli
       { message: "Каква е моята лична мотивация?" },
       { cookie },
     );
-    assert.equal(response.status, 503);
-    assert.deepEqual(await response.json(), { error: "owner_memory_unavailable" });
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { error: "not_found" });
     assert.equal(faqCalls, 0);
     assert.equal(providerCalls, 0);
   } finally {
@@ -930,7 +866,7 @@ test("owner dossier read failures return a safe error without answering or calli
   }
 });
 
-test("invalid key format and provider failures are safe, generic, and never fall back to mock", async () => {
+test("retired AI route returns 404 regardless of key or provider configuration", async () => {
   let providerCalls = 0;
   const invalidKey = await serverHarness({
     env: config({
@@ -942,8 +878,8 @@ test("invalid key format and provider failures are safe, generic, and never fall
   try {
     const cookie = await ownerCookie(invalidKey);
     const response = await invalidKey.request("/text-ai", { message: "synthetic" }, { cookie });
-    assert.equal(response.status, 503);
-    assert.deepEqual(await response.json(), { error: "text_ai_unavailable" });
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { error: "not_found" });
     assert.equal(providerCalls, 0);
   } finally {
     await invalidKey.close();
@@ -962,69 +898,35 @@ test("invalid key format and provider failures are safe, generic, and never fall
   try {
     const cookie = await ownerCookie(failingProvider);
     const response = await failingProvider.request("/text-ai", { message: "synthetic" }, { cookie });
-    assert.equal(response.status, 503);
-    const body = await response.text();
-    assert.deepEqual(JSON.parse(body), { error: "text_ai_provider_unavailable" });
-    assert.equal(body.includes("private provider error detail"), false);
-    assert.equal(providerCalls, 1);
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { error: "not_found" });
+    assert.equal(providerCalls, 0);
   } finally {
     await failingProvider.close();
   }
 });
 
-test("owner text AI has a 20-per-UTC-day cap and rejects duplicate concurrent work", async () => {
-  let currentTime = NOW_SECONDS * 1000;
+test("retired text AI route never consumes provider quota or invokes the provider", async () => {
   let providerCalls = 0;
   const h = await serverHarness({
     env: config({
       ELI_MINI_APP_TEXT_AI_ENABLED: "true",
       OPENAI_API_KEY: `sk-${"x".repeat(24)}`,
     }),
-    now: () => currentTime,
     textAi: async () => { providerCalls += 1; return "Synthetic reply."; },
   });
   try {
     const cookie = await ownerCookie(h);
     for (let index = 0; index < 20; index += 1) {
       const response = await h.request("/text-ai", { message: "synthetic" }, { cookie });
-      assert.equal(response.status, 200);
-      currentTime += 13_000;
+      assert.equal(response.status, 404);
+      assert.deepEqual(await response.json(), { error: "not_found" });
     }
     const dailyLimited = await h.request("/text-ai", { message: "synthetic" }, { cookie });
-    assert.equal(dailyLimited.status, 429);
-    assert.deepEqual(await dailyLimited.json(), { error: "text_ai_daily_limit" });
-    assert.equal(providerCalls, 20);
+    assert.equal(dailyLimited.status, 404);
+    assert.equal(providerCalls, 0);
   } finally {
     await h.close();
-  }
-
-  let releaseProvider;
-  let enteredProvider;
-  const entered = new Promise((resolve) => { enteredProvider = resolve; });
-  const inFlight = new Promise((resolve) => { releaseProvider = resolve; });
-  const concurrent = await serverHarness({
-    env: config({
-      ELI_MINI_APP_TEXT_AI_ENABLED: "true",
-      OPENAI_API_KEY: `sk-${"x".repeat(24)}`,
-    }),
-    textAi: async () => {
-      enteredProvider();
-      await inFlight;
-      return "Synthetic reply.";
-    },
-  });
-  try {
-    const cookie = await ownerCookie(concurrent);
-    const first = concurrent.request("/text-ai", { message: "synthetic one" }, { cookie });
-    await entered;
-    const second = await concurrent.request("/text-ai", { message: "synthetic two" }, { cookie });
-    assert.equal(second.status, 429);
-    assert.deepEqual(await second.json(), { error: "text_ai_in_progress" });
-    releaseProvider();
-    assert.equal((await first).status, 200);
-  } finally {
-    releaseProvider();
-    await concurrent.close();
   }
 });
 
@@ -1138,7 +1040,7 @@ test("API signs the verified session subject for the loopback bot bridge", async
   }
 });
 
-test("owner chat forwards only text to the bot bridge and returns its engine reply", async () => {
+test("owner chat requires the protected owner session before calling the bot bridge", async () => {
   let forwarded;
   const h = await serverHarness({
     bridgeSecret: "synthetic-bridge-secret-with-more-than-thirty-two-characters",
@@ -1152,12 +1054,26 @@ test("owner chat forwards only text to the bot bridge and returns its engine rep
     },
   });
   try {
-    const cookie = await ownerCookie(h);
-    const response = await h.request("/chat", {
+    const body = {
       message: "synthetic question",
       mode: "text",
       turnId: "f9b2d7a0-0e22-4e10-a987-7eea4ebf0667",
-    }, { cookie });
+    };
+    const unauthenticated = await h.request("/chat", body);
+    assert.equal(unauthenticated.status, 401);
+    const foreignInitData = await h.request("/session", {
+      initData: signedInitData({ userId: "987654321" }),
+    });
+    assert.equal(foreignInitData.status, 403);
+    assert.equal(foreignInitData.headers.get("set-cookie"), null);
+    const foreignSession = await h.request("/chat", body, {
+      cookie: legacyCookieFor("987654321"),
+    });
+    assert.equal(foreignSession.status, 403);
+    assert.equal(forwarded, undefined);
+
+    const cookie = await ownerCookie(h);
+    const response = await h.request("/chat", body, { cookie });
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), {
       reply: "Синтетичен отговор от bot engine.",
