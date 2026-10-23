@@ -277,6 +277,7 @@ function Chat() {
   const [notice, setNotice] = useState<TranslationKey | null>(null);
   const [stageError, setStageError] = useState<TranslationKey | null>(null);
   const [stageErrorCanRetry, setStageErrorCanRetry] = useState(false);
+  const [ambiguousDraft, setAmbiguousDraft] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [stageMode, setStageMode] = useState<'local' | 'checking' | 'live' | 'unavailable'>('local');
   const [messages, setMessages] = useState<LocalChatMessage[]>([]);
@@ -358,6 +359,11 @@ function Chat() {
     const text = draft.trim();
     const attachment = media.attachment;
     const sendText = canUseOwnerStage && Boolean(text);
+    if (sendText && ambiguousDraft === text) {
+      setStageError('stageProviderUncertain');
+      setStageErrorCanRetry(false);
+      return;
+    }
     setNotice(null);
     setStageError(null);
     setStageErrorCanRetry(false);
@@ -386,12 +392,20 @@ function Chat() {
         setStageMode('live');
         setStageError(null);
         setStageErrorCanRetry(false);
+        setAmbiguousDraft(null);
         setDraft('');
         setAttachmentMenuOpen(false);
         if (attachment) setNotice('attachmentLocalNotice');
         media.clearError();
       } catch (error) {
-        setStageError(stageErrorKey(error));
+        const uncertain = error instanceof MiniAppStageError &&
+          [0, 502, 503, 504].includes(error.status);
+        if (uncertain) {
+          setAmbiguousDraft(text);
+          setStageError('stageProviderUncertain');
+        } else {
+          setStageError(stageErrorKey(error));
+        }
         setStageErrorCanRetry(false);
       } finally {
         sendLock.current = false;
@@ -616,12 +630,18 @@ function Chat() {
               value={draft}
               disabled={sending}
               onChange={(event) => {
-                setDraft(event.target.value);
+                const nextDraft = event.target.value;
+                setDraft(nextDraft);
+                if (ambiguousDraft !== null && nextDraft.trim() !== ambiguousDraft) {
+                  setAmbiguousDraft(null);
+                  setStageError(null);
+                  setStageErrorCanRetry(false);
+                }
                 media.clearError();
               }}
               data-testid="input-demo-message"
             />
-            <button className="send-button" type="submit" aria-label={t(canUseOwnerStage ? 'sendAriaStage' : 'sendAria')} data-testid="button-demo-send" disabled={sending || (canUseOwnerStage && stageMode === 'checking') || (!draft.trim() && !media.attachment)}>
+            <button className="send-button" type="submit" aria-label={t(canUseOwnerStage ? 'sendAriaStage' : 'sendAria')} data-testid="button-demo-send" disabled={sending || (canUseOwnerStage && stageMode === 'checking') || (ambiguousDraft !== null && ambiguousDraft === draft.trim()) || (!draft.trim() && !media.attachment)}>
               {sending ? <Clock3 size={16} /> : <Send size={16} />}
             </button>
           </form>

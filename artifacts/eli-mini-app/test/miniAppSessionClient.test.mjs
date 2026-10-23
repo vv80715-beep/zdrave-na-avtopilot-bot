@@ -4,6 +4,7 @@ import {
   getMiniAppProfileSnapshot,
   getOwnerTextAiStatus,
   MiniAppStageError,
+  sendMiniAppTextTurn,
   sendOwnerDemoChat,
   sendOwnerTextAi,
   uploadOwnerDemoMedia,
@@ -11,6 +12,23 @@ import {
 import { translate } from "../src/i18n.ts";
 
 const initData = "signed-data-fixture-not-a-real-credential";
+
+test("Mini App text turn uses the bot chat route and sends no browser identity", async () => {
+  const requests = [];
+  const result = await sendMiniAppTextTurn(initData, "synthetic question", async (url, init) => {
+    requests.push({ url: String(url), init });
+    return String(url).endsWith("/session")
+      ? new Response(JSON.stringify({ ok: true, expiresAt: "2026-10-22T00:10:00.000Z" }))
+      : new Response(JSON.stringify({ reply: "synthetic bot reply", kind: "eli_text" }));
+  });
+  assert.deepEqual(result, { reply: "synthetic bot reply", kind: "eli_text" });
+  assert.deepEqual(requests.map(request => request.url), [
+    "/api/mini-app/session",
+    "/api/mini-app/chat",
+  ]);
+  assert.deepEqual(JSON.parse(requests[1].init.body), { message: "synthetic question" });
+  assert.equal(requests[1].init.credentials, "same-origin");
+});
 
 test("profile client loads read-only data through the signed session without sending a Telegram ID", async () => {
   const requests = [];

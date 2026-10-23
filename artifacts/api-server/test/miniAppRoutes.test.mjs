@@ -222,7 +222,9 @@ test("owner initData issues a secure session and retired demo routes fail closed
     const cookie = setCookie.split(";")[0];
 
     assert.equal((await h.request("/demo-chat", { message: "private health detail" }, { cookie })).status, 404);
+    assert.equal((await h.request("/demo-chat/", { message: "private health detail" }, { cookie })).status, 404);
     assert.equal((await h.request("/text-ai", { message: "private health detail" }, { cookie })).status, 404);
+    assert.equal((await h.request("/text-ai/", { message: "private health detail" }, { cookie })).status, 404);
 
     const replay = await h.request("/session", { initData: signedInitData() });
     assert.equal(replay.status, 401);
@@ -1073,7 +1075,7 @@ test("profile/progress GET remains unavailable even with a valid owner session",
   }
 });
 
-test("read-only profile snapshot uses only the verified session identity and isolates owner plus two clients", async () => {
+test("staging profile snapshot reads owner data only and rejects client identities", async () => {
   const snapshots = new Map([
     [OWNER_ID, { profile: { label: "synthetic owner" }, ownerDossier: ["owner-only"] }],
     ["987654321", { profile: { label: "synthetic client one" } }],
@@ -1083,27 +1085,19 @@ test("read-only profile snapshot uses only the verified session identity and iso
     readProfileSnapshot: async userId => snapshots.get(userId),
   });
   try {
-    const users = [OWNER_ID, "987654321", "876543219"];
-    for (const [index, userId] of users.entries()) {
-      const login = await h.request("/session", {
-        initData: signedInitData({ userId, authDate: NOW_SECONDS - 100 - index }),
-      });
-      assert.equal(login.status, 200);
-      const cookie = login.headers.get("set-cookie").split(";")[0];
-      const response = await h.request("/profile", {}, { cookie });
-      assert.equal(response.status, 200);
-      const body = await response.json();
-      assert.equal(body.mode, "read_only");
-      assert.deepEqual(body.snapshot, snapshots.get(userId));
-    }
+    const login = await h.request("/session", { initData: signedInitData() });
+    assert.equal(login.status, 200);
+    const cookie = login.headers.get("set-cookie").split(";")[0];
+    const response = await h.request("/profile", {}, { cookie });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).mode, "read_only");
 
-    const clientLogin = await h.request("/session", {
-      initData: signedInitData({ userId: "987654321", authDate: NOW_SECONDS - 200 }),
-    });
-    const clientCookie = clientLogin.headers.get("set-cookie").split(";")[0];
-    const spoof = await h.request("/profile", { userId: OWNER_ID }, { cookie: clientCookie });
-    assert.equal(spoof.status, 400);
-    assert.deepEqual(await spoof.json(), { error: "invalid_request" });
+    for (const userId of ["987654321", "876543219"]) {
+      const client = await h.request("/session", { initData: signedInitData({ userId }) });
+      assert.equal(client.status, 403);
+      const stale = await h.request("/profile", {}, { cookie: legacyCookieFor(userId) });
+      assert.equal(stale.status, 403);
+    }
   } finally {
     await h.close();
   }
@@ -1119,7 +1113,7 @@ test("API signs the verified session subject for the loopback bot bridge", async
       bridgeCall = { url: String(url), init };
       const claim = init.headers.Authorization.slice("Bearer ".length);
       const verified = verifyClaim(claim, bridgeSecret, Math.floor(Date.now() / 1000));
-      assert.equal(verified.userId, "987654321");
+      assert.equal(verified.userId, OWNER_ID);
       assert.equal(init.body, "{}");
       return new Response(JSON.stringify({
         ok: true,
@@ -1129,7 +1123,7 @@ test("API signs the verified session subject for the loopback bot bridge", async
   });
   try {
     const login = await h.request("/session", {
-      initData: signedInitData({ userId: "987654321" }),
+      initData: signedInitData(),
     });
     const cookie = login.headers.get("set-cookie").split(";")[0];
     const response = await h.request("/profile", {}, { cookie });

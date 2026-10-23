@@ -533,7 +533,10 @@ export function createMiniAppRouter(
   // These legacy staging routes were replaced by /chat, which calls only the
   // bot-owned text engine. Keep old URLs inert so stale clients fail closed.
   router.use((req, res, next) => {
-    if (req.path === "/demo-chat" || req.path === "/text-ai" || req.path === "/text-ai/status") {
+    const legacyPath = req.path.toLowerCase().replace(/\/+$/, "");
+    if (legacyPath === "/demo-chat" ||
+        legacyPath === "/text-ai" ||
+        legacyPath === "/text-ai/status") {
       sendError(res, 404, "not_found");
       return;
     }
