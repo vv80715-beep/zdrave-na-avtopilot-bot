@@ -136,7 +136,7 @@ export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, 
 
 
 
-export const getCreateMiniAppOwnerSessionUrl = () => {
+export const getCreateMiniAppSessionUrl = () => {
 
 
 
@@ -145,11 +145,11 @@ export const getCreateMiniAppOwnerSessionUrl = () => {
 }
 
 /**
- * @summary Validate Telegram initData and create a short-lived owner session
+ * @summary Validate Telegram initData and create a short-lived per-user session
  */
-export const createMiniAppOwnerSession = async (miniAppSessionInput: MiniAppSessionInput, options?: RequestInit): Promise<MiniAppSession> => {
+export const createMiniAppSession = async (miniAppSessionInput: MiniAppSessionInput, options?: RequestInit): Promise<MiniAppSession> => {
 
-  return customFetch<MiniAppSession>(getCreateMiniAppOwnerSessionUrl(),
+  return customFetch<MiniAppSession>(getCreateMiniAppSessionUrl(),
   {
     ...options,
     method: 'POST',
@@ -161,11 +161,11 @@ export const createMiniAppOwnerSession = async (miniAppSessionInput: MiniAppSess
 
 
 
-export const getCreateMiniAppOwnerSessionMutationOptions = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createMiniAppOwnerSession>>, TError,{data: BodyType<MiniAppSessionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof createMiniAppOwnerSession>>, TError,{data: BodyType<MiniAppSessionInput>}, TContext> => {
+export const getCreateMiniAppSessionMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createMiniAppSession>>, TError,{data: BodyType<MiniAppSessionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createMiniAppSession>>, TError,{data: BodyType<MiniAppSessionInput>}, TContext> => {
 
-const mutationKey = ['createMiniAppOwnerSession'];
+const mutationKey = ['createMiniAppSession'];
 const {mutation: mutationOptions, request: requestOptions} = options ?
       options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
       options
@@ -175,10 +175,10 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createMiniAppOwnerSession>>, {data: BodyType<MiniAppSessionInput>}> = (props) => {
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createMiniAppSession>>, {data: BodyType<MiniAppSessionInput>}> = (props) => {
           const {data} = props ?? {};
 
-          return  createMiniAppOwnerSession(data,requestOptions)
+          return  createMiniAppSession(data,requestOptions)
         }
 
 
@@ -188,22 +188,22 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
   return  { mutationFn, ...mutationOptions }}
 
-    export type CreateMiniAppOwnerSessionMutationResult = NonNullable<Awaited<ReturnType<typeof createMiniAppOwnerSession>>>
-    export type CreateMiniAppOwnerSessionMutationBody = BodyType<MiniAppSessionInput>
-    export type CreateMiniAppOwnerSessionMutationError = ErrorType<void>
+    export type CreateMiniAppSessionMutationResult = NonNullable<Awaited<ReturnType<typeof createMiniAppSession>>>
+    export type CreateMiniAppSessionMutationBody = BodyType<MiniAppSessionInput>
+    export type CreateMiniAppSessionMutationError = ErrorType<void>
 
     /**
- * @summary Validate Telegram initData and create a short-lived owner session
+ * @summary Validate Telegram initData and create a short-lived per-user session
  */
-export const useCreateMiniAppOwnerSession = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createMiniAppOwnerSession>>, TError,{data: BodyType<MiniAppSessionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+export const useCreateMiniAppSession = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createMiniAppSession>>, TError,{data: BodyType<MiniAppSessionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
-        Awaited<ReturnType<typeof createMiniAppOwnerSession>>,
+        Awaited<ReturnType<typeof createMiniAppSession>>,
         TError,
         {data: BodyType<MiniAppSessionInput>},
         TContext
       > => {
-      return useMutation(getCreateMiniAppOwnerSessionMutationOptions(options));
+      return useMutation(getCreateMiniAppSessionMutationOptions(options));
     }
 
 export const getPostMiniAppDemoChatUrl = () => {

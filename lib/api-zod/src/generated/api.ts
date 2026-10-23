@@ -18,17 +18,17 @@ export const HealthCheckResponse = zod.object({
 
 
 /**
- * @summary Validate Telegram initData and create a short-lived owner session
+ * @summary Validate Telegram initData and create a short-lived per-user session
  */
-export const createMiniAppOwnerSessionBodyInitDataMax = 16384;
+export const createMiniAppSessionBodyInitDataMax = 16384;
 
 
 
-export const CreateMiniAppOwnerSessionBody = zod.object({
-  "initData": zod.string().min(1).max(createMiniAppOwnerSessionBodyInitDataMax)
+export const CreateMiniAppSessionBody = zod.object({
+  "initData": zod.string().min(1).max(createMiniAppSessionBodyInitDataMax)
 })
 
-export const CreateMiniAppOwnerSessionResponse = zod.object({
+export const CreateMiniAppSessionResponse = zod.object({
   "ok": zod.boolean(),
   "expiresAt": zod.coerce.date()
 })

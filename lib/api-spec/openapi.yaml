@@ -28,9 +28,9 @@ paths:
                 $ref: "#/components/schemas/HealthStatus"
   /mini-app/session:
     post:
-      operationId: createMiniAppOwnerSession
+      operationId: createMiniAppSession
       tags: [mini-app]
-      summary: Validate Telegram initData and create a short-lived owner session
+      summary: Validate Telegram initData and create a short-lived per-user session
       requestBody:
         required: true
         content:
@@ -39,7 +39,7 @@ paths:
               $ref: "#/components/schemas/MiniAppSessionInput"
       responses:
         "200":
-          description: Owner session cookie issued
+          description: Session cookie issued for the Telegram user in signed initData
           headers:
             Set-Cookie:
               schema:
@@ -53,7 +53,7 @@ paths:
         "401":
           description: Invalid or stale Telegram initData
         "403":
-          description: Request is not from the configured owner or allowed origin
+          description: Request is not from the configured origin
   /mini-app/demo-chat:
     post:
       operationId: postMiniAppDemoChat
@@ -161,7 +161,7 @@ components:
     MiniAppSessionCookie:
       type: apiKey
       in: cookie
-      name: eli_mini_owner_session
+      name: eli_mini_session
   schemas:
     HealthStatus:
       type: object

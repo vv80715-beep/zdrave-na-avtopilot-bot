@@ -16,7 +16,7 @@ import {
   type MiniAppMediaRouteOptions,
 } from "./miniAppMedia.ts";
 
-const COOKIE = "eli_mini_owner_session";
+const COOKIE = "eli_mini_session";
 const SESSION_TTL_SECONDS = 600;
 const INIT_DATA_MAX_AGE_SECONDS = 300;
 const COOKIE_PATH = "/api/mini-app";
@@ -238,7 +238,6 @@ function readCookie(req: Request): string | null {
 
 function readValidSession(
   req: Request,
-  ownerId: string,
   sessionSecret: string,
   nowSeconds: number,
 ): { session: SessionClaims } | { error: "session_required" | "session_invalid" | "session_expired" } {
@@ -252,7 +251,8 @@ function readValidSession(
   }
   try {
     const session = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as SessionClaims;
-    if (session.sub !== ownerId || !Number.isInteger(session.exp) || session.exp <= nowSeconds ||
+    if (!/^[1-9]\d{4,19}$/.test(session.sub) ||
+        !Number.isInteger(session.exp) || session.exp <= nowSeconds ||
         !Number.isInteger(session.iat) || session.iat > nowSeconds + 30 ||
         typeof session.nonce !== "string" || !session.nonce) {
       return { error: "session_expired" };
@@ -293,7 +293,7 @@ export function createMiniAppRouter(
   const activeTextAiSessions = new Set<string>();
   const textAiMinuteRequests = new Map<string, number[]>();
   const textAiDailyRequests = new Map<string, { day: string; count: number }>();
-  const usedInitData = new Map<string, number>();
+  const usedInitData = new Map<string, { expiresAt: number; userId: string }>();
   const chatRequestsBySession = new Map<string, number[]>();
   const router = Router();
 
@@ -334,13 +334,14 @@ export function createMiniAppRouter(
     }
 
     const timestamp = now();
-    for (const [key, expiresAt] of usedInitData) {
-      if (expiresAt <= timestamp) usedInitData.delete(key);
+    for (const [key, use] of usedInitData) {
+      if (use.expiresAt <= timestamp) usedInitData.delete(key);
     }
     const fingerprint = createHash("sha256").update(body.initData).digest("hex");
-    if (usedInitData.has(fingerprint)) {
-      const existing = readValidSession(req, ownerId, sessionSecret, Math.floor(timestamp / 1000));
-      if ("session" in existing) {
+    const previousUse = usedInitData.get(fingerprint);
+    if (previousUse) {
+      const existing = readValidSession(req, sessionSecret, Math.floor(timestamp / 1000));
+      if ("session" in existing && existing.session.sub === previousUse.userId) {
         res.json({
           ok: true,
           expiresAt: new Date(existing.session.exp * 1000).toISOString(),
@@ -350,11 +351,6 @@ export function createMiniAppRouter(
       sendError(res, 401, "init_data_replayed");
       return;
     }
-    if (usedInitData.size >= 1000) {
-      sendError(res, 429, "session_rate_limited");
-      return;
-    }
-
     let identity: VerifiedInitData;
     try {
       identity = validate(body.initData, botToken, {
@@ -365,16 +361,23 @@ export function createMiniAppRouter(
       sendError(res, 401, "invalid_init_data");
       return;
     }
-    if (identity.telegramUserId !== ownerId) {
-      sendError(res, 403, "owner_only");
+    if (!/^[1-9]\d{4,19}$/.test(identity.telegramUserId)) {
+      sendError(res, 401, "invalid_init_data");
+      return;
+    }
+    if (usedInitData.size >= 1000) {
+      sendError(res, 429, "session_rate_limited");
       return;
     }
 
-    usedInitData.set(fingerprint, timestamp + SESSION_TTL_SECONDS * 1000);
+    usedInitData.set(fingerprint, {
+      expiresAt: timestamp + SESSION_TTL_SECONDS * 1000,
+      userId: identity.telegramUserId,
+    });
 
     const issuedAt = Math.floor(timestamp / 1000);
     const payload = Buffer.from(JSON.stringify({
-      sub: ownerId,
+      sub: identity.telegramUserId,
       iat: issuedAt,
       exp: issuedAt + SESSION_TTL_SECONDS,
       nonce: randomBytes(16).toString("base64url"),
@@ -384,15 +387,25 @@ export function createMiniAppRouter(
     res.status(200).json({ ok: true, expiresAt: new Date((issuedAt + SESSION_TTL_SECONDS) * 1000).toISOString() });
   });
 
-  const requireOwnerSession = (req: Request, res: Response, next: NextFunction) => {
-    const verified = readValidSession(req, ownerId, sessionSecret, Math.floor(now() / 1000));
+  const requireSession = (req: Request, res: Response, next: NextFunction) => {
+    const verified = readValidSession(req, sessionSecret, Math.floor(now() / 1000));
     if (!("session" in verified)) {
       sendError(res, 401, verified.error);
       return;
     }
     res.locals.miniAppSessionNonce = verified.session.nonce;
-    res.locals.miniAppOwnerId = verified.session.sub;
+    res.locals.miniAppUserId = verified.session.sub;
     next();
+  };
+  const requireOwnerSession = (req: Request, res: Response, next: NextFunction) => {
+    requireSession(req, res, () => {
+      if (res.locals.miniAppUserId !== ownerId) {
+        sendError(res, 403, "owner_only");
+        return;
+      }
+      res.locals.miniAppOwnerId = res.locals.miniAppUserId;
+      next();
+    });
   };
 
   const configuredTextAi: TextAiAdapter = options.textAi ||

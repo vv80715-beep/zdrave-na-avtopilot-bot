@@ -260,7 +260,7 @@ test("signed initData can renew the same valid session after its five-minute fre
   }
 });
 
-test("rejects forged, expired, and non-owner initData", async () => {
+test("rejects forged and expired initData; valid client identities get isolated sessions", async () => {
   const h = await serverHarness();
   try {
     assert.equal((await h.request("/session", { initData: "malformed" })).status, 401);
@@ -270,9 +270,18 @@ test("rejects forged, expired, and non-owner initData", async () => {
     assert.equal((await h.request("/session", {
       initData: signedInitData({ authDate: NOW_SECONDS - 301 }),
     })).status, 401);
-    assert.equal((await h.request("/session", {
+    const client = await h.request("/session", {
       initData: signedInitData({ userId: "987654321" }),
-    })).status, 403);
+    });
+    assert.equal(client.status, 200);
+    const clientCookie = client.headers.get("set-cookie").split(";")[0];
+    const ownerOnly = await h.request(
+      "/demo-chat",
+      { message: "synthetic client request" },
+      { cookie: clientCookie },
+    );
+    assert.equal(ownerOnly.status, 403);
+    assert.deepEqual(await ownerOnly.json(), { error: "owner_only" });
   } finally {
     await h.close();
   }
@@ -677,9 +686,19 @@ test("owner name and creator questions use canonical owner identity without call
     },
   });
   try {
-    assert.equal((await h.request("/session", {
+    const clientSession = await h.request("/session", {
       initData: signedInitData({ userId: "987654321" }),
-    })).status, 403);
+    });
+    assert.equal(clientSession.status, 200);
+    const clientCookie = clientSession.headers.get("set-cookie").split(";")[0];
+    const clientText = await h.request(
+      "/text-ai",
+      { message: "synthetic client request" },
+      { cookie: clientCookie },
+    );
+    assert.equal(clientText.status, 403);
+    assert.deepEqual(await clientText.json(), { error: "owner_only" });
+    assert.equal(providerCalls, 0);
     const cookie = await ownerCookie(h);
     for (const [message, expected] of [
       ["Как се казвам?", `Казваш се ${ownerContext.OWNER_NAME}.`],
@@ -818,9 +837,19 @@ test("canonical owner dossier functions read only a synthetic fixture for motiva
     },
   });
   try {
-    assert.equal((await h.request("/session", {
+    const clientSession = await h.request("/session", {
       initData: signedInitData({ userId: "987654321" }),
-    })).status, 403);
+    });
+    assert.equal(clientSession.status, 200);
+    const clientCookie = clientSession.headers.get("set-cookie").split(";")[0];
+    const clientText = await h.request(
+      "/text-ai",
+      { message: "synthetic client request" },
+      { cookie: clientCookie },
+    );
+    assert.equal(clientText.status, 403);
+    assert.deepEqual(await clientText.json(), { error: "owner_only" });
+    assert.equal(providerCalls, 0);
 
     const cookie = await ownerCookie(h);
     const questions = [
