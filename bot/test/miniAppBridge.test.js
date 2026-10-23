@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const express = require('express');
 const test = require('node:test');
-const { createClaim, verifyClaim, CLAIM_PATH } = require('../miniAppBridgeAuth');
+const { createClaim, verifyClaim, CLAIM_PATH, TEXT_TURN_PATH } = require('../miniAppBridgeAuth');
 const { createMiniAppBridgeRouter } = require('../miniAppBridge');
 const { createMiniAppSnapshotReader } = require('../miniAppReadModel');
 
@@ -11,13 +11,14 @@ const OWNER = '123456789';
 const CLIENT_ONE = '987654321';
 const CLIENT_TWO = '876543219';
 
-async function listen(readSnapshot) {
+async function listen(readSnapshot, processTextTurn) {
   const app = express();
   app.use(express.json());
   app.use(createMiniAppBridgeRouter({
     secret: SECRET,
     now: () => NOW,
     readSnapshot,
+    processTextTurn,
   }));
   const server = app.listen(0, '127.0.0.1');
   await new Promise((resolve, reject) => {
@@ -26,8 +27,8 @@ async function listen(readSnapshot) {
   });
   const address = server.address();
   return {
-    request(token, body = {}) {
-      return fetch(`http://127.0.0.1:${address.port}${CLAIM_PATH}`, {
+    request(token, body = {}, path = CLAIM_PATH) {
+      return fetch(`http://127.0.0.1:${address.port}${path}`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -68,6 +69,32 @@ test('internal bridge requires valid short-lived signed claims and rejects repla
     });
     assert.equal((await server.request(token)).status, 401);
     assert.equal(calls, 1);
+  } finally {
+    await server.close();
+  }
+});
+
+test('internal text turn is owner checked, one-delivery, and protected by a path-bound claim', async () => {
+  const calls = [];
+  const server = await listen(
+    async () => ({}),
+    async input => {
+      calls.push(input);
+      return { reply: 'synthetic bot reply', kind: 'eli_text' };
+    },
+  );
+  try {
+    const token = createClaim(OWNER, SECRET, NOW, TEXT_TURN_PATH);
+    const response = await server.request(token, { message: 'synthetic prompt' }, TEXT_TURN_PATH);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      ok: true, reply: 'synthetic bot reply', kind: 'eli_text',
+    });
+    assert.deepEqual(calls, [{ userId: OWNER, message: 'synthetic prompt' }]);
+    assert.equal((await server.request(token, { message: 'again' }, TEXT_TURN_PATH)).status, 401);
+
+    const wrongPath = createClaim(OWNER, SECRET, NOW);
+    assert.equal((await server.request(wrongPath, { message: 'no' }, TEXT_TURN_PATH)).status, 401);
   } finally {
     await server.close();
   }
