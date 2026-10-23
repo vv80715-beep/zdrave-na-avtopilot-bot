@@ -106,7 +106,15 @@ const coach = require('./commands/coach');
 const reminders = require('./commands/reminders');
 const { startBotRuntimeWithHealthServer } = require('./startup');
 const { createMiniAppBridgeRouter } = require('./miniAppBridge');
+const { createMiniAppSnapshotReader } = require('./miniAppReadModel');
 const { createMiniAppTextTurnHandler } = require('./miniAppTextTurn');
+
+const processMiniAppTextTurn = createMiniAppTextTurnHandler({
+  isOwnerId,
+  hasTextAIProvider,
+  gateChat,
+  askEli,
+});
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const PORT = process.env.PORT || 3001;
@@ -368,7 +376,9 @@ async function askEli(ctx, question, opts = {}) {
   // enable premium delivery). Exactly ONE delivery per turn:
   //   avatar mode → video only; voice mode → voice only; else text only.
   // Spoken input also gets a spoken reply, but only when the plan allows voice.
-  const storedMode = getMode(ctx.from.id);
+  const storedMode = ['text', 'voice', 'avatar'].includes(opts.mode)
+    ? opts.mode
+    : getMode(ctx.from.id);
   const allowed = status.allowedModes;
   const avatarMode = !opts.forceTextDelivery &&
     storedMode === 'avatar' && allowed.includes('avatar');
@@ -798,13 +808,6 @@ async function askEli(ctx, question, opts = {}) {
   }
 }
 
-const processMiniAppTextTurn = createMiniAppTextTurnHandler({
-  isOwnerId,
-  hasTextAIProvider,
-  gateChat,
-  askEli,
-});
-
 bot.command('ask', async (ctx) => {
   const question = ctx.message.text.replace(/^\/ask\s*/i, '').trim();
   if (!question) {
@@ -908,7 +911,10 @@ app.use(express.json());
 // Mini App reads go through the existing bot process, which owns legacy stores.
 // The bridge binds to this process's already-singleton health listener and
 // independently requires loopback + a signed, short-lived internal claim.
-app.use(createMiniAppBridgeRouter({ processTextTurn: processMiniAppTextTurn }));
+app.use(createMiniAppBridgeRouter({
+  processTextTurn: processMiniAppTextTurn,
+  readSnapshot: createMiniAppSnapshotReader({ getRecentHistory: ownerRecentTurns }),
+}));
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', bot: 'running' });

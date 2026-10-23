@@ -19,6 +19,10 @@ function createMiniAppSnapshotReader(stores = {}) {
   const readCheckins = stores.getCheckins || getCheckins;
   const readReminders = stores.getReminders || getReminders;
   const readMode = stores.getMode || getMode;
+  const readRecentHistory = stores.getRecentHistory || ((id) => {
+    const memory = readLegacyMemory(id);
+    return Array.isArray(memory?.conversation) ? memory.conversation : [];
+  });
   const readAccess = stores.resolveReadOnlyAccessStatus || stores.resolveAccessStatus || resolveReadOnlyAccessStatus;
   const isOwner = stores.isOwnerId || isOwnerId;
   const readDossier = stores.getOwnerDossierEntries || getOwnerDossierEntries;
@@ -49,6 +53,10 @@ function createMiniAppSnapshotReader(stores = {}) {
         backendVerified: entitlementVerified,
       },
       mode: readMode(id),
+      history: readRecentHistory(id).slice(-10).map((turn) => ({
+        role: turn.role === 'user' ? 'user' : 'assistant',
+        content: String(turn.content || '').slice(0, 2000),
+      })),
     };
 
     if (owner) snapshot.ownerDossier = readDossier(id);

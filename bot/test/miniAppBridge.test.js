@@ -85,16 +85,25 @@ test('internal text turn is owner checked, one-delivery, and protected by a path
   );
   try {
     const token = createClaim(OWNER, SECRET, NOW, TEXT_TURN_PATH);
-    const response = await server.request(token, { message: 'synthetic prompt' }, TEXT_TURN_PATH);
+    const turnId = 'f9b2d7a0-0e22-4e10-a987-7eea4ebf0667';
+    const response = await server.request(token, {
+      message: 'synthetic prompt', mode: 'text', turnId,
+    }, TEXT_TURN_PATH);
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), {
       ok: true, reply: 'synthetic bot reply', kind: 'eli_text',
     });
-    assert.deepEqual(calls, [{ userId: OWNER, message: 'synthetic prompt' }]);
-    assert.equal((await server.request(token, { message: 'again' }, TEXT_TURN_PATH)).status, 401);
+    assert.deepEqual(calls, [{
+      userId: OWNER, message: 'synthetic prompt', mode: 'text', turnId,
+    }]);
+    assert.equal((await server.request(token, {
+      message: 'again', mode: 'text', turnId,
+    }, TEXT_TURN_PATH)).status, 401);
 
     const wrongPath = createClaim(OWNER, SECRET, NOW);
-    assert.equal((await server.request(wrongPath, { message: 'no' }, TEXT_TURN_PATH)).status, 401);
+    assert.equal((await server.request(wrongPath, {
+      message: 'no', mode: 'text', turnId,
+    }, TEXT_TURN_PATH)).status, 401);
   } finally {
     await server.close();
   }

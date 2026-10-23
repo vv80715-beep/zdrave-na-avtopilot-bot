@@ -6,9 +6,11 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { MiniAppTextTurnResponseKind } from './miniAppTextTurnResponseKind';
+import type { MiniAppTextTurnResponseMedia } from './miniAppTextTurnResponseMedia';
 
 export interface MiniAppTextTurnResponse {
   /** @minLength 1 */
   reply: string;
   kind: MiniAppTextTurnResponseKind;
+  media?: MiniAppTextTurnResponseMedia;
 }

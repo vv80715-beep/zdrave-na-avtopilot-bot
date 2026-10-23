@@ -1153,14 +1153,22 @@ test("owner chat forwards only text to the bot bridge and returns its engine rep
   });
   try {
     const cookie = await ownerCookie(h);
-    const response = await h.request("/chat", { message: "synthetic question" }, { cookie });
+    const response = await h.request("/chat", {
+      message: "synthetic question",
+      mode: "text",
+      turnId: "f9b2d7a0-0e22-4e10-a987-7eea4ebf0667",
+    }, { cookie });
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), {
       reply: "Синтетичен отговор от bot engine.",
       kind: "eli_text",
     });
     assert.equal(forwarded.url, "http://127.0.0.1:3001/internal/mini-app/text-turn");
-    assert.deepEqual(forwarded.body, { message: "synthetic question" });
+    assert.deepEqual(forwarded.body, {
+      message: "synthetic question",
+      mode: "text",
+      turnId: "f9b2d7a0-0e22-4e10-a987-7eea4ebf0667",
+    });
   } finally {
     await h.close();
   }

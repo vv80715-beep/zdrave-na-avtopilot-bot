@@ -69,14 +69,21 @@ function createMiniAppBridgeRouter({
   router.post(TEXT_TURN_PATH, async (req, res) => {
     await authorizeAndRun(req, res, TEXT_TURN_PATH, async (userId, body) => {
       if (!body || typeof body !== 'object' || Array.isArray(body) ||
-          Object.keys(body).length !== 1 || typeof body.message !== 'string' ||
-          !body.message.trim() || body.message.length > 1200) {
+          Object.keys(body).some((key) => !['message', 'mode', 'turnId'].includes(key)) ||
+          typeof body.message !== 'string' || !body.message.trim() || body.message.length > 1200 ||
+          !['text', 'voice', 'avatar'].includes(body.mode) ||
+          typeof body.turnId !== 'string') {
         throw new Error('mini_app_text_request_invalid');
       }
       if (typeof processTextTurn !== 'function') {
         throw new Error('mini_app_text_engine_unavailable');
       }
-      return processTextTurn({ userId, message: body.message.trim() });
+      return processTextTurn({
+        userId,
+        message: body.message.trim(),
+        mode: body.mode,
+        turnId: body.turnId,
+      });
     });
   });
 

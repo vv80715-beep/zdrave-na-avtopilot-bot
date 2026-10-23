@@ -496,20 +496,30 @@ export function createMiniAppRouter(
           "Content-Type": "application/json",
           Accept: "application/json",
         },
-        body: JSON.stringify({ message: parsed.data.message }),
+        body: JSON.stringify({
+          message: parsed.data.message,
+          mode: parsed.data.mode || "text",
+          turnId: parsed.data.turnId,
+        }),
         cache: "no-store",
         redirect: "error",
-        signal: AbortSignal.timeout(40_000),
+        signal: AbortSignal.timeout(260_000),
       });
       if (!response.ok) {
         sendError(res, response.status === 429 ? 429 : 503,
           response.status === 429 ? "text_rate_limited" : "text_engine_unavailable");
         return;
       }
-      const body = await response.json() as { ok?: unknown; reply?: unknown; kind?: unknown };
+      const body = await response.json() as {
+        ok?: unknown;
+        reply?: unknown;
+        kind?: unknown;
+        media?: unknown;
+      };
       res.json(PostMiniAppTextTurnResponse.parse({
         reply: body.reply,
         kind: body.kind,
+        media: body.media,
       }));
     } catch (error) {
       const timeout = error instanceof Error && error.name === "TimeoutError";

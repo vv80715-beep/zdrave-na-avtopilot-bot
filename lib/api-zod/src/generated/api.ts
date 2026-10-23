@@ -44,15 +44,27 @@ export const postMiniAppTextTurnBodyMessageMax = 1200;
 
 export const PostMiniAppTextTurnBody = zod.object({
   "message": zod.string().min(1).max(postMiniAppTextTurnBodyMessageMax),
+  "mode": zod.enum(['text', 'voice', 'avatar']).optional(),
+  "turnId": zod.string().uuid(),
   "language": zod.enum(['bg', 'en']).optional()
 })
 
+
+export const postMiniAppTextTurnResponseMediaDataMax = 8000000;
+
+export const postMiniAppTextTurnResponseMediaUrlMax = 2048;
 
 
 
 export const PostMiniAppTextTurnResponse = zod.object({
   "reply": zod.string().min(1),
-  "kind": zod.enum(['eli_text', 'access_denied'])
+  "kind": zod.enum(['eli_text', 'access_denied', 'voice', 'avatar']),
+  "media": zod.object({
+  "type": zod.enum(['audio', 'video']),
+  "mimeType": zod.enum(['audio/ogg']).optional(),
+  "data": zod.string().max(postMiniAppTextTurnResponseMediaDataMax).optional(),
+  "url": zod.string().url().max(postMiniAppTextTurnResponseMediaUrlMax).optional()
+}).optional()
 })
 
 

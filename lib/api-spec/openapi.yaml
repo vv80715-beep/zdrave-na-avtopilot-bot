@@ -226,10 +226,16 @@ components:
           type: string
           minLength: 1
           maxLength: 1200
+        mode:
+          type: string
+          enum: [text, voice, avatar]
+        turnId:
+          type: string
+          format: uuid
         language:
           type: string
           enum: [bg, en]
-      required: [message]
+      required: [message, turnId]
       additionalProperties: false
     MiniAppProfileRequest:
       type: object
@@ -253,7 +259,25 @@ components:
           minLength: 1
         kind:
           type: string
-          enum: [eli_text, access_denied]
+          enum: [eli_text, access_denied, voice, avatar]
+        media:
+          type: object
+          properties:
+            type:
+              type: string
+              enum: [audio, video]
+            mimeType:
+              type: string
+              enum: [audio/ogg]
+            data:
+              type: string
+              maxLength: 8000000
+            url:
+              type: string
+              format: uri
+              maxLength: 2048
+          required: [type]
+          additionalProperties: false
       required: [reply, kind]
       additionalProperties: false
     MiniAppImageUpload:

@@ -22,6 +22,15 @@ export interface MiniAppSession {
   expiresAt: string;
 }
 
+export type MiniAppTextTurnInputMode = typeof MiniAppTextTurnInputMode[keyof typeof MiniAppTextTurnInputMode];
+
+
+export const MiniAppTextTurnInputMode = {
+  text: 'text',
+  voice: 'voice',
+  avatar: 'avatar',
+} as const;
+
 export type MiniAppTextTurnInputLanguage = typeof MiniAppTextTurnInputLanguage[keyof typeof MiniAppTextTurnInputLanguage];
 
 
@@ -36,6 +45,8 @@ export interface MiniAppTextTurnInput {
      * @maxLength 1200
      */
   message: string;
+  mode?: MiniAppTextTurnInputMode;
+  turnId: string;
   language?: MiniAppTextTurnInputLanguage;
 }
 
@@ -54,12 +65,39 @@ export type MiniAppTextTurnResponseKind = typeof MiniAppTextTurnResponseKind[key
 export const MiniAppTextTurnResponseKind = {
   eli_text: 'eli_text',
   access_denied: 'access_denied',
+  voice: 'voice',
+  avatar: 'avatar',
 } as const;
+
+export type MiniAppTextTurnResponseMediaType = typeof MiniAppTextTurnResponseMediaType[keyof typeof MiniAppTextTurnResponseMediaType];
+
+
+export const MiniAppTextTurnResponseMediaType = {
+  audio: 'audio',
+  video: 'video',
+} as const;
+
+export type MiniAppTextTurnResponseMediaMimeType = typeof MiniAppTextTurnResponseMediaMimeType[keyof typeof MiniAppTextTurnResponseMediaMimeType];
+
+
+export const MiniAppTextTurnResponseMediaMimeType = {
+  'audio/ogg': 'audio/ogg',
+} as const;
+
+export type MiniAppTextTurnResponseMedia = {
+  type: MiniAppTextTurnResponseMediaType;
+  mimeType?: MiniAppTextTurnResponseMediaMimeType;
+  /** @maxLength 8000000 */
+  data?: string;
+  /** @maxLength 2048 */
+  url?: string;
+};
 
 export interface MiniAppTextTurnResponse {
   /** @minLength 1 */
   reply: string;
   kind: MiniAppTextTurnResponseKind;
+  media?: MiniAppTextTurnResponseMedia;
 }
 
 export type MiniAppImageUploadLanguage = typeof MiniAppImageUploadLanguage[keyof typeof MiniAppImageUploadLanguage];

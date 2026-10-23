@@ -39,6 +39,7 @@ import {
   getMiniAppProfileSnapshot,
   MiniAppStageError,
   sendMiniAppTextTurn,
+  type MiniAppTurnMode,
   type MiniAppProfileSnapshot,
 } from './miniAppSessionClient';
 import {
@@ -263,6 +264,7 @@ type LocalChatMessage = {
   attachment: ChatAttachment | null;
   replySource?: ChatReplySource;
   delivery?: ChatMessageDelivery;
+  media?: { type: 'audio'; mimeType: 'audio/ogg'; data: string } | { type: 'video'; url: string };
 };
 
 function formatFileSize(bytes: number) {
@@ -278,6 +280,7 @@ function Chat() {
   const [stageError, setStageError] = useState<TranslationKey | null>(null);
   const [stageErrorCanRetry, setStageErrorCanRetry] = useState(false);
   const [ambiguousDraft, setAmbiguousDraft] = useState<string | null>(null);
+  const [selectedMode, setSelectedMode] = useState<MiniAppTurnMode>('text');
   const [sending, setSending] = useState(false);
   const [stageMode, setStageMode] = useState<'local' | 'checking' | 'live' | 'unavailable'>('local');
   const [messages, setMessages] = useState<LocalChatMessage[]>([]);
@@ -376,7 +379,7 @@ function Chat() {
       sendLock.current = true;
       setSending(true);
       try {
-        const result = await sendMiniAppTextTurn(signedInitData, text);
+        const result = await sendMiniAppTextTurn(signedInitData, text, fetch, selectedMode);
         const deliveredAttachment = media.detachForMessage();
         setMessages((current) => [
           ...current,
@@ -386,7 +389,9 @@ function Chat() {
             role: 'assistant',
             text: result.reply,
             attachment: null,
-            replySource: 'bot_text',
+            replySource: result.kind === 'voice' ? 'bot_voice' :
+              result.kind === 'avatar' ? 'bot_avatar' : 'bot_text',
+            ...(result.media ? { media: result.media } : {}),
           },
         ]);
         setStageMode('live');
@@ -451,17 +456,17 @@ function Chat() {
             )}</span>
           </div>
           <div className="chat-mode-actions" role="group" aria-label={t('modeActionsAria')}>
-            <button type="button" aria-label={t('actionText')} title={t('actionText')} data-testid="button-chat-mode-text" onClick={() => setNotice(stageMode === 'live' ? 'liveTextModeNotice' : 'modeTextNotice')}>
+            <button type="button" aria-pressed={selectedMode === 'text'} aria-label={t('actionText')} title={t('actionText')} data-testid="button-chat-mode-text" onClick={() => setSelectedMode('text')}>
               <MessageCircle size={15} /><span>{t('actionText')}</span>
             </button>
-            <button type="button" aria-label={t('actionVoice')} title={t('actionVoice')} data-testid="button-chat-mode-voice" onClick={() => setNotice('modeVoiceNotice')}>
+            <button type="button" aria-pressed={selectedMode === 'voice'} aria-label={t('actionVoice')} title={t('actionVoice')} data-testid="button-chat-mode-voice" onClick={() => setSelectedMode('voice')}>
               <AudioLines size={15} /><span>{t('actionVoice')}</span>
             </button>
-            <button type="button" aria-label={t('actionAvatar')} title={t('actionAvatar')} data-testid="button-chat-mode-avatar" onClick={() => setNotice('modeAvatarNotice')}>
+            <button type="button" aria-pressed={selectedMode === 'avatar'} aria-label={t('actionAvatar')} title={t('actionAvatar')} data-testid="button-chat-mode-avatar" onClick={() => setSelectedMode('avatar')}>
               <Video size={15} /><span>{t('actionAvatar')}</span>
             </button>
           </div>
-          <p className="mode-disclosure">{t('modeDemoDisclosure')}</p>
+          <p className="mode-disclosure">{t('modeLiveDisclosure')}</p>
           <div
             className="conversation"
             ref={conversationRef}
@@ -505,6 +510,12 @@ function Chat() {
                     </div>
                   )}
                   <div className="message-bubble">{message.text}</div>
+                  {message.media?.type === 'audio' && (
+                    <audio controls preload="metadata" src={`data:${message.media.mimeType};base64,${message.media.data}`} aria-label={t('localAudioPlayback')} />
+                  )}
+                  {message.media?.type === 'video' && (
+                    <video controls preload="metadata" playsInline src={message.media.url} aria-label={t('actionAvatar')} />
+                  )}
                 </div>
               </div>
             ) : (
@@ -935,6 +946,8 @@ function Profile() {
         ]))}
         {card(en ? 'Relationship memory' : 'Лична памет', snapshot.relationshipMemory.map((entry) =>
           [String(entry.category || 'memory'), entry.value] as [string, unknown]))}
+        {card(en ? 'Recent chat history' : 'Последна история на разговора', (snapshot.history ?? []).map((turn, index) =>
+          [`${index + 1} · ${turn.role}`, turn.content] as [string, unknown]))}
         {card(en ? 'Recent check-ins — latest 30' : 'Последни check-in записи — до 30', snapshot.checkins.map((entry) =>
           [String(entry.date || 'check-in'), entry] as [string, unknown]))}
         {card(en ? 'Health log — last 30 days' : 'Здравни записи — последните 30 дни', snapshot.healthLogs.map((entry) =>

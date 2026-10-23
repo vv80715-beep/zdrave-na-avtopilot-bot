@@ -26,7 +26,10 @@ test("Mini App text turn uses the bot chat route and sends no browser identity",
     "/api/mini-app/session",
     "/api/mini-app/chat",
   ]);
-  assert.deepEqual(JSON.parse(requests[1].init.body), { message: "synthetic question" });
+  const turnBody = JSON.parse(requests[1].init.body);
+  assert.equal(turnBody.message, "synthetic question");
+  assert.equal(turnBody.mode, "text");
+  assert.match(turnBody.turnId, /^[0-9a-f-]{36}$/i);
   assert.equal(requests[1].init.credentials, "same-origin");
 });
 

@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { MiniAppTextTurnInputLanguage } from './miniAppTextTurnInputLanguage';
+import type { MiniAppTextTurnInputMode } from './miniAppTextTurnInputMode';
 
 export interface MiniAppTextTurnInput {
   /**
@@ -13,5 +14,7 @@ export interface MiniAppTextTurnInput {
      * @maxLength 1200
      */
   message: string;
+  mode?: MiniAppTextTurnInputMode;
+  turnId: string;
   language?: MiniAppTextTurnInputLanguage;
 }

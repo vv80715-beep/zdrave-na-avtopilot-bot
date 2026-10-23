@@ -12,4 +12,6 @@ export type MiniAppTextTurnResponseKind = typeof MiniAppTextTurnResponseKind[key
 export const MiniAppTextTurnResponseKind = {
   eli_text: 'eli_text',
   access_denied: 'access_denied',
+  voice: 'voice',
+  avatar: 'avatar',
 } as const;

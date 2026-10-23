@@ -1,4 +1,5 @@
 export type MiniAppLanguage = "bg" | "en";
+export type MiniAppTurnMode = "text" | "voice" | "avatar";
 export type OwnerTextAiMode = "mock" | "test_ai";
 export type OwnerTextAiStatus = {
   mode: OwnerTextAiMode;
@@ -26,6 +27,7 @@ export type MiniAppProfileSnapshot = {
   healthLogs: Array<Record<string, unknown>>;
   checkins: Array<Record<string, unknown>>;
   reminders: Array<Record<string, unknown>>;
+  history?: Array<{ role: "user" | "assistant"; content: string }>;
   entitlement: {
     plan: string;
     state: string;
@@ -138,20 +140,50 @@ export async function sendMiniAppTextTurn(
   initData: string,
   message: string,
   fetchFn: FetchLike = fetch,
-): Promise<{ reply: string; kind: "eli_text" | "access_denied" }> {
+  mode: MiniAppTurnMode = "text",
+  turnId = crypto.randomUUID(),
+): Promise<{
+  reply: string;
+  kind: "eli_text" | "access_denied" | "voice" | "avatar";
+  media?: { type: "audio"; mimeType: "audio/ogg"; data: string } | { type: "video"; url: string };
+}> {
   await ensureOwnerSession(initData, fetchFn);
   const response = await sameOriginRequest("/api/mini-app/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ message }),
-  }, fetchFn, 45_000);
+    body: JSON.stringify({ message, mode, turnId }),
+  }, fetchFn, 270_000);
   const body = await responseBody(response);
   if (!response.ok) throw new MiniAppStageError(safeErrorCode(body), response.status);
   if (typeof body.reply !== "string" ||
-      (body.kind !== "eli_text" && body.kind !== "access_denied")) {
+      !["eli_text", "access_denied", "voice", "avatar"].includes(String(body.kind))) {
     throw new MiniAppStageError("invalid_response", response.status);
   }
-  return { reply: body.reply, kind: body.kind };
+  let media: { type: "audio"; mimeType: "audio/ogg"; data: string } | { type: "video"; url: string } | undefined;
+  if (body.media !== undefined) {
+    if (!body.media || typeof body.media !== "object" || Array.isArray(body.media)) {
+      throw new MiniAppStageError("invalid_response", response.status);
+    }
+    const value = body.media as Record<string, unknown>;
+    if (value.type === "audio" && value.mimeType === "audio/ogg" && typeof value.data === "string" &&
+        /^[A-Za-z0-9+/]+={0,2}$/.test(value.data)) {
+      media = { type: "audio", mimeType: "audio/ogg", data: value.data };
+    } else if (value.type === "video" && typeof value.url === "string") {
+      try {
+        if (new URL(value.url).protocol !== "https:") throw new Error();
+      } catch {
+        throw new MiniAppStageError("invalid_response", response.status);
+      }
+      media = { type: "video", url: value.url };
+    } else {
+      throw new MiniAppStageError("invalid_response", response.status);
+    }
+  }
+  return {
+    reply: body.reply,
+    kind: body.kind as "eli_text" | "access_denied" | "voice" | "avatar",
+    ...(media ? { media } : {}),
+  };
 }
 
 export async function sendOwnerDemoChat(
