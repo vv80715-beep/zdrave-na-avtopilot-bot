@@ -446,6 +446,16 @@ function Chat() {
     void getMiniAppProfileSnapshot(signedInitData).then((snapshot) => {
       if (current) {
         setChatEntitlement(snapshot.entitlement);
+        const history = snapshot.history ?? [];
+        setMessages(history.map((turn, index) => ({
+          id: index + 1,
+          role: turn.role,
+          text: turn.content,
+          attachment: null,
+          delivery: 'api' as const,
+          ...(turn.role === 'assistant' ? { replySource: 'bot_text' as const } : {}),
+        })));
+        nextMessageId.current = history.length + 1;
         const nextMode = snapshot.entitlement.backendVerified &&
           snapshot.entitlement.allowedModes.includes(selectedModeRef.current) ? selectedModeRef.current : 'text';
         setSelectedMode(nextMode);

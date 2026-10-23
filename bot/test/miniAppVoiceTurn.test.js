@@ -88,6 +88,39 @@ test('owner voice input and voice output are captured without Telegram delivery'
   });
 });
 
+test('avatar recording returns transcript, answer text, and playable synthetic video', async () => {
+  const avatar = makeHandler({
+    status: { canChat: true, allowedModes: ['text', 'voice', 'avatar'] },
+    ask: async (ctx) => {
+      ctx.captureText('Синтетичен отговор за видеото.');
+      await ctx.replyWithVideo({ url: 'https://media.example/synthetic.mp4' });
+    },
+  });
+  const result = await avatar.handler({
+    userId: '987654321', audio: AUDIO, mode: 'avatar', turnId: TURN_ID,
+  });
+  assert.equal(result.kind, 'avatar');
+  assert.equal(result.transcript, 'Искам да се разходя.');
+  assert.equal(result.reply, 'Синтетичен отговор за видеото.');
+  assert.deepEqual(result.media, { type: 'video', url: 'https://media.example/synthetic.mp4' });
+});
+
+test('duplicate audio turn ID returns one STT and AI result', async () => {
+  let transcriptions = 0;
+  let answers = 0;
+  const deduplicated = makeHandler({
+    transcribe: async () => { transcriptions += 1; return 'Искам да се разходя.'; },
+    ask: async (ctx) => { answers += 1; await ctx.reply('Синтетичен отговор.'); },
+  });
+  const input = { userId: '987654321', audio: AUDIO, mode: 'voice', turnId: TURN_ID };
+  const first = deduplicated.handler(input);
+  const second = deduplicated.handler(input);
+  assert.strictEqual(first, second);
+  assert.deepEqual(await first, await second);
+  assert.equal(transcriptions, 1);
+  assert.equal(answers, 1);
+});
+
 test('invalid normalized audio is rejected before gate or provider work', async () => {
   const { handler, calls } = makeHandler();
   await assert.rejects(handler({
