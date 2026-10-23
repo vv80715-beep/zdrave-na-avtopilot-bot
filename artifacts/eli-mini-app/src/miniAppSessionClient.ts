@@ -22,6 +22,12 @@ export type OwnerDemoMediaResult = {
   staged: true;
   demo: true;
 };
+export type MiniAppVoiceTurnResult = {
+  transcript: string;
+  reply: string;
+  kind: "eli_text" | "voice" | "avatar" | "access_denied" | "transcription_unclear";
+  media?: { type: "audio"; mimeType: "audio/ogg"; data: string } | { type: "video"; url: string };
+};
 export type MiniAppProfileSnapshot = {
   profile: Record<string, unknown> | null;
   legacyMemory: Record<string, unknown> | null;
@@ -309,5 +315,44 @@ export async function uploadOwnerDemoMedia(
     mediaType: kind,
     demo: true,
     ...(typeof body.transcript === "string" ? { transcript: body.transcript } : {}),
+  };
+}
+
+export async function sendMiniAppVoiceTurn(
+  initData: string,
+  blob: Blob,
+  fileName: string,
+  language: MiniAppLanguage,
+  mode: MiniAppTurnMode,
+  prompt = "",
+  fetchFn: FetchLike = fetch,
+): Promise<MiniAppVoiceTurnResult> {
+  await ensureOwnerSession(initData, fetchFn);
+  const form = new FormData();
+  form.set("file", new File([blob], fileName, { type: blob.type || "audio/webm" }));
+  form.set("language", language);
+  form.set("mode", mode);
+  form.set("turnId", crypto.randomUUID());
+  if (prompt.trim()) form.set("prompt", prompt.trim().slice(0, 1200));
+  const response = await sameOriginRequest("/api/mini-app/media/voice", {
+    method: "POST",
+    headers: { Accept: "application/json" },
+    body: form,
+  }, fetchFn, 280_000);
+  const body = await responseBody(response);
+  if (!response.ok) throw new MiniAppStageError(safeErrorCode(body), response.status);
+  const media = body.media && typeof body.media === "object" && !Array.isArray(body.media)
+    ? body.media as MiniAppVoiceTurnResult["media"]
+    : undefined;
+  if (typeof body.transcript !== "string" || typeof body.reply !== "string" ||
+      !["eli_text", "voice", "avatar", "access_denied", "transcription_unclear"].includes(String(body.kind)) ||
+      (media && !["audio", "video"].includes(media.type))) {
+    throw new MiniAppStageError("invalid_response", response.status);
+  }
+  return {
+    transcript: body.transcript,
+    reply: body.reply,
+    kind: body.kind as MiniAppVoiceTurnResult["kind"],
+    ...(media ? { media } : {}),
   };
 }

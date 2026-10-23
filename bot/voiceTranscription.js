@@ -133,8 +133,30 @@ async function transcribeTelegramAudio(ctx, fileId, suffix = '.ogg') {
   }
 }
 
+async function transcribeAudioBuffer(buffer) {
+  if (!openai) throw new Error('OpenAI not configured');
+  if (!Buffer.isBuffer(buffer) || buffer.length < 44 ||
+      buffer.toString('ascii', 0, 4) !== 'RIFF' ||
+      buffer.toString('ascii', 8, 12) !== 'WAVE') {
+    throw new Error('Invalid normalized audio');
+  }
+  const filePath = path.join(os.tmpdir(), `mini-app-audio-${crypto.randomUUID()}.wav`);
+  try {
+    await fs.promises.writeFile(filePath, buffer, { mode: 0o600, flag: 'wx' });
+    const result = await openai.audio.transcriptions.create({
+      file: fs.createReadStream(filePath),
+      model: TRANSCRIBE_MODEL,
+      language: TRANSCRIBE_LANGUAGE,
+    });
+    return (result?.text || '').trim();
+  } finally {
+    try { await fs.promises.unlink(filePath); } catch {}
+  }
+}
+
 module.exports = {
   transcribeTelegramAudio,
+  transcribeAudioBuffer,
   audioSuffix,
   looksLikeBulgarian,
   TRANSCRIBE_MODEL,

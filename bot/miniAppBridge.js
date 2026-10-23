@@ -1,7 +1,9 @@
 'use strict';
 
 const express = require('express');
-const { CLAIM_PATH, TEXT_TURN_PATH, MUTATION_PATH, verifyClaim } = require('./miniAppBridgeAuth');
+const {
+  CLAIM_PATH, TEXT_TURN_PATH, MUTATION_PATH, VOICE_TURN_PATH, verifyClaim,
+} = require('./miniAppBridgeAuth');
 const { readMiniAppSnapshot } = require('./miniAppReadModel');
 
 function isLoopback(address) {
@@ -13,6 +15,7 @@ function createMiniAppBridgeRouter({
   now = () => Math.floor(Date.now() / 1000),
   readSnapshot = readMiniAppSnapshot,
   processTextTurn,
+  processVoiceTurn,
   processMutation,
 } = {}) {
   const router = express.Router();
@@ -60,7 +63,8 @@ function createMiniAppBridgeRouter({
       } else {
         res.status(503).json({ error: expectedPath === CLAIM_PATH
           ? 'legacy_store_unavailable'
-          : expectedPath === MUTATION_PATH ? 'mutation_unavailable' : 'text_turn_unavailable' });
+          : expectedPath === MUTATION_PATH ? 'mutation_unavailable'
+            : expectedPath === VOICE_TURN_PATH ? 'voice_turn_unavailable' : 'text_turn_unavailable' });
       }
     }
   }
@@ -89,6 +93,29 @@ function createMiniAppBridgeRouter({
         mode: body.mode,
         turnId: body.turnId,
       });
+    });
+  });
+
+  router.post(VOICE_TURN_PATH, express.raw({
+    type: 'application/octet-stream',
+    limit: '4mb',
+  }), async (req, res) => {
+    await authorizeAndRun(req, res, VOICE_TURN_PATH, async (userId, body) => {
+      const mode = req.get('x-eli-mode');
+      const turnId = req.get('x-eli-turn-id');
+      const promptEncoded = req.get('x-eli-prompt') || '';
+      let prompt = '';
+      try {
+        prompt = Buffer.from(promptEncoded, 'base64url').toString('utf8');
+      } catch {
+        throw Object.assign(new Error('invalid_request'), { code: 'invalid_request' });
+      }
+      if (!Buffer.isBuffer(body) || !['text', 'voice', 'avatar'].includes(mode) ||
+          typeof turnId !== 'string' || prompt.length > 1200 ||
+          typeof processVoiceTurn !== 'function') {
+        throw Object.assign(new Error('invalid_request'), { code: 'invalid_request' });
+      }
+      return processVoiceTurn({ userId, audio: body, mode, turnId, prompt });
     });
   });
 

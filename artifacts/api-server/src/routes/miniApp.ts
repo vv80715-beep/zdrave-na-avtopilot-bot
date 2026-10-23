@@ -301,6 +301,7 @@ export function createMiniAppRouter(
   const now = options.now || Date.now;
   const validate = options.validate || validateTelegramInitData;
   const mediaEnabled = env.ELI_MINI_APP_MEDIA_MOCK_ENABLED === "true";
+  const voiceTurnEnabled = env.ELI_MINI_APP_VOICE_ENABLED === "true";
   const textAiEnabled = env.ELI_MINI_APP_TEXT_AI_ENABLED === "true";
   const ownerDossierEnabled = env.NODE_ENV === "development" &&
     env.ELI_MINI_APP_STAGE === "staging" &&
@@ -321,7 +322,8 @@ export function createMiniAppRouter(
   router.use((req, res, next) => {
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Content-Type-Options", "nosniff");
-    if (req.path.startsWith("/media/") && !mediaEnabled) {
+    if (req.path.startsWith("/media/") && !mediaEnabled &&
+        !(req.path === "/media/voice" && voiceTurnEnabled)) {
       sendError(res, 404, "not_found");
       return;
     }
@@ -587,7 +589,52 @@ export function createMiniAppRouter(
   });
   const ownerDossierFaq = options.ownerDossierFaq || (ownerDossier as OwnerDossierFaq);
 
-  registerMiniAppMediaRoutes(router, requireOwnerSession, mediaEnabled, env, options.media);
+  const processVoiceTurn = async (input: {
+    userId: string;
+    audio: Buffer;
+    mode: "text" | "voice" | "avatar";
+    turnId: string;
+    prompt: string;
+  }): Promise<Record<string, unknown>> => {
+    if (bridgeSecret.trim().length < 32) throw new Error("voice_turn_unavailable");
+    const claim = (miniAppBridgeAuth as {
+      createClaim: (userId: string, secret: string, now?: number, path?: string) => string;
+    }).createClaim(input.userId, bridgeSecret, undefined, "/internal/mini-app/voice-turn");
+    const response = await bridgeFetch("http://127.0.0.1:3001/internal/mini-app/voice-turn", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${claim}`,
+        "Content-Type": "application/octet-stream",
+        Accept: "application/json",
+        "X-Eli-Mode": input.mode,
+        "X-Eli-Turn-Id": input.turnId,
+        "X-Eli-Prompt": Buffer.from(input.prompt, "utf8").toString("base64url"),
+      },
+      body: new Uint8Array(input.audio),
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(260_000),
+    });
+    const body = await response.json() as Record<string, unknown>;
+    if (!response.ok || body.ok !== true ||
+        typeof body.transcript !== "string" || typeof body.reply !== "string" ||
+        !["eli_text", "voice", "avatar", "access_denied", "transcription_unclear"].includes(String(body.kind))) {
+      throw new Error("voice_turn_unavailable");
+    }
+    const { ok: _ok, ...result } = body;
+    return result;
+  };
+  registerMiniAppMediaRoutes(
+    router,
+    ownerOnlyStage ? requireOwnerSession : requireSession,
+    mediaEnabled,
+    env,
+    {
+      ...options.media,
+      voiceTurnEnabled,
+      processVoiceTurn,
+    },
+  );
 
   // These legacy staging routes were replaced by /chat, which calls only the
   // bot-owned text engine. Keep old URLs inert so stale clients fail closed.

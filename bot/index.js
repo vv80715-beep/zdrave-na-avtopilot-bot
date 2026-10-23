@@ -5,7 +5,9 @@ const { Telegraf, Scenes, session, Markup } = require('telegraf');
 const { SYSTEM_PROMPT, conversationFlowNote, stripLeadingGreeting } = require('./prompts');
 const openai = require('./openaiClient');
 const { getTextAIClient, hasTextAIProvider } = require('./textAIClient');
-const { transcribeTelegramAudio, audioSuffix, looksLikeBulgarian } = require('./voiceTranscription');
+const {
+  transcribeTelegramAudio, transcribeAudioBuffer, audioSuffix, looksLikeBulgarian,
+} = require('./voiceTranscription');
 const { isOwner, isOwnerId } = require('./adminGuard');
 const { OWNER_NAME, OWNER_MEMORY } = require('./ownerContext');
 const { touchConversationState } = require('./conversationState');
@@ -109,11 +111,20 @@ const { createMiniAppBridgeRouter } = require('./miniAppBridge');
 const { processMiniAppMutation } = require('./miniAppMutations');
 const { createMiniAppSnapshotReader } = require('./miniAppReadModel');
 const { createMiniAppTextTurnHandler } = require('./miniAppTextTurn');
+const { createMiniAppVoiceTurnHandler } = require('./miniAppVoiceTurn');
 
 const processMiniAppTextTurn = createMiniAppTextTurnHandler({
   hasTextAIProvider,
   gateChat,
   askEli,
+});
+const processMiniAppVoiceTurn = createMiniAppVoiceTurnHandler({
+  gateChat,
+  hasTextAIProvider,
+  transcribeAudioBuffer,
+  looksLikeBulgarian,
+  askEli,
+  isOwnerId,
 });
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -917,6 +928,7 @@ app.use(express.json());
 // independently requires loopback + a signed, short-lived internal claim.
 app.use(createMiniAppBridgeRouter({
   processTextTurn: processMiniAppTextTurn,
+  processVoiceTurn: processMiniAppVoiceTurn,
   processMutation: processMiniAppMutation,
   readSnapshot: createMiniAppSnapshotReader({ getRecentHistory: ownerRecentTurns }),
 }));

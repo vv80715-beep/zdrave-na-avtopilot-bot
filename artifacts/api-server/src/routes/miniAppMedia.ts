@@ -1,6 +1,6 @@
 import Busboy from "busboy";
 import { createWriteStream } from "node:fs";
-import { mkdtemp, open, rm, stat } from "node:fs/promises";
+import { mkdtemp, open, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -20,6 +20,14 @@ const UPLOAD_TIMEOUT_MS = 60_000;
 type MediaKind = "image" | "voice";
 export type MiniAppMediaRouteOptions = {
   processor?: MediaAiProcessor;
+  voiceTurnEnabled?: boolean;
+  processVoiceTurn?: (input: {
+    userId: string;
+    audio: Buffer;
+    mode: "text" | "voice" | "avatar";
+    turnId: string;
+    prompt: string;
+  }) => Promise<Record<string, unknown>>;
   tempRoot?: string;
   inspectAudioDuration?: (filePath: string) => Promise<number>;
   normalizeAudio?: (filePath: string, directory: string) => Promise<string>;
@@ -32,6 +40,9 @@ type ReceivedUpload = {
   mimeType: string;
   language: MediaLanguage;
   caption: string;
+  mode: "text" | "voice" | "avatar";
+  turnId: string;
+  prompt: string;
 };
 
 class MediaRequestError extends Error {
@@ -141,8 +152,14 @@ async function receiveUpload(
       let fileMimeType = "";
       let language: MediaLanguage = "bg";
       let caption = "";
+      let mode: ReceivedUpload["mode"] = "text";
+      let turnId = "";
+      let prompt = "";
       let languageSeen = false;
       let captionSeen = false;
+      let modeSeen = false;
+      let turnIdSeen = false;
+      let promptSeen = false;
       let fileSize = 0;
       let failure: MediaRequestError | null = null;
       let settled = false;
@@ -152,8 +169,8 @@ async function receiveUpload(
         limits: {
           fileSize: maxBytes,
           files: 1,
-          fields: 2,
-          parts: 3,
+          fields: 5,
+          parts: 6,
           fieldNameSize: 32,
           fieldSize: 1200,
         },
@@ -209,6 +226,17 @@ async function receiveUpload(
         } else if (name === "caption" && !captionSeen && kind === "image") {
           captionSeen = true;
           caption = value.trim();
+        } else if (name === "mode" && !modeSeen && kind === "voice" &&
+            ["text", "voice", "avatar"].includes(value)) {
+          modeSeen = true;
+          mode = value as ReceivedUpload["mode"];
+        } else if (name === "turnId" && !turnIdSeen && kind === "voice" &&
+            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+          turnIdSeen = true;
+          turnId = value;
+        } else if (name === "prompt" && !promptSeen && kind === "voice") {
+          promptSeen = true;
+          prompt = value.trim();
         } else {
           failure = new MediaRequestError(400, "unexpected_field");
         }
@@ -230,7 +258,7 @@ async function receiveUpload(
             return;
           }
           settled = true;
-          resolve({ path: filePath, directory, mimeType: fileMimeType, language, caption });
+          resolve({ path: filePath, directory, mimeType: fileMimeType, language, caption, mode, turnId, prompt });
         })().catch(() => rejectOnce(new MediaRequestError(400, "upload_failed")));
       });
 
@@ -346,7 +374,8 @@ export function registerMiniAppMediaRoutes(
   env: NodeJS.ProcessEnv,
   options: MiniAppMediaRouteOptions = {},
 ) {
-  if (!enabled) return;
+  const voiceTurnEnabled = options.voiceTurnEnabled === true;
+  if (!enabled && !voiceTurnEnabled) return;
   const processor = options.processor ?? createFixedMockProcessor();
   const inspectDuration = options.inspectAudioDuration ?? probeAudioDuration;
   const normalizeAudio = options.normalizeAudio ?? normalizeAudioToWav;
@@ -354,7 +383,8 @@ export function registerMiniAppMediaRoutes(
   const tempRoot = options.tempRoot ?? os.tmpdir();
 
   const handle = (kind: MediaKind): RequestHandler => async (req, res): Promise<void> => {
-    if (!processor) {
+    const liveVoiceTurn = kind === "voice" && voiceTurnEnabled && options.processVoiceTurn;
+    if (!processor && !liveVoiceTurn) {
       sendMediaError(res, 503, "media_ai_unavailable");
       return;
     }
@@ -366,6 +396,10 @@ export function registerMiniAppMediaRoutes(
     let responseBody: Record<string, unknown> | null = null;
     let responseStatus = 200;
     try {
+      if (kind === "image" && !enabled) {
+        sendMediaError(res, 404, "not_found");
+        return;
+      }
       upload = await receiveUpload(req, kind, tempRoot);
       if (kind === "image") {
         const result = await processor.analyzeImage({
@@ -382,18 +416,31 @@ export function registerMiniAppMediaRoutes(
           responseBody = { error: "audio_too_long" };
         } else {
           const normalizedPath = await normalizeAudio(upload.path, upload.directory);
-          const result = await processor.transcribeAndAnswer({
-            path: normalizedPath,
-            mimeType: "audio/wav",
-            language: upload.language,
-          });
-          responseBody = {
-            transcript: result.transcript,
-            reply: result.reply,
-            mediaType: "voice",
-            staged: true,
-            demo: true,
-          };
+          if (liveVoiceTurn) {
+            const userId = res.locals.miniAppUserId;
+            if (typeof userId !== "string") fail(401, "telegram_auth_required");
+            const result = await options.processVoiceTurn({
+              userId,
+              audio: await readFile(normalizedPath),
+              mode: upload.mode,
+              turnId: upload.turnId,
+              prompt: upload.prompt,
+            });
+            responseBody = { ...result, mediaType: "voice", staged: false, demo: false };
+          } else {
+            const result = await processor!.transcribeAndAnswer({
+              path: normalizedPath,
+              mimeType: "audio/wav",
+              language: upload.language,
+            });
+            responseBody = {
+              transcript: result.transcript,
+              reply: result.reply,
+              mediaType: "voice",
+              staged: true,
+              demo: true,
+            };
+          }
         }
       }
     } catch (error) {
@@ -413,6 +460,6 @@ export function registerMiniAppMediaRoutes(
     res.status(responseStatus).json(responseBody ?? { error: "media_processing_failed" });
   };
 
-  router.post("/media/image", requireOwnerSession, handle("image"));
-  router.post("/media/voice", requireOwnerSession, handle("voice"));
+  if (enabled) router.post("/media/image", requireOwnerSession, handle("image"));
+  if (enabled || voiceTurnEnabled) router.post("/media/voice", requireOwnerSession, handle("voice"));
 }
