@@ -663,6 +663,44 @@ test("owner dossier context is dev-only, session-gated, topic-selected, and neve
   }
 });
 
+test("owner name and creator questions use canonical owner identity without calling OpenAI", async () => {
+  const ownerContext = require("../../../bot/ownerContext.js");
+  let providerCalls = 0;
+  const h = await serverHarness({
+    env: config({
+      ELI_MINI_APP_TEXT_AI_ENABLED: "true",
+      OPENAI_API_KEY: "",
+    }),
+    textAi: async () => {
+      providerCalls += 1;
+      return "Must not be called.";
+    },
+  });
+  try {
+    assert.equal((await h.request("/session", {
+      initData: signedInitData({ userId: "987654321" }),
+    })).status, 403);
+    const cookie = await ownerCookie(h);
+    for (const [message, expected] of [
+      ["Как се казвам?", `Казваш се ${ownerContext.OWNER_NAME}.`],
+      [
+        "Кой създаде Ели?",
+        `Ели е създадена от ${ownerContext.OWNER_NAME} — ${ownerContext.OWNER_CREATOR_FACT.toLocaleLowerCase("bg")}.`,
+      ],
+    ]) {
+      const response = await h.request("/text-ai", { message }, { cookie });
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), {
+        reply: expected,
+        mode: "owner_identity_faq",
+      });
+    }
+    assert.equal(providerCalls, 0);
+  } finally {
+    await h.close();
+  }
+});
+
 test("mixed Eli mission and owner motivation/goals question uses only synthetic dossier FAQ answers", async () => {
   const answerCalls = [];
   let providerCalls = 0;
@@ -754,8 +792,10 @@ test("canonical owner dossier functions read only a synthetic fixture for motiva
     schemaVersion: 1,
     facts: [
       { id: "motivation", category: "motivation", value: "SYNTHETIC_PERSONAL_MOTIVATION" },
+      { id: "business-mission", category: "personal_facts", value: "SYNTHETIC_BUSINESS_MISSION" },
       { id: "financial-dream", category: "goals", value: "SYNTHETIC_LIFE_GOAL" },
       { id: "eli-relationship", category: "relationship_context", value: "SYNTHETIC_UNRELATED_FACT" },
+      { id: "preferred-name", category: "personal_facts", value: "SYNTHETIC_PREFERRED_NAME" },
     ],
   };
   const originalFixture = JSON.stringify(fixture);
@@ -769,10 +809,12 @@ test("canonical owner dossier functions read only a synthetic fixture for motiva
       OPENAI_API_KEY: `sk-${"x".repeat(24)}`,
     }),
     ownerDossierPath: fixturePath,
+    ownerDossierContext: (ownerId, message) =>
+      dossier.buildOwnerDossierPrompt(ownerId, message),
     ownerDossierFaq: dossier,
-    textAi: async () => {
+    textAi: async (input) => {
       providerCalls += 1;
-      return "Provider must not be called for a matching FAQ.";
+      return `Synthetic answer using ${input.ownerDossierContext || "no dossier"}.`;
     },
   });
   try {
@@ -784,6 +826,7 @@ test("canonical owner dossier functions read only a synthetic fixture for motiva
     const questions = [
       ["Каква е моята лична мотивация да създам този бизнес?", ["SYNTHETIC_PERSONAL_MOTIVATION"]],
       ["Какво искам да постигна в живота си?", ["SYNTHETIC_LIFE_GOAL"]],
+      ["Каква е бизнес мисията?", ["SYNTHETIC_BUSINESS_MISSION"]],
       [
         "Ели, освен твоята мисия, каква е моята лична мотивация и какво искам да постигна в живота си?",
         ["SYNTHETIC_PERSONAL_MOTIVATION", "SYNTHETIC_LIFE_GOAL"],
@@ -799,6 +842,18 @@ test("canonical owner dossier functions read only a synthetic fixture for motiva
       assert.equal(body.reply.includes("SYNTHETIC_UNRELATED_FACT"), false);
     }
     assert.equal(providerCalls, 0);
+
+    const nameContextResponse = await h.request(
+      "/text-ai",
+      { message: "Моля използвай името ми в отговора." },
+      { cookie },
+    );
+    assert.equal(nameContextResponse.status, 200);
+    const nameContextBody = await nameContextResponse.json();
+    assert.equal(nameContextBody.mode, "test_ai");
+    assert.match(nameContextBody.reply, /SYNTHETIC_PREFERRED_NAME/);
+    assert.doesNotMatch(nameContextBody.reply, /SYNTHETIC_UNRELATED_FACT/);
+    assert.equal(providerCalls, 1);
     assert.equal((await readFile(fixturePath, "utf8")), originalFixture);
   } finally {
     await h.close();

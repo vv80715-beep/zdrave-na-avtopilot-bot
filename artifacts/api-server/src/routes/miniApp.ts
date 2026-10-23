@@ -9,6 +9,8 @@ import { validateTelegramInitData } from "../lib/telegramInitData.mjs";
 import eliPersona from "../../../../bot/persona.js";
 // @ts-expect-error The selector rechecks the owner and filters dossier facts by message topic.
 import ownerDossier from "../../../../bot/ownerDossier.js";
+// @ts-expect-error Reuse only canonical owner identity facts, never the full bot prompt.
+import ownerContext from "../../../../bot/ownerContext.js";
 import {
   registerMiniAppMediaRoutes,
   type MiniAppMediaRouteOptions,
@@ -36,6 +38,10 @@ const TEXT_AI_TEST_BOUNDARY = [
   "If asked about prior conversations or personal history, say this test has no synchronized memory.",
 ].join(" ");
 const SYSTEM_PROMPT = (eliPersona as { SYSTEM_PROMPT: string }).SYSTEM_PROMPT;
+const { OWNER_NAME, OWNER_CREATOR_FACT } = ownerContext as {
+  OWNER_NAME: string;
+  OWNER_CREATOR_FACT: string;
+};
 declare const __ELI_CANONICAL_OWNER_DOSSIER_PATH__: string;
 type SessionClaims = { sub: string; iat: number; exp: number; nonce: string };
 
@@ -58,9 +64,12 @@ function ownerDossierFaqIntents(message: string, detect: OwnerDossierFaq["detect
     /(личн.{0,25}мотивац|мотивац.{0,50}(бизнес|създа|постиг)|защо.{0,50}(създад|създам|направ|изград).{0,40}(бизнес|ели)|с каква цел.{0,50}(създад|направ|изград))/.test(text);
   const asksGoals =
     /(какво.{0,40}(искам|мога|трябва).{0,30}постиг|какви са.{0,30}(цел|мечт)|каква е.{0,30}(цел|мечт)|целите ми|моите цели|мечтата ми)/.test(text);
+  const asksMission =
+    /(мисията ми|моята мисия|мисия на бизнеса|бизнес мисия|мисията на бизнеса|what is (my|our|the business) mission|business mission)/.test(text);
   const intents: string[] = [];
   if (asksMotivation) intents.push("creation_reason");
   if (asksGoals) intents.push("goals");
+  if (asksMission && !intents.length) intents.push("business_mission");
 
   // Prefer explicit personal questions over a mention of Eli's mission, which
   // the legacy detector can otherwise classify as the business-mission FAQ.
@@ -69,6 +78,21 @@ function ownerDossierFaqIntents(message: string, detect: OwnerDossierFaq["detect
   return legacyIntent === "creation_reason" || legacyIntent === "goals"
     ? [legacyIntent]
     : [];
+}
+
+function ownerIdentityFaqReply(message: string): string | null {
+  const text = message.toLocaleLowerCase("bg").replace(/[’']/g, "'");
+  if (
+    /(как се казвам|какво е името ми|кое е името ми|как ме наричаш|как се казва собственикът|what is my name|what's my name|what is the owner's name)/.test(text)
+  ) {
+    return `Казваш се ${OWNER_NAME}.`;
+  }
+  if (
+    /(кой.{0,20}(създа|направ|изград).{0,35}(ели|теб|здраве на автопилот)|създател(ят)? на (ели|здраве на автопилот)|who (created|made|built) (you|eli|health on autopilot)|who is the creator of eli)/.test(text)
+  ) {
+    return `Ели е създадена от ${OWNER_NAME} — ${OWNER_CREATOR_FACT.toLocaleLowerCase("bg")}.`;
+  }
+  return null;
 }
 
 function canonicalOwnerDossierPath(): string {
@@ -407,10 +431,6 @@ export function createMiniAppRouter(
       sendError(res, 404, "not_found");
       return;
     }
-    if (!textAiKeyAvailable) {
-      sendError(res, 503, "text_ai_unavailable");
-      return;
-    }
     const body = req.body;
     if (
       !body ||
@@ -421,6 +441,16 @@ export function createMiniAppRouter(
       (body.language !== undefined && body.language !== "bg" && body.language !== "en")
     ) {
       sendError(res, 400, "invalid_request");
+      return;
+    }
+
+    const identityReply = ownerIdentityFaqReply(body.message.trim());
+    if (identityReply) {
+      res.json({ reply: identityReply, mode: "owner_identity_faq" });
+      return;
+    }
+    if (!textAiKeyAvailable) {
+      sendError(res, 503, "text_ai_unavailable");
       return;
     }
 

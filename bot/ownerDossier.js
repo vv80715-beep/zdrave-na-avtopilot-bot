@@ -173,7 +173,7 @@ function formatOwnerDossierSummary(userId) {
 function buildOwnerDossierPrompt(userId, question) {
   const facts = getOwnerDossierEntries(userId);
   const t = String(question || '').toLocaleLowerCase('bg');
-  if (!facts.length || !/(цел|мечт|мотив|бизнес|мисия|ели|работ|финанс|лост|тренир|сън|график|зает)/.test(t)) return '';
+  if (!facts.length || !/(име|наричай|name|цел|мечт|мотив|бизнес|мисия|ели|работ|финанс|лост|тренир|сън|график|зает)/.test(t)) return '';
   const include = facts.filter((x) => {
     if (x.id === 'business-mission') return /(бизнес|мисия|ели|създадох|продукт)/.test(t);
     if (x.id === 'fitness-goals') return /(цел|лост|тренир|тегло|фитнес)/.test(t);
