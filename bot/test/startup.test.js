@@ -11,16 +11,19 @@ test('an occupied health port rejects startup before Telegram launch', async () 
   const blocker = await listenForHealthServer(express(), 0);
   const port = blocker.address().port;
   let launchCalls = 0;
+  let beforePollingCalls = 0;
 
   await assert.rejects(
     startBotRuntimeWithHealthServer(
       { launch() { launchCalls += 1; return Promise.resolve(); } },
       express(),
       port,
+      { beforePolling: () => { beforePollingCalls += 1; } },
     ),
     { code: 'EADDRINUSE' },
   );
   assert.equal(launchCalls, 0);
+  assert.equal(beforePollingCalls, 0);
 
   await new Promise((resolve) => blocker.close(resolve));
 });
@@ -39,6 +42,7 @@ test('health port is acquired before launch and shutdown releases it idempotentl
     express(),
     0,
     {
+      beforePolling: () => calls.push('before-polling'),
       startSubscriptionExpiryScheduler: () => ({
         stop: () => calls.push('stop:expiry'),
       }),
@@ -48,7 +52,8 @@ test('health port is acquired before launch and shutdown releases it idempotentl
     },
   );
   assert.equal(runtime.server.listening, true);
-  assert.equal(calls[0], 'launch');
+  await new Promise(setImmediate);
+  assert.deepEqual(calls.slice(0, 2), ['before-polling', 'launch']);
 
   const serverClosed = new Promise((resolve) => runtime.server.once('close', resolve));
   runtime.stop();
@@ -126,4 +131,30 @@ test('stops already-started schedulers if startup cannot finish', () => {
     /daily startup failed/
   );
   assert.deepEqual(calls, ['stop:expiry']);
+});
+
+test('runs menu restoration only after acquiring the health port and before polling', async () => {
+  const calls = [];
+  const bot = {
+    launch(_config, callback) {
+      calls.push('launch');
+      callback();
+      return new Promise(() => {});
+    },
+  };
+  const runtime = await startBotRuntimeWithHealthServer(bot, express(), 0, {
+    beforePolling: async () => {
+      await new Promise((resolve) => setImmediate(resolve));
+      calls.push('menu-restored');
+    },
+    startSubscriptionExpiryScheduler: () => ({ stop() {} }),
+    startDailyCoaching: () => ({ stop() {} }),
+    startReminderScheduler: () => ({ stop() {} }),
+    logger: { error() {} },
+  });
+  assert.equal(runtime.server.listening, true);
+  assert.deepEqual(calls, ['menu-restored', 'launch']);
+  const closed = new Promise((resolve) => runtime.server.once('close', resolve));
+  runtime.stop();
+  await closed;
 });

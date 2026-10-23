@@ -22,11 +22,12 @@ function listenForHealthServer(app, port) {
 }
 
 function startBotRuntimeWithHealthServer(bot, app, port, dependencies = {}) {
-  return listenForHealthServer(app, port).then((server) => {
+  return listenForHealthServer(app, port).then(async (server) => {
     let runtime;
     try {
       // The occupied health port is the local singleton guard. Do not create a
       // Telegram poller until this process owns the configured listener.
+      await dependencies.beforePolling?.();
       runtime = startBotRuntime(bot, dependencies);
     } catch (error) {
       if (server.listening) server.close();

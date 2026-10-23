@@ -114,6 +114,7 @@ const { createMiniAppSnapshotReader } = require('./miniAppReadModel');
 const { createMiniAppTextTurnHandler } = require('./miniAppTextTurn');
 const { createMiniAppVoiceTurnHandler } = require('./miniAppVoiceTurn');
 const { createMiniAppCoachTurnHandler } = require('./miniAppCoachTurn');
+const { restoreDefaultMenuButton } = require('./telegramMenuRollback');
 const { generateCoach, generateMotivate, generateNextStep, generateWeeklyReview, computeWeekly } = require('./coachService');
 
 const processMiniAppTextTurn = createMiniAppTextTurnHandler({
@@ -976,7 +977,9 @@ async function start() {
   try {
     // Acquire the health port before creating a Telegram poller. A second
     // local start fails here with EADDRINUSE instead of polling before failing.
-    runtime = await startBotRuntimeWithHealthServer(bot, app, PORT);
+    runtime = await startBotRuntimeWithHealthServer(bot, app, PORT, {
+      beforePolling: () => restoreDefaultMenuButton(bot.telegram),
+    });
     console.log('Telegram bot started (long polling).');
 
     console.log(`Express health server listening on port ${PORT}`);

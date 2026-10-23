@@ -42,6 +42,19 @@ test('desktop/mobile plan entry points do not pass a client plan or provider URL
   assert.doesNotMatch(confirm, /checkout_url|success_url|cancel_url/i);
 });
 
+test('public site sends Eli entry points to the direct Telegram bot, never to Mini App', () => {
+  const pages = ['index.html', 'seven-day.html', 'monthly.html', 'yearly.html', 'confirm-plan.html'];
+  const sources = pages.map((file) => fs.readFileSync(path.join(root, file), 'utf8'));
+  const combined = sources.join('\n');
+
+  assert.match(combined, /href="https:\/\/t\.me\/EliZdraveBot"/);
+  assert.match(combined, /Говори с Ели/);
+  assert.doesNotMatch(combined, /ELI_MINI_APP_URL|startapp|web_app|Mini App/i);
+  for (const source of sources) {
+    assert.doesNotMatch(source, /https:\/\/[a-z0-9-]+\.replit\.dev\/chat/i);
+  }
+});
+
 test('checkout verification is GET-first and checkout POST has no client inputs', async () => {
   const { verifyPurchaseSession, requestCheckout } = await routing();
   const calls = [];

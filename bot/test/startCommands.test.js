@@ -97,6 +97,31 @@ test('normal /start is one short welcome, owner personalized; /help is full and 
   assert.deepEqual(h.purchases, []);
 });
 
+test('disabled Mini App flags restore the legacy /start conversation for owners and customers', async () => {
+  const h = harness({
+    miniAppEnv: {
+      ELI_MINI_APP_START_BUTTON_ENABLED: 'false',
+      ELI_MINI_APP_STAGE: 'staging',
+      ELI_MINI_APP_URL: 'https://owner-stage.replit.dev/chat',
+      NODE_ENV: 'development',
+    },
+    publicMiniAppEnv: {
+      ELI_MINI_APP_PUBLIC_START_BUTTON_ENABLED: 'false',
+      ELI_MINI_APP_PUBLIC_START_READY: 'false',
+      ELI_MINI_APP_PUBLIC_URL: 'https://eli.example/chat',
+      NODE_ENV: 'production',
+    },
+  });
+
+  for (const from of [23456, 12345]) {
+    const reply = await h.send('/start', { from });
+    assert.equal(reply.length, 1);
+    assert.equal(reply[0].data.reply_markup, undefined);
+    assert.match(reply[0].data.text, /Здравей/);
+  }
+  assert.equal((await h.send('/help')).length, 1);
+});
+
 test('/plans remains the same static plan menu without creating a trial or purchase', async () => {
   const h = harness();
   const replies = await h.send('/plans');
