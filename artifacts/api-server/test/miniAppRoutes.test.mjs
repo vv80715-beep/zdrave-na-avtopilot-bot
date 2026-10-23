@@ -9,7 +9,6 @@ import path from "node:path";
 import test from "node:test";
 import {
   createMiniAppRouter,
-  createOpenAiTextAiAdapter,
   miniAppConfigEnabled,
   mountMiniAppRoutes,
 } from "../src/routes/miniApp.ts";
@@ -144,6 +143,19 @@ async function ownerCookie(h) {
   return response.headers.get("set-cookie").split(";")[0];
 }
 
+function legacyCookieFor(userId) {
+  const payload = Buffer.from(JSON.stringify({
+    sub: userId,
+    iat: NOW_SECONDS,
+    exp: NOW_SECONDS + 600,
+    nonce: `legacy-${userId}`,
+  })).toString("base64url");
+  const signature = createHmac("sha256", SESSION_SECRET)
+    .update(`eli-mini-session-v1.${payload}`)
+    .digest("base64url");
+  return `eli_mini_session=${payload}.${signature}`;
+}
+
 function imageForm(bytes, { mime = "image/jpeg", filename = "photo.jpg" } = {}) {
   const form = new FormData();
   form.set("file", new Blob([bytes], { type: mime }), filename);
@@ -194,7 +206,7 @@ test("existing API routes retain the pre-existing global CORS behavior", async (
   }
 });
 
-test("valid owner initData issues a secure short-lived session; session serves only fixed demo text", async () => {
+test("owner initData issues a secure session and retired demo routes fail closed", async () => {
   const h = await serverHarness();
   try {
     const sessionResponse = await h.request("/session", { initData: signedInitData() });
@@ -209,28 +221,8 @@ test("valid owner initData issues a secure short-lived session; session serves o
     assert.match(setCookie, /Max-Age=600/);
     const cookie = setCookie.split(";")[0];
 
-    const originalFetch = globalThis.fetch;
-    let externalCalls = 0;
-    globalThis.fetch = async (input, init) => {
-      const url = new URL(input instanceof Request ? input.url : String(input));
-      if (url.hostname !== "127.0.0.1") {
-        externalCalls += 1;
-        throw new Error("External producers are disabled in this test.");
-      }
-      return originalFetch(input, init);
-    };
-    let demo;
-    try {
-      demo = await h.request("/demo-chat", { message: "private health detail", language: "en" }, { cookie });
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-    assert.equal(externalCalls, 0);
-    assert.equal(demo.status, 200);
-    assert.deepEqual(await demo.json(), {
-      reply: "This is a fixed owner-only demo reply. No AI request was made.",
-      demo: true,
-    });
+    assert.equal((await h.request("/demo-chat", { message: "private health detail" }, { cookie })).status, 404);
+    assert.equal((await h.request("/text-ai", { message: "private health detail" }, { cookie })).status, 404);
 
     const replay = await h.request("/session", { initData: signedInitData() });
     assert.equal(replay.status, 401);
@@ -266,7 +258,7 @@ test("signed initData can renew the same valid session after its five-minute fre
   }
 });
 
-test("rejects forged and expired initData; valid client identities get isolated sessions", async () => {
+test("rejects forged, expired, and non-owner initData; stale client cookies cannot read staging data", async () => {
   const h = await serverHarness();
   try {
     assert.equal((await h.request("/session", { initData: "malformed" })).status, 401);
@@ -279,15 +271,16 @@ test("rejects forged and expired initData; valid client identities get isolated 
     const client = await h.request("/session", {
       initData: signedInitData({ userId: "987654321" }),
     });
-    assert.equal(client.status, 200);
-    const clientCookie = client.headers.get("set-cookie").split(";")[0];
-    const ownerOnly = await h.request(
-      "/demo-chat",
-      { message: "synthetic client request" },
-      { cookie: clientCookie },
-    );
-    assert.equal(ownerOnly.status, 403);
-    assert.deepEqual(await ownerOnly.json(), { error: "owner_only" });
+    assert.equal(client.status, 403);
+    assert.deepEqual(await client.json(), { error: "owner_only" });
+
+    const staleCookie = legacyCookieFor("987654321");
+    const profile = await h.request("/profile", {}, { cookie: staleCookie });
+    assert.equal(profile.status, 403);
+    assert.deepEqual(await profile.json(), { error: "owner_only" });
+    const chat = await h.request("/chat", { message: "synthetic client request" }, { cookie: staleCookie });
+    assert.equal(chat.status, 403);
+    assert.deepEqual(await chat.json(), { error: "owner_only" });
   } finally {
     await h.close();
   }
@@ -1146,6 +1139,34 @@ test("API signs the verified session subject for the loopback bot bridge", async
       snapshot: { profile: { label: "synthetic bot-owned data" } },
     });
     assert.equal(bridgeCall.url, "http://127.0.0.1:3001/internal/mini-app/profile-snapshot");
+  } finally {
+    await h.close();
+  }
+});
+
+test("owner chat forwards only text to the bot bridge and returns its engine reply", async () => {
+  let forwarded;
+  const h = await serverHarness({
+    bridgeSecret: "synthetic-bridge-secret-with-more-than-thirty-two-characters",
+    bridgeFetch: async (url, init) => {
+      forwarded = { url, body: JSON.parse(init.body) };
+      return new Response(JSON.stringify({
+        ok: true,
+        reply: "Синтетичен отговор от bot engine.",
+        kind: "eli_text",
+      }), { status: 200 });
+    },
+  });
+  try {
+    const cookie = await ownerCookie(h);
+    const response = await h.request("/chat", { message: "synthetic question" }, { cookie });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      reply: "Синтетичен отговор от bot engine.",
+      kind: "eli_text",
+    });
+    assert.equal(forwarded.url, "http://127.0.0.1:3001/internal/mini-app/text-turn");
+    assert.deepEqual(forwarded.body, { message: "synthetic question" });
   } finally {
     await h.close();
   }
