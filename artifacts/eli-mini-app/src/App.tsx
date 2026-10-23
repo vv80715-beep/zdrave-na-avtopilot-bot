@@ -640,10 +640,12 @@ function Chat() {
               <Video size={15} /><span>{t('actionAvatar')}</span>
             </button>
           </div>
-          <p className="mode-disclosure" data-testid="mode-entitlement-note">{chatEntitlement?.backendVerified
-            ? (chatEntitlement.allowedModes.includes('voice') && chatEntitlement.allowedModes.includes('avatar')
-              ? t('modeLiveDisclosure') : t('modeLimitedDisclosure'))
-            : t('modeCheckingDisclosure')}</p>
+          <p className="mode-disclosure" data-testid="mode-entitlement-note">{!canUseTelegramSession
+            ? t('modeTelegramOnlyDisclosure')
+            : chatEntitlement?.backendVerified
+              ? (chatEntitlement.allowedModes.includes('voice') && chatEntitlement.allowedModes.includes('avatar')
+                ? t('modeLiveDisclosure') : t('modeLimitedDisclosure'))
+              : t('modeCheckingDisclosure')}</p>
           <div
             className="conversation"
             ref={conversationRef}
