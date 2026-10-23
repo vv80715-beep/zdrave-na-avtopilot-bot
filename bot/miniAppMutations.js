@@ -13,7 +13,7 @@ const { getReminder, addReminder, updateReminder, deleteReminder } = require('./
 const { parseTime, parseCustomDays } = require('./reminderUtils');
 const { isOwnerId } = require('./adminGuard');
 
-const REMINDER_FIELDS = new Set(['title', 'time', 'days', 'category']);
+const REMINDER_FIELDS = new Set(['title', 'time', 'days', 'category', 'paused']);
 
 function fail(code) {
   const error = new Error(code);
@@ -60,6 +60,10 @@ function validateReminder(input, { partial = false } = {}) {
     if (typeof input.category !== 'string' ||
         !REMINDER_CATEGORIES.some((category) => category.key === input.category)) fail('invalid_request');
     patch.category = input.category;
+  }
+  if (Object.hasOwn(input, 'paused')) {
+    if (!partial || typeof input.paused !== 'boolean') fail('invalid_request');
+    patch.paused = input.paused;
   }
   if (partial && !Object.keys(patch).length) fail('invalid_request');
   return patch;

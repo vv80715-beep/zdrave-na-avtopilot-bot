@@ -93,6 +93,15 @@ test('reminders reuse canonical parsing and preserve the owner exclusion', async
     payload: { id: created.record.id, patch: { title: 'More water' } },
   });
   assert.equal(updated.record.title, 'More water');
+  const paused = await mutate({
+    userId: USER, action: 'reminder.update',
+    payload: { id: created.record.id, patch: { paused: true } },
+  });
+  assert.equal(paused.record.paused, true);
+  await assert.rejects(mutate({
+    userId: USER, action: 'reminder.update',
+    payload: { id: created.record.id, patch: { paused: 'true' } },
+  }), (error) => error.code === 'invalid_request');
   await mutate({ userId: USER, action: 'reminder.delete', payload: { id: created.record.id } });
   assert.equal(calls.some(([name]) => name === 'deleteReminder'), true);
   await assert.rejects(mutate({

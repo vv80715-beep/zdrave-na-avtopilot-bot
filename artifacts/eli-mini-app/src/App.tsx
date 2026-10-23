@@ -1333,6 +1333,12 @@ function Profile() {
               return <article className="reminder-row" key={id || index} data-testid={`reminder-${id || index}`}>
                 <div><strong>{String(entry.title ?? (en ? 'Untitled reminder' : 'Напомняне'))}</strong><span>{String(entry.time ?? '—')} · {format(entry.days)} · {String(entry.category ?? 'custom')}</span></div>
                 {!isOwner && <div className="reminder-actions">
+                  <button type="button" className="secondary-button" data-testid={`button-reminder-toggle-${id}`}
+                    aria-label={`${Boolean(entry.paused) ? (en ? 'Resume reminder' : 'Включи напомнянето') : (en ? 'Pause reminder' : 'Пауза на напомнянето')} ${String(entry.title ?? '')}`}
+                    disabled={mutationBusy}
+                    onClick={() => { void saveMutation('reminder.update', { id, patch: { paused: !Boolean(entry.paused) } }); }}>
+                    {Boolean(entry.paused) ? (en ? 'Resume' : 'Включи') : (en ? 'Pause' : 'Пауза')}
+                  </button>
                   {deleteReminderId === id
                     ? <><button type="button" className="delete-button" data-testid={`button-reminder-confirm-delete-${id}`} disabled={mutationBusy} onClick={() => { void saveMutation('reminder.delete', { id }).then((saved) => { if (saved) setDeleteReminderId(null); }); }}>{en ? 'Confirm delete' : 'Потвърди изтриване'}</button><button type="button" className="secondary-button" onClick={() => setDeleteReminderId(null)}>{en ? 'Cancel' : 'Отказ'}</button></>
                     : <><button type="button" className="secondary-button" data-testid={`button-reminder-edit-${id}`} aria-label={`${en ? 'Edit reminder' : 'Редактирай напомнянето'} ${String(entry.title ?? '')}`} onClick={() => { setEditingReminder(id); setReminderTitle(String(entry.title ?? '')); setReminderTime(String(entry.time ?? '09:00')); setReminderDays(Array.isArray(entry.days) ? entry.days.map(Number).filter((day): day is 0 | 1 | 2 | 3 | 4 | 5 | 6 => Number.isInteger(day) && day >= 0 && day <= 6) : []); setReminderCategory(String(entry.category ?? 'custom')); }}>{en ? 'Edit' : 'Редакция'}</button><button type="button" className="delete-button" data-testid={`button-reminder-delete-${id}`} aria-label={`${en ? 'Delete reminder' : 'Изтрий напомнянето'} ${String(entry.title ?? '')}`} onClick={() => setDeleteReminderId(id)}>{en ? 'Delete' : 'Изтрий'}</button></>}
