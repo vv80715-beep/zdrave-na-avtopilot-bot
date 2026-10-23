@@ -456,6 +456,7 @@ async function askEli(ctx, question, opts = {}) {
   const withNotice = (text) => (status.notice ? `${status.notice}\n\n${text}` : text);
   const deliverDeterministic = async (text) => {
     const full = withNotice(text);
+    if (opts.captureTextReply) ctx.captureText?.(full);
     if (voiceMode) {
       const ok = await sendVoiceReply(ctx, full);
       if (ok) return;
@@ -463,6 +464,7 @@ async function askEli(ctx, question, opts = {}) {
     await replyWithMarkdownSafe(ctx, full);
   };
   const deliverOwnerDossierAnswer = async (text) => {
+    if (opts.captureTextReply) ctx.captureText?.(withNotice(text));
     if (avatarMode) {
       try {
         const category = chooseLookCategory(question, 'neutral');
@@ -770,6 +772,7 @@ async function askEli(ctx, question, opts = {}) {
     // Health-report turns fold the deterministic confirmation into the SAME
     // single delivery — never a separate second message.
     const finalAnswer = withNotice(healthNote ? `${healthNote}\n\n${answer}` : answer);
+    if (opts.captureTextReply) ctx.captureText?.(finalAnswer);
 
     // Persist the exchange to the user's long-term memory (never the owner's)
     // BEFORE delivery — memory survives even if delivery fails. The owner's

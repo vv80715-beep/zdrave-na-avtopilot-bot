@@ -1,10 +1,12 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { runMiniAppTurn } = require('./miniAppTurnIdempotency');
 
 function createCaptureContext(userId, message, updateId) {
   const replies = [];
   let media = null;
+  let textReply = '';
   const capture = async (text) => {
     if (typeof text === 'string' && text.trim()) replies.push(text);
   };
@@ -15,6 +17,8 @@ function createCaptureContext(userId, message, updateId) {
     update: { update_id: updateId },
     replies,
     get media() { return media; },
+    get textReply() { return textReply; },
+    captureText: (text) => { if (typeof text === 'string' && text.trim()) textReply = text.trim(); },
     reply: capture,
     replyWithMarkdown: capture,
     replyWithVoice: async (payload) => {
@@ -47,7 +51,7 @@ function createMiniAppTextTurnHandler({
     throw new TypeError('Mini App text-turn dependencies are required.');
   }
 
-  return async function processMiniAppTextTurn({ userId, message, mode = 'text', turnId }) {
+  async function executeMiniAppTextTurn({ userId, message, mode = 'text', turnId }) {
     const id = String(userId);
     if (!/^[1-9]\d{4,19}$/.test(id)) {
       const error = new Error('invalid_request');
@@ -85,16 +89,29 @@ function createMiniAppTextTurnHandler({
       status,
       mode,
       rethrowProviderErrors: true,
+      captureTextReply: true,
     });
     if (ctx.media) {
       return {
-        reply: ctx.media.type === 'audio' ? 'Гласов отговор от Ели.' : 'Видео отговор от Ели.',
+        reply: ctx.textReply || (ctx.media.type === 'audio' ? 'Гласов отговор от Ели.' : 'Видео отговор от Ели.'),
         kind: ctx.media.type === 'audio' ? 'voice' : 'avatar',
         media: ctx.media,
       };
     }
     if (!ctx.replies.length) throw new Error('text_turn_invalid_delivery_count');
     return { reply: ctx.replies[ctx.replies.length - 1], kind: 'eli_text' };
+  }
+
+  return function processMiniAppTextTurn(input) {
+    const fingerprint = crypto.createHash('sha256')
+      .update(JSON.stringify([input.message, input.mode || 'text']))
+      .digest('hex');
+    return runMiniAppTurn({
+      userId: input.userId,
+      turnId: input.turnId,
+      fingerprint: `text:${fingerprint}`,
+      work: () => executeMiniAppTextTurn(input),
+    });
   };
 }
 

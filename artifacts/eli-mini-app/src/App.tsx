@@ -402,6 +402,8 @@ function Chat() {
   const [stageError, setStageError] = useState<TranslationKey | null>(null);
   const [stageErrorCanRetry, setStageErrorCanRetry] = useState(false);
   const [ambiguousDraft, setAmbiguousDraft] = useState<string | null>(null);
+  const [ambiguousAttachmentId, setAmbiguousAttachmentId] = useState<number | null>(null);
+  const [chatEntitlement, setChatEntitlement] = useState<MiniAppProfileSnapshot['entitlement'] | null>(null);
   const [selectedMode, setSelectedMode] = useState<MiniAppTurnMode>(preferredMode);
   const [sending, setSending] = useState(false);
   const [stageMode, setStageMode] = useState<'local' | 'checking' | 'live' | 'unavailable'>('local');
@@ -428,6 +430,10 @@ function Chat() {
     setSelectedMode(mode);
     setPreferredMode(mode);
   }
+  function modeEnabled(mode: MiniAppTurnMode) {
+    return Boolean(chatEntitlement?.backendVerified && chatEntitlement.canChat &&
+      chatEntitlement.allowedModes.includes(mode));
+  }
 
   useEffect(() => {
     if (!canUseTelegramSession) {
@@ -436,8 +442,9 @@ function Chat() {
     }
     let current = true;
     setStageMode('checking');
-    void ensureOwnerSession(signedInitData).then(() => {
+    void getMiniAppProfileSnapshot(signedInitData).then((snapshot) => {
       if (current) {
+        setChatEntitlement(snapshot.entitlement);
         setStageMode('live');
         setStageError(null);
         setStageErrorCanRetry(false);
@@ -500,6 +507,11 @@ function Chat() {
       setStageErrorCanRetry(false);
       return;
     }
+    if (sendVoice && attachment && ambiguousAttachmentId === attachment.id) {
+      setStageError('stageProviderUncertain');
+      setStageErrorCanRetry(false);
+      return;
+    }
     setNotice(null);
     setStageError(null);
     setStageErrorCanRetry(false);
@@ -538,6 +550,7 @@ function Chat() {
         setStageError(null);
         setStageErrorCanRetry(false);
         setAmbiguousDraft(null);
+        setAmbiguousAttachmentId(null);
         setDraft('');
         setAttachmentMenuOpen(false);
         if (attachment && attachment.kind !== 'voice') setNotice('attachmentLocalNotice');
@@ -546,7 +559,8 @@ function Chat() {
         const uncertain = error instanceof MiniAppStageError &&
           [0, 502, 503, 504].includes(error.status);
         if (uncertain) {
-          setAmbiguousDraft(text);
+          if (sendVoice && attachment) setAmbiguousAttachmentId(attachment.id);
+          else setAmbiguousDraft(text);
           setStageError('stageProviderUncertain');
         } else {
           setStageError(stageErrorKey(error));
@@ -596,17 +610,20 @@ function Chat() {
             )}</span>
           </div>
           <div className="chat-mode-actions" role="group" aria-label={t('modeActionsAria')}>
-            <button type="button" aria-pressed={selectedMode === 'text'} aria-label={t('actionText')} title={t('actionText')} data-testid="button-chat-mode-text" onClick={() => chooseMode('text')}>
+            <button type="button" disabled={!modeEnabled('text')} aria-pressed={selectedMode === 'text'} aria-label={`${t('actionText')}${modeEnabled('text') ? '' : ` — ${t('modeUnavailable')}`}`} title={modeEnabled('text') ? t('actionText') : t('modeUnavailable')} data-testid="button-chat-mode-text" onClick={() => chooseMode('text')}>
               <MessageCircle size={15} /><span>{t('actionText')}</span>
             </button>
-            <button type="button" aria-pressed={selectedMode === 'voice'} aria-label={t('actionVoice')} title={t('actionVoice')} data-testid="button-chat-mode-voice" onClick={() => chooseMode('voice')}>
+            <button type="button" disabled={!modeEnabled('voice')} aria-pressed={selectedMode === 'voice'} aria-label={`${t('actionVoice')}${modeEnabled('voice') ? '' : ` — ${t('modeUnavailable')}`}`} title={modeEnabled('voice') ? t('actionVoice') : t('modeUnavailable')} data-testid="button-chat-mode-voice" onClick={() => chooseMode('voice')}>
               <AudioLines size={15} /><span>{t('actionVoice')}</span>
             </button>
-            <button type="button" aria-pressed={selectedMode === 'avatar'} aria-label={t('actionAvatar')} title={t('actionAvatar')} data-testid="button-chat-mode-avatar" onClick={() => chooseMode('avatar')}>
+            <button type="button" disabled={!modeEnabled('avatar')} aria-pressed={selectedMode === 'avatar'} aria-label={`${t('actionAvatar')}${modeEnabled('avatar') ? '' : ` — ${t('modeUnavailable')}`}`} title={modeEnabled('avatar') ? t('actionAvatar') : t('modeUnavailable')} data-testid="button-chat-mode-avatar" onClick={() => chooseMode('avatar')}>
               <Video size={15} /><span>{t('actionAvatar')}</span>
             </button>
           </div>
-          <p className="mode-disclosure">{t('modeLiveDisclosure')}</p>
+          <p className="mode-disclosure" data-testid="mode-entitlement-note">{chatEntitlement?.backendVerified
+            ? (chatEntitlement.allowedModes.includes('voice') && chatEntitlement.allowedModes.includes('avatar')
+              ? t('modeLiveDisclosure') : t('modeLimitedDisclosure'))
+            : t('modeCheckingDisclosure')}</p>
           <div
             className="conversation"
             ref={conversationRef}
@@ -723,7 +740,7 @@ function Chat() {
             </div>
           )}
           {media.errorKey && <p className="media-error" role="alert">{t(media.errorKey)}</p>}
-          {sending && <div className="local-notice" role="status" aria-live="polite">{t('stageSending')}</div>}
+          {sending && <div className="local-notice" role="status" aria-live="polite">{t(selectedMode === 'avatar' ? 'avatarGenerating' : selectedMode === 'voice' ? 'voiceProcessing' : 'stageSending')}</div>}
           {stageError && <div className="stage-error" role="alert" data-testid="status-stage-error"><span>{t(stageError)}</span>{stageErrorCanRetry ? <button type="button" onClick={() => void submitMiniAppMessage()} disabled={sending || stageMode === 'checking'} data-testid="button-stage-retry">{t('retry')}</button> : <button type="button" onClick={() => { setStageError(null); setStageErrorCanRetry(false); }} data-testid="button-stage-dismiss">{t('dismiss')}</button>}</div>}
           <form className="composer" onSubmit={(event) => void submitMiniAppMessage(event)}>
             <div className="attachment-menu-wrap">
@@ -792,7 +809,7 @@ function Chat() {
               }}
               data-testid="input-demo-message"
             />
-            <button className="send-button" type="submit" aria-label={t(canUseTelegramSession ? 'sendAriaStage' : 'sendAria')} data-testid="button-demo-send" disabled={sending || (canUseTelegramSession && stageMode === 'checking') || (ambiguousDraft !== null && ambiguousDraft === draft.trim()) || (!draft.trim() && !media.attachment)}>
+            <button className="send-button" type="submit" aria-label={t(canUseTelegramSession ? 'sendAriaStage' : 'sendAria')} data-testid="button-demo-send" disabled={sending || (canUseTelegramSession && stageMode === 'checking') || (ambiguousDraft !== null && ambiguousDraft === draft.trim()) || (ambiguousAttachmentId !== null && media.attachment?.id === ambiguousAttachmentId) || (!draft.trim() && !media.attachment)}>
               {sending ? <Clock3 size={16} /> : <Send size={16} />}
             </button>
           </form>

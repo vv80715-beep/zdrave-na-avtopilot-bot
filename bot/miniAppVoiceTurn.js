@@ -2,6 +2,7 @@
 
 const crypto = require('node:crypto');
 const { createCaptureContext } = require('./miniAppTextTurn');
+const { runMiniAppTurn } = require('./miniAppTurnIdempotency');
 
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -18,7 +19,7 @@ function createMiniAppVoiceTurnHandler({
     throw new TypeError('Mini App voice-turn dependencies are required.');
   }
 
-  return async function processMiniAppVoiceTurn({ userId, audio, mode = 'text', turnId, prompt = '' }) {
+  async function executeMiniAppVoiceTurn({ userId, audio, mode = 'text', turnId, prompt = '' }) {
     const id = String(userId);
     if (!/^[1-9]\d{4,19}$/.test(id) || !Buffer.isBuffer(audio) ||
         audio.length < 44 || audio.length > 4 * 1024 * 1024 ||
@@ -60,17 +61,33 @@ function createMiniAppVoiceTurnHandler({
     }
     const message = prompt.trim() ? `${transcript}\n\n${prompt.trim()}` : transcript;
     ctx.message.text = message;
-    await askEli(ctx, message, { status, mode, spokenInput: true, rethrowProviderErrors: true });
+    await askEli(ctx, message, {
+      status, mode, spokenInput: true, rethrowProviderErrors: true, captureTextReply: true,
+    });
     if (ctx.media) {
       return {
         transcript,
-        reply: ctx.media.type === 'audio' ? 'Гласов отговор от Ели.' : 'Видео отговор от Ели.',
+        reply: ctx.textReply || (ctx.media.type === 'audio' ? 'Гласов отговор от Ели.' : 'Видео отговор от Ели.'),
         kind: ctx.media.type === 'audio' ? 'voice' : 'avatar',
         media: ctx.media,
       };
     }
     if (!ctx.replies.length) throw new Error('voice_turn_invalid_delivery_count');
     return { transcript, reply: ctx.replies.at(-1), kind: 'eli_text' };
+  }
+
+  return function processMiniAppVoiceTurn(input) {
+    const audio = Buffer.isBuffer(input.audio) ? input.audio : Buffer.alloc(0);
+    const fingerprint = crypto.createHash('sha256')
+      .update(audio)
+      .update(JSON.stringify([input.mode || 'text', input.prompt || '']))
+      .digest('hex');
+    return runMiniAppTurn({
+      userId: input.userId,
+      turnId: input.turnId,
+      fingerprint: `voice:${fingerprint}`,
+      work: () => executeMiniAppVoiceTurn(input),
+    });
   };
 }
 
