@@ -404,6 +404,8 @@ function Chat() {
   const [ambiguousAttachmentId, setAmbiguousAttachmentId] = useState<number | null>(null);
   const [chatEntitlement, setChatEntitlement] = useState<MiniAppProfileSnapshot['entitlement'] | null>(null);
   const [selectedMode, setSelectedMode] = useState<MiniAppTurnMode>(preferredMode);
+  const selectedModeRef = useRef(selectedMode);
+  selectedModeRef.current = selectedMode;
   const [sending, setSending] = useState(false);
   const [stageMode, setStageMode] = useState<'local' | 'checking' | 'live' | 'unavailable'>('local');
   const [messages, setMessages] = useState<LocalChatMessage[]>([]);
@@ -445,7 +447,7 @@ function Chat() {
       if (current) {
         setChatEntitlement(snapshot.entitlement);
         const nextMode = snapshot.entitlement.backendVerified &&
-          snapshot.entitlement.allowedModes.includes(selectedMode) ? selectedMode : 'text';
+          snapshot.entitlement.allowedModes.includes(selectedModeRef.current) ? selectedModeRef.current : 'text';
         setSelectedMode(nextMode);
         setPreferredMode(nextMode);
         setStageMode('live');
@@ -460,7 +462,7 @@ function Chat() {
       }
     });
     return () => { current = false; };
-  }, [canUseTelegramSession, signedInitData, selectedMode, setPreferredMode]);
+  }, [canUseTelegramSession, signedInitData]);
 
   useLayoutEffect(() => {
     if (!hasMountedConversation.current) {

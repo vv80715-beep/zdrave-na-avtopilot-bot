@@ -363,9 +363,27 @@ export async function sendMiniAppVoiceTurn(
   }, fetchFn, 280_000);
   const body = await responseBody(response);
   if (!response.ok) throw new MiniAppStageError(safeErrorCode(body), response.status);
-  const media = body.media && typeof body.media === "object" && !Array.isArray(body.media)
-    ? body.media as MiniAppVoiceTurnResult["media"]
-    : undefined;
+  let media: MiniAppVoiceTurnResult["media"];
+  if (body.media !== undefined) {
+    if (!body.media || typeof body.media !== "object" || Array.isArray(body.media)) {
+      throw new MiniAppStageError("invalid_response", response.status);
+    }
+    const value = body.media as Record<string, unknown>;
+    if (value.type === "audio" && value.mimeType === "audio/ogg" &&
+        typeof value.data === "string" && value.data.length <= 8_000_000 &&
+        /^[A-Za-z0-9+/]+={0,2}$/.test(value.data)) {
+      media = { type: "audio", mimeType: "audio/ogg", data: value.data };
+    } else if (value.type === "video" && typeof value.url === "string") {
+      try {
+        if (new URL(value.url).protocol !== "https:") throw new Error();
+      } catch {
+        throw new MiniAppStageError("invalid_response", response.status);
+      }
+      media = { type: "video", url: value.url };
+    } else {
+      throw new MiniAppStageError("invalid_response", response.status);
+    }
+  }
   if (typeof body.transcript !== "string" || typeof body.reply !== "string" ||
       !["eli_text", "voice", "avatar", "access_denied", "transcription_unclear"].includes(String(body.kind)) ||
       (media && !["audio", "video"].includes(media.type))) {
