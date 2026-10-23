@@ -345,7 +345,7 @@ function Chat() {
     return 'stageNetworkError';
   }
 
-  async function submitDemoMessage(event?: FormEvent<HTMLFormElement>) {
+  async function submitMiniAppMessage(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
     if (sendLock.current || sending) return;
     if (!draft.trim() && !media.attachment) {
@@ -431,8 +431,7 @@ function Chat() {
           <div className="chat-top">
             <div className="coach-ident"><EliAvatar className="coach-avatar" alt={t('avatarChatAlt')} testId="image-eli-chat" /><span><strong>{t('eliName')}</strong><small>{t(stageMode === 'live' ? 'ownerLiveSubtitle' : 'coachSubtitle')}</small></span></div>
             <span className="local-chip"><i className="prototype-dot" /> {t(
-              stageMode === 'live' ? 'ownerAiTest' :
-                stageMode === 'mock' ? 'ownerStageMock' :
+              stageMode === 'live' ? 'botTextEngine' :
                   stageMode === 'checking' ? 'stageChecking' :
                     stageMode === 'unavailable' ? 'stageUnavailableShort' : 'localDemo'
             )}</span>
@@ -560,8 +559,8 @@ function Chat() {
           )}
           {media.errorKey && <p className="media-error" role="alert">{t(media.errorKey)}</p>}
           {sending && <div className="local-notice" role="status" aria-live="polite">{t('stageSending')}</div>}
-          {stageError && <div className="stage-error" role="alert" data-testid="status-stage-error"><span>{t(stageError)}</span>{stageErrorCanRetry ? <button type="button" onClick={() => void submitDemoMessage()} disabled={sending || stageMode === 'checking'} data-testid="button-stage-retry">{t('retry')}</button> : stageError !== 'stageProviderUncertain' ? <button type="button" onClick={() => { setStageError(null); setStageErrorCanRetry(false); }} data-testid="button-stage-dismiss">{t('dismiss')}</button> : null}</div>}
-          <form className="composer" onSubmit={(event) => void submitDemoMessage(event)}>
+          {stageError && <div className="stage-error" role="alert" data-testid="status-stage-error"><span>{t(stageError)}</span>{stageErrorCanRetry ? <button type="button" onClick={() => void submitMiniAppMessage()} disabled={sending || stageMode === 'checking'} data-testid="button-stage-retry">{t('retry')}</button> : <button type="button" onClick={() => { setStageError(null); setStageErrorCanRetry(false); }} data-testid="button-stage-dismiss">{t('dismiss')}</button>}</div>}
+          <form className="composer" onSubmit={(event) => void submitMiniAppMessage(event)}>
             <div className="attachment-menu-wrap">
               <button
                 type="button"
