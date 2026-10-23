@@ -383,7 +383,8 @@ export function registerMiniAppMediaRoutes(
   const tempRoot = options.tempRoot ?? os.tmpdir();
 
   const handle = (kind: MediaKind): RequestHandler => async (req, res): Promise<void> => {
-    const liveVoiceTurn = kind === "voice" && voiceTurnEnabled && options.processVoiceTurn;
+    const processVoiceTurn = options.processVoiceTurn;
+    const liveVoiceTurn = kind === "voice" && voiceTurnEnabled && typeof processVoiceTurn === "function";
     if (!processor && !liveVoiceTurn) {
       sendMediaError(res, 503, "media_ai_unavailable");
       return;
@@ -419,9 +420,11 @@ export function registerMiniAppMediaRoutes(
           if (liveVoiceTurn) {
             const userId = res.locals.miniAppUserId;
             if (typeof userId !== "string") fail(401, "telegram_auth_required");
-            const result = await options.processVoiceTurn({
+            const audio = await readFile(normalizedPath);
+            if (audio.length > 4 * 1024 * 1024) fail(413, "normalized_audio_too_large");
+            const result = await processVoiceTurn({
               userId,
-              audio: await readFile(normalizedPath),
+              audio,
               mode: upload.mode,
               turnId: upload.turnId,
               prompt: upload.prompt,

@@ -173,10 +173,23 @@ export const MiniAppVoiceUploadLanguage = {
   en: 'en',
 } as const;
 
+export type MiniAppVoiceUploadMode = typeof MiniAppVoiceUploadMode[keyof typeof MiniAppVoiceUploadMode];
+
+
+export const MiniAppVoiceUploadMode = {
+  text: 'text',
+  voice: 'voice',
+  avatar: 'avatar',
+} as const;
+
 export interface MiniAppVoiceUpload {
   /** One supported audio recording up to 15 MiB and 90 seconds */
   file: Blob;
   language?: MiniAppVoiceUploadLanguage;
+  mode?: MiniAppVoiceUploadMode;
+  turnId?: string;
+  /** @maxLength 1200 */
+  prompt?: string;
 }
 
 export interface MiniAppImageResult {
@@ -185,10 +198,26 @@ export interface MiniAppImageResult {
   staged: true;
 }
 
+export type MiniAppVoiceResultKind = typeof MiniAppVoiceResultKind[keyof typeof MiniAppVoiceResultKind];
+
+
+export const MiniAppVoiceResultKind = {
+  eli_text: 'eli_text',
+  voice: 'voice',
+  avatar: 'avatar',
+  access_denied: 'access_denied',
+  transcription_unclear: 'transcription_unclear',
+} as const;
+
+export type MiniAppVoiceResultMedia = { [key: string]: unknown };
+
 export interface MiniAppVoiceResult {
   transcript: string;
   reply: string;
   mediaType: 'voice';
-  staged: true;
+  staged: boolean;
+  demo: boolean;
+  kind: MiniAppVoiceResultKind;
+  media?: MiniAppVoiceResultMedia;
 }
 

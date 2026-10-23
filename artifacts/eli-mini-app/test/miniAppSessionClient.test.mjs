@@ -5,6 +5,7 @@ import {
   getOwnerTextAiStatus,
   MiniAppStageError,
   sendMiniAppTextTurn,
+  sendMiniAppVoiceTurn,
   mutateMiniAppRecord,
   sendOwnerDemoChat,
   sendOwnerTextAi,
@@ -140,6 +141,41 @@ test("image upload uses same-origin credentials and verifies the mock-only respo
   assert.equal(requests[1].url, "/api/mini-app/media/image");
   assert.equal(requests[1].init.credentials, "same-origin");
   assert.ok(requests[1].init.body instanceof FormData);
+});
+
+test("voice turn uploads multipart audio with session auth and returns bot reply media", async () => {
+  const requests = [];
+  const blob = new Blob([new Uint8Array([0x1a, 0x45, 0xdf, 0xa3])], { type: "audio/webm" });
+  const result = await sendMiniAppVoiceTurn(
+    initData, blob, "sample.webm", "bg", "voice", "моля, кратко",
+    async (url, init) => {
+      requests.push({ url: String(url), init });
+      return String(url).endsWith("/session")
+        ? new Response(JSON.stringify({ ok: true, expiresAt: "2026-10-22T00:10:00.000Z" }))
+        : new Response(JSON.stringify({
+          transcript: "Синтетична фраза.",
+          reply: "Гласов отговор от Ели.",
+          kind: "voice",
+          mediaType: "voice",
+          staged: false,
+          demo: false,
+          media: { type: "audio", mimeType: "audio/ogg", data: "c3ludGhldGlj" },
+        }));
+    },
+  );
+  assert.equal(result.kind, "voice");
+  assert.equal(result.transcript, "Синтетична фраза.");
+  assert.equal(result.media?.type, "audio");
+  assert.deepEqual(requests.map(({ url }) => url), [
+    "/api/mini-app/session", "/api/mini-app/media/voice",
+  ]);
+  assert.equal(requests[1].init.credentials, "same-origin");
+  assert.ok(requests[1].init.body instanceof FormData);
+  assert.equal(requests[1].init.body.get("mode"), "voice");
+  assert.equal(requests[1].init.body.get("language"), "bg");
+  assert.equal(requests[1].init.body.get("prompt"), "моля, кратко");
+  assert.match(requests[1].init.body.get("turnId"), /^[0-9a-f-]{36}$/i);
+  assert.equal(requests[1].init.body.get("file").type, "audio/webm");
 });
 
 test("empty signed initData is rejected before any request", async () => {

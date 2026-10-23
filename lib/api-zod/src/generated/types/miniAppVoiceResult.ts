@@ -5,10 +5,15 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { MiniAppVoiceResultKind } from './miniAppVoiceResultKind';
+import type { MiniAppVoiceResultMedia } from './miniAppVoiceResultMedia';
 
 export interface MiniAppVoiceResult {
   transcript: string;
   reply: string;
   mediaType: 'voice';
-  staged: true;
+  staged: boolean;
+  demo: boolean;
+  kind: MiniAppVoiceResultKind;
+  media?: MiniAppVoiceResultMedia;
 }

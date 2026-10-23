@@ -31,5 +31,8 @@ export * from './miniAppTextTurnResponseMedia';
 export * from './miniAppTextTurnResponseMediaMimeType';
 export * from './miniAppTextTurnResponseMediaType';
 export * from './miniAppVoiceResult';
+export * from './miniAppVoiceResultKind';
+export * from './miniAppVoiceResultMedia';
 export * from './miniAppVoiceUpload';
 export * from './miniAppVoiceUploadLanguage';
+export * from './miniAppVoiceUploadMode';

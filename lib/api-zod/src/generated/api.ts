@@ -123,19 +123,30 @@ export const PostMiniAppOwnerImageResponse = zod.object({
 
 
 /**
- * Disabled by default. Requires the existing owner session and exact configured origin. No TTS or avatar output is used.
- * @summary Transcribe one voice recording and return a text-only staging response
+ * Disabled unless explicitly enabled. Production identity and entitlements are checked server-side; development staging remains owner-only. Audio is temporary and removed after processing.
+ * @summary Send one voice recording through the authenticated bot voice-turn path
  */
+export const postMiniAppOwnerVoiceBodyModeDefault = `text`;
+export const postMiniAppOwnerVoiceBodyPromptMax = 1200;
+
+
+
 export const PostMiniAppOwnerVoiceBody = zod.object({
   "file": zod.instanceof(File).describe('One supported audio recording up to 15 MiB and 90 seconds'),
-  "language": zod.enum(['bg', 'en']).optional()
+  "language": zod.enum(['bg', 'en']).optional(),
+  "mode": zod.enum(['text', 'voice', 'avatar']).default(postMiniAppOwnerVoiceBodyModeDefault),
+  "turnId": zod.string().uuid().optional(),
+  "prompt": zod.string().max(postMiniAppOwnerVoiceBodyPromptMax).optional()
 })
 
 export const PostMiniAppOwnerVoiceResponse = zod.object({
   "transcript": zod.string(),
   "reply": zod.string(),
   "mediaType": zod.literal("voice"),
-  "staged": zod.boolean()
+  "staged": zod.boolean(),
+  "demo": zod.boolean(),
+  "kind": zod.enum(['eli_text', 'voice', 'avatar', 'access_denied', 'transcription_unclear']),
+  "media": zod.record(zod.string(), zod.unknown()).optional()
 })
 
 

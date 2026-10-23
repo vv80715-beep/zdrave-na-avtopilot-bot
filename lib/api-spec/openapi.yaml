@@ -398,7 +398,7 @@ components:
         prompt:
           type: string
           maxLength: 1200
-      required: [file]
+      required: [file, turnId]
     MiniAppImageResult:
       type: object
       properties:

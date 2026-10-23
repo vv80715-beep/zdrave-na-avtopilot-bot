@@ -6,9 +6,14 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { MiniAppVoiceUploadLanguage } from './miniAppVoiceUploadLanguage';
+import type { MiniAppVoiceUploadMode } from './miniAppVoiceUploadMode';
 
 export interface MiniAppVoiceUpload {
   /** One supported audio recording up to 15 MiB and 90 seconds */
   file: Blob;
   language?: MiniAppVoiceUploadLanguage;
+  mode?: MiniAppVoiceUploadMode;
+  turnId?: string;
+  /** @maxLength 1200 */
+  prompt?: string;
 }

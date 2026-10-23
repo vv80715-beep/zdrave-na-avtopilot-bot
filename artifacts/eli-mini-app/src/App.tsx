@@ -392,7 +392,7 @@ function Chat() {
           : await sendMiniAppTextTurn(signedInitData, text, fetch, selectedMode);
         const deliveredAttachment = media.detachForMessage();
         const visibleUserText = sendVoice
-          ? (result.transcript || t('voiceAttachment'))
+          ? (('transcript' in result && result.transcript) || t('voiceAttachment'))
           : text;
         setMessages((current) => [
           ...current,

@@ -511,14 +511,23 @@ export const getPostMiniAppOwnerVoiceUrl = () => {
 }
 
 /**
- * Disabled by default. Requires the existing owner session and exact configured origin. No TTS or avatar output is used.
- * @summary Transcribe one voice recording and return a text-only staging response
+ * Disabled unless explicitly enabled. Production identity and entitlements are checked server-side; development staging remains owner-only. Audio is temporary and removed after processing.
+ * @summary Send one voice recording through the authenticated bot voice-turn path
  */
 export const postMiniAppOwnerVoice = async (miniAppVoiceUpload: MiniAppVoiceUpload, options?: RequestInit): Promise<MiniAppVoiceResult> => {
     const formData = new FormData();
 formData.append(`file`, miniAppVoiceUpload.file);
 if(miniAppVoiceUpload.language !== undefined) {
  formData.append(`language`, miniAppVoiceUpload.language);
+ }
+if(miniAppVoiceUpload.mode !== undefined) {
+ formData.append(`mode`, miniAppVoiceUpload.mode);
+ }
+if(miniAppVoiceUpload.turnId !== undefined) {
+ formData.append(`turnId`, miniAppVoiceUpload.turnId);
+ }
+if(miniAppVoiceUpload.prompt !== undefined) {
+ formData.append(`prompt`, miniAppVoiceUpload.prompt);
  }
 
   return customFetch<MiniAppVoiceResult>(getPostMiniAppOwnerVoiceUrl(),
@@ -565,7 +574,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type PostMiniAppOwnerVoiceMutationError = ErrorType<void>
 
     /**
- * @summary Transcribe one voice recording and return a text-only staging response
+ * @summary Send one voice recording through the authenticated bot voice-turn path
  */
 export const usePostMiniAppOwnerVoice = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postMiniAppOwnerVoice>>, TError,{data: BodyType<MiniAppVoiceUpload>}, TContext>, request?: SecondParameter<typeof customFetch>}
