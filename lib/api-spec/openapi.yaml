@@ -108,6 +108,39 @@ paths:
           description: Request is not from the configured origin
         "503":
           description: Internal bot bridge, legacy store, or entitlement service unavailable
+  /mini-app/mutations:
+    post:
+      operationId: postMiniAppMutation
+      tags: [mini-app]
+      summary: Apply one validated mutation through the authenticated bot-owned writer
+      description: The Telegram ID is derived from the owner session. The API forwards the mutation over a short-lived signed loopback claim; only the running bot process accesses existing stores.
+      security:
+        - MiniAppSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MiniAppMutationInput"
+      responses:
+        "200":
+          description: The bot-owned record mutation completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniAppMutationResponse"
+        "400":
+          description: Invalid mutation
+        "401":
+          description: Valid owner session required
+        "403":
+          description: Request is not from the configured origin or operation is not allowed for this role
+        "404":
+          description: Profile or record not found
+        "422":
+          description: Health log text did not contain a recognized event
+        "503":
+          description: Bot-owned writer unavailable
   /mini-app/media/image:
     post:
       operationId: postMiniAppOwnerImage
@@ -251,6 +284,57 @@ components:
           type: object
           additionalProperties: true
       required: [mode, snapshot]
+    MiniAppMutationInput:
+      type: object
+      properties:
+        action:
+          type: string
+          enum:
+            - profile.update
+            - memory.update
+            - health.append
+            - checkin.save
+            - checkin.delete
+            - reminder.create
+            - reminder.update
+            - reminder.delete
+        payload:
+          type: object
+          additionalProperties: true
+      required: [action, payload]
+      additionalProperties: false
+    MiniAppMutationResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          const: true
+        action:
+          type: string
+          enum:
+            - profile.update
+            - memory.update
+            - health.append
+            - checkin.save
+            - checkin.delete
+            - reminder.create
+            - reminder.update
+            - reminder.delete
+        record:
+          type: object
+          additionalProperties: true
+        records:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        date:
+          type: string
+          format: date
+        id:
+          type: string
+      required: [ok, action]
+      additionalProperties: true
     MiniAppTextTurnResponse:
       type: object
       properties:

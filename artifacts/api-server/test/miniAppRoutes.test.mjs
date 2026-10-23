@@ -1040,6 +1040,40 @@ test("API signs the verified session subject for the loopback bot bridge", async
   }
 });
 
+test("Mini App mutation forwards only validated action and payload with a mutation-bound claim", async () => {
+  const bridgeSecret = "synthetic-api-bridge-key-with-more-than-32-characters";
+  const { verifyClaim } = require("../../../bot/miniAppBridgeAuth.js");
+  let call;
+  const h = await serverHarness({
+    bridgeSecret,
+    bridgeFetch: async (url, init) => {
+      const claim = init.headers.Authorization.slice("Bearer ".length);
+      const verified = verifyClaim(claim, bridgeSecret, Math.floor(Date.now() / 1000));
+      call = { url: String(url), verified, body: JSON.parse(init.body) };
+      return new Response(JSON.stringify({
+        ok: true, action: "profile.update", record: { age: 40 },
+      }));
+    },
+  });
+  try {
+    const login = await h.request("/session", { initData: signedInitData() });
+    const cookie = login.headers.get("set-cookie").split(";")[0];
+    const payload = { action: "profile.update", payload: { field: "age", value: "40" } };
+    const response = await h.request("/mutations", payload, { cookie });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      ok: true, action: "profile.update", record: { age: 40 },
+    });
+    assert.equal(call.url, "http://127.0.0.1:3001/internal/mini-app/mutate");
+    assert.equal(call.verified.userId, OWNER_ID);
+    assert.equal(call.verified.path, "/internal/mini-app/mutate");
+    assert.deepEqual(call.body, payload);
+    assert.equal("userId" in call.body, false);
+  } finally {
+    await h.close();
+  }
+});
+
 test("owner chat requires the protected owner session before calling the bot bridge", async () => {
   let forwarded;
   const h = await serverHarness({

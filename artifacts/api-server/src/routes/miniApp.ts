@@ -9,6 +9,8 @@ import {
   ReadMiniAppProfileSnapshotResponse,
   PostMiniAppTextTurnBody,
   PostMiniAppTextTurnResponse,
+  PostMiniAppMutationBody,
+  PostMiniAppMutationResponse,
 } from "../../../../lib/api-zod/src/generated/api.ts";
 import { validateTelegramInitData } from "../lib/telegramInitData.mjs";
 // @ts-expect-error Shared HMAC protocol; claims are signed from verified session subjects only.
@@ -524,6 +526,45 @@ export function createMiniAppRouter(
     } catch (error) {
       const timeout = error instanceof Error && error.name === "TimeoutError";
       sendError(res, timeout ? 504 : 503, timeout ? "text_engine_timeout" : "text_engine_unavailable");
+    }
+  });
+
+  router.post("/mutations", requireOwnerSession, async (req, res): Promise<void> => {
+    const parsed = PostMiniAppMutationBody.safeParse(req.body);
+    if (!parsed.success || !bridgeSecret.trim() || bridgeSecret.trim().length < 32) {
+      sendError(res, parsed.success ? 503 : 400, parsed.success ? "mutation_unavailable" : "invalid_request");
+      return;
+    }
+    try {
+      const userId = res.locals.miniAppOwnerId as string;
+      const claim = (miniAppBridgeAuth as {
+        createClaim: (userId: string, secret: string, now?: number, path?: string) => string;
+      }).createClaim(userId, bridgeSecret, undefined, "/internal/mini-app/mutate");
+      const response = await bridgeFetch("http://127.0.0.1:3001/internal/mini-app/mutate", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${claim}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(parsed.data),
+        cache: "no-store",
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      });
+      let body: unknown;
+      try { body = await response.json(); } catch { body = null; }
+      if (!response.ok) {
+        const code = body && typeof body === "object" && "error" in body &&
+          typeof body.error === "string" && /^[a-z0-9_]{1,48}$/.test(body.error)
+          ? body.error : "mutation_unavailable";
+        const status = [400, 403, 404, 422].includes(response.status) ? response.status : 503;
+        sendError(res, status, code);
+        return;
+      }
+      res.json(PostMiniAppMutationResponse.parse(body));
+    } catch {
+      sendError(res, 503, "mutation_unavailable");
     }
   });
 

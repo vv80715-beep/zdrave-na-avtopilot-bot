@@ -106,6 +106,7 @@ const coach = require('./commands/coach');
 const reminders = require('./commands/reminders');
 const { startBotRuntimeWithHealthServer } = require('./startup');
 const { createMiniAppBridgeRouter } = require('./miniAppBridge');
+const { processMiniAppMutation } = require('./miniAppMutations');
 const { createMiniAppSnapshotReader } = require('./miniAppReadModel');
 const { createMiniAppTextTurnHandler } = require('./miniAppTextTurn');
 
@@ -913,6 +914,7 @@ app.use(express.json());
 // independently requires loopback + a signed, short-lived internal claim.
 app.use(createMiniAppBridgeRouter({
   processTextTurn: processMiniAppTextTurn,
+  processMutation: processMiniAppMutation,
   readSnapshot: createMiniAppSnapshotReader({ getRecentHistory: ownerRecentTurns }),
 }));
 

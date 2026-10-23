@@ -2,6 +2,7 @@ const { Scenes, Markup } = require('telegraf');
 const { saveCheckin, getTodayCheckin } = require('../checkinStorage');
 const { setMotivation, setLastWorkout } = require('../memoryStorage');
 const { isOwner } = require('../adminGuard');
+const { validateCheckinAnswers } = require('../checkinInput');
 
 const YES_NO = Markup.keyboard([['✅ Да', '❌ Не']]).oneTime().resize();
 const SCALE_10 = Markup.keyboard([
@@ -123,14 +124,14 @@ const checkinWizard = new Scenes.WizardScene(
     }
     ctx.wizard.state.energy = energy;
 
-    saveCheckin(ctx.from.id, {
+    saveCheckin(ctx.from.id, validateCheckinAnswers({
       water: ctx.wizard.state.water,
       trained: ctx.wizard.state.trained,
       nutrition: ctx.wizard.state.nutrition,
       sleep: ctx.wizard.state.sleep,
       mood: ctx.wizard.state.mood,
       energy,
-    });
+    }));
 
     // Update long-term memory from this check-in (never for the owner).
     if (!isOwner(ctx)) {

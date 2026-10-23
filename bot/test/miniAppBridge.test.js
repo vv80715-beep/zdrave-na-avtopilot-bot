@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const express = require('express');
 const test = require('node:test');
-const { createClaim, verifyClaim, CLAIM_PATH, TEXT_TURN_PATH } = require('../miniAppBridgeAuth');
+const { createClaim, verifyClaim, CLAIM_PATH, TEXT_TURN_PATH, MUTATION_PATH } = require('../miniAppBridgeAuth');
 const { createMiniAppBridgeRouter } = require('../miniAppBridge');
 const { createMiniAppSnapshotReader } = require('../miniAppReadModel');
 
@@ -11,7 +11,7 @@ const OWNER = '123456789';
 const CLIENT_ONE = '987654321';
 const CLIENT_TWO = '876543219';
 
-async function listen(readSnapshot, processTextTurn) {
+async function listen(readSnapshot, processTextTurn, processMutation) {
   const app = express();
   app.use(express.json());
   app.use(createMiniAppBridgeRouter({
@@ -19,6 +19,7 @@ async function listen(readSnapshot, processTextTurn) {
     now: () => NOW,
     readSnapshot,
     processTextTurn,
+    processMutation,
   }));
   const server = app.listen(0, '127.0.0.1');
   await new Promise((resolve, reject) => {
@@ -43,6 +44,30 @@ async function listen(readSnapshot, processTextTurn) {
     },
   };
 }
+
+test('internal mutation bridge uses a separate path-bound claim and bot-derived identity', async () => {
+  let received;
+  const server = await listen(async () => ({}), undefined, async (input) => {
+    received = input;
+    return { action: input.action, record: { field: 'age', value: 40 } };
+  });
+  try {
+    const token = createClaim(OWNER, SECRET, NOW, MUTATION_PATH);
+    const response = await server.request(token, {
+      action: 'profile.update', payload: { field: 'age', value: '40' },
+    }, MUTATION_PATH);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      ok: true, action: 'profile.update', record: { field: 'age', value: 40 },
+    });
+    assert.deepEqual(received, {
+      userId: OWNER, action: 'profile.update', payload: { field: 'age', value: '40' },
+    });
+    assert.equal((await server.request(token, {}, MUTATION_PATH)).status, 401);
+  } finally {
+    await server.close();
+  }
+});
 
 test('internal bridge requires valid short-lived signed claims and rejects replay', async () => {
   let calls = 0;

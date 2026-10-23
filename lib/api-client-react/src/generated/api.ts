@@ -23,6 +23,8 @@ import type {
   HealthStatus,
   MiniAppImageResult,
   MiniAppImageUpload,
+  MiniAppMutationInput,
+  MiniAppMutationResponse,
   MiniAppProfileRequest,
   MiniAppProfileResponse,
   MiniAppSession,
@@ -348,6 +350,77 @@ export const useReadMiniAppProfileSnapshot = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getReadMiniAppProfileSnapshotMutationOptions(options));
+    }
+
+export const getPostMiniAppMutationUrl = () => {
+
+
+
+
+  return `/api/mini-app/mutations`
+}
+
+/**
+ * The Telegram ID is derived from the owner session. The API forwards the mutation over a short-lived signed loopback claim; only the running bot process accesses existing stores.
+ * @summary Apply one validated mutation through the authenticated bot-owned writer
+ */
+export const postMiniAppMutation = async (miniAppMutationInput: MiniAppMutationInput, options?: RequestInit): Promise<MiniAppMutationResponse> => {
+
+  return customFetch<MiniAppMutationResponse>(getPostMiniAppMutationUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(miniAppMutationInput)
+  }
+);}
+
+
+
+
+export const getPostMiniAppMutationMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postMiniAppMutation>>, TError,{data: BodyType<MiniAppMutationInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof postMiniAppMutation>>, TError,{data: BodyType<MiniAppMutationInput>}, TContext> => {
+
+const mutationKey = ['postMiniAppMutation'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof postMiniAppMutation>>, {data: BodyType<MiniAppMutationInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  postMiniAppMutation(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PostMiniAppMutationMutationResult = NonNullable<Awaited<ReturnType<typeof postMiniAppMutation>>>
+    export type PostMiniAppMutationMutationBody = BodyType<MiniAppMutationInput>
+    export type PostMiniAppMutationMutationError = ErrorType<void>
+
+    /**
+ * @summary Apply one validated mutation through the authenticated bot-owned writer
+ */
+export const usePostMiniAppMutation = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postMiniAppMutation>>, TError,{data: BodyType<MiniAppMutationInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof postMiniAppMutation>>,
+        TError,
+        {data: BodyType<MiniAppMutationInput>},
+        TContext
+      > => {
+      return useMutation(getPostMiniAppMutationMutationOptions(options));
     }
 
 export const getPostMiniAppOwnerImageUrl = () => {

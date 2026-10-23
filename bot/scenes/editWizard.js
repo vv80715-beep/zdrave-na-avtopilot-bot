@@ -3,6 +3,7 @@ const { FIELD_LABELS, FIELD_CHOICES } = require('../constants');
 const { getUser, saveUser } = require('../storage');
 const { addWeightEntry } = require('../memoryStorage');
 const { isOwner } = require('../adminGuard');
+const { validateProfileField } = require('../profileInput');
 
 const EDITABLE_FIELDS = Object.keys(FIELD_LABELS);
 
@@ -84,45 +85,18 @@ const editWizard = new Scenes.WizardScene(
     }
 
     let newValue;
-
-    if (FIELD_CHOICES[field]) {
-      if (field === 'gender' && text === 'Пропусни') {
-        newValue = null;
-      } else if (!FIELD_CHOICES[field].includes(text)) {
-        await ctx.reply('Моля, избери валидна опция от менюто.');
-        return;
-      } else {
-        newValue = text;
-      }
-    } else if (field === 'age') {
-      const val = parseInt(text, 10);
-      if (isNaN(val) || val < 10 || val > 120) {
-        await ctx.reply('Моля, въведи валидна възраст (число между 10 и 120).');
-        return;
-      }
-      newValue = val;
-    } else if (field === 'height') {
-      const val = parseFloat(text);
-      if (isNaN(val) || val < 100 || val > 250) {
-        await ctx.reply('Моля, въведи валидна височина (100–250 см).');
-        return;
-      }
-      newValue = val;
-    } else if (field === 'weight') {
-      const val = parseFloat(text);
-      if (isNaN(val) || val < 20 || val > 500) {
-        await ctx.reply('Моля, въведи валидно тегло (20–500 кг).');
-        return;
-      }
-      newValue = val;
-    } else if (field === 'foodPreferences' || field === 'medicalNotes') {
-      newValue = !text || text.toLowerCase() === 'нямам' ? null : text;
-    } else {
-      if (!text) {
-        await ctx.reply('Стойността не може да е празна. Моля, опитай отново.');
-        return;
-      }
-      newValue = text;
+    try {
+      newValue = validateProfileField(field, text);
+    } catch {
+      const errors = {
+        age: 'Моля, въведи валидна възраст (число между 10 и 120).',
+        height: 'Моля, въведи валидна височина (100–250 см).',
+        weight: 'Моля, въведи валидно тегло (20–500 кг).',
+      };
+      await ctx.reply(errors[field] || (FIELD_CHOICES[field]
+        ? 'Моля, избери валидна опция от менюто.'
+        : 'Стойността не може да е празна. Моля, опитай отново.'));
+      return;
     }
 
     profile[field] = newValue;

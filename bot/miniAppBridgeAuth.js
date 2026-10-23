@@ -4,7 +4,8 @@ const crypto = require('crypto');
 
 const CLAIM_PATH = '/internal/mini-app/profile-snapshot';
 const TEXT_TURN_PATH = '/internal/mini-app/text-turn';
-const CLAIM_PATHS = new Set([CLAIM_PATH, TEXT_TURN_PATH]);
+const MUTATION_PATH = '/internal/mini-app/mutate';
+const CLAIM_PATHS = new Set([CLAIM_PATH, TEXT_TURN_PATH, MUTATION_PATH]);
 const CLOCK_SKEW_SECONDS = 30;
 
 function bridgeKey(secret) {
@@ -60,4 +61,4 @@ function verifyClaim(token, secret, nowSeconds = Math.floor(Date.now() / 1000)) 
   }
 }
 
-module.exports = { CLAIM_PATH, TEXT_TURN_PATH, createClaim, verifyClaim };
+module.exports = { CLAIM_PATH, TEXT_TURN_PATH, MUTATION_PATH, createClaim, verifyClaim };

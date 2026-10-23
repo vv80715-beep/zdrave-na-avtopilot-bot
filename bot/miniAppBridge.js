@@ -1,7 +1,7 @@
 'use strict';
 
 const express = require('express');
-const { CLAIM_PATH, TEXT_TURN_PATH, verifyClaim } = require('./miniAppBridgeAuth');
+const { CLAIM_PATH, TEXT_TURN_PATH, MUTATION_PATH, verifyClaim } = require('./miniAppBridgeAuth');
 const { readMiniAppSnapshot } = require('./miniAppReadModel');
 
 function isLoopback(address) {
@@ -13,6 +13,7 @@ function createMiniAppBridgeRouter({
   now = () => Math.floor(Date.now() / 1000),
   readSnapshot = readMiniAppSnapshot,
   processTextTurn,
+  processMutation,
 } = {}) {
   const router = express.Router();
   const usedNonces = new Map();
@@ -50,12 +51,16 @@ function createMiniAppBridgeRouter({
     } catch (error) {
       if (error?.code === 'owner_only') {
         res.status(403).json({ error: 'owner_only' });
+      } else if (error?.code === 'profile_not_found' || error?.code === 'record_not_found') {
+        res.status(404).json({ error: error.code });
       } else if (error?.code === 'invalid_request') {
         res.status(400).json({ error: 'invalid_request' });
+      } else if (error?.code === 'health_event_not_recognized') {
+        res.status(422).json({ error: error.code });
       } else {
         res.status(503).json({ error: expectedPath === CLAIM_PATH
           ? 'legacy_store_unavailable'
-          : 'text_turn_unavailable' });
+          : expectedPath === MUTATION_PATH ? 'mutation_unavailable' : 'text_turn_unavailable' });
       }
     }
   }
@@ -84,6 +89,21 @@ function createMiniAppBridgeRouter({
         mode: body.mode,
         turnId: body.turnId,
       });
+    });
+  });
+
+  router.post(MUTATION_PATH, async (req, res) => {
+    await authorizeAndRun(req, res, MUTATION_PATH, async (userId, body) => {
+      if (!body || typeof body !== 'object' || Array.isArray(body) ||
+          Object.keys(body).some((key) => !['action', 'payload'].includes(key)) ||
+          typeof body.action !== 'string' || !body.payload ||
+          typeof body.payload !== 'object' || Array.isArray(body.payload)) {
+        const error = new Error('invalid_request');
+        error.code = 'invalid_request';
+        throw error;
+      }
+      if (typeof processMutation !== 'function') throw new Error('mini_app_mutation_unavailable');
+      return processMutation({ userId, action: body.action, payload: body.payload });
     });
   });
 

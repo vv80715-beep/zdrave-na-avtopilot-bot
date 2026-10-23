@@ -1,3 +1,5 @@
+import type { MiniAppMutationInput, MiniAppMutationResponse } from "@workspace/api-client-react";
+
 export type MiniAppLanguage = "bg" | "en";
 export type MiniAppTurnMode = "text" | "voice" | "avatar";
 export type OwnerTextAiMode = "mock" | "test_ai";
@@ -134,6 +136,25 @@ export async function getMiniAppProfileSnapshot(
     throw new MiniAppStageError("invalid_response", response.status);
   }
   return body.snapshot as MiniAppProfileSnapshot;
+}
+
+export async function mutateMiniAppRecord(
+  initData: string,
+  mutation: MiniAppMutationInput,
+  fetchFn: FetchLike = fetch,
+): Promise<MiniAppMutationResponse> {
+  await ensureOwnerSession(initData, fetchFn);
+  const response = await sameOriginRequest("/api/mini-app/mutations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(mutation),
+  }, fetchFn);
+  const body = await responseBody(response);
+  if (!response.ok) throw new MiniAppStageError(safeErrorCode(body), response.status);
+  if (body.ok !== true || body.action !== mutation.action) {
+    throw new MiniAppStageError("invalid_response", response.status);
+  }
+  return body as MiniAppMutationResponse;
 }
 
 export async function sendMiniAppTextTurn(

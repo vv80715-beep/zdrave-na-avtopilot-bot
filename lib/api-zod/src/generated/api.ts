@@ -83,6 +83,25 @@ export const ReadMiniAppProfileSnapshotResponse = zod.object({
 
 
 /**
+ * The Telegram ID is derived from the owner session. The API forwards the mutation over a short-lived signed loopback claim; only the running bot process accesses existing stores.
+ * @summary Apply one validated mutation through the authenticated bot-owned writer
+ */
+export const PostMiniAppMutationBody = zod.object({
+  "action": zod.enum(['profile.update', 'memory.update', 'health.append', 'checkin.save', 'checkin.delete', 'reminder.create', 'reminder.update', 'reminder.delete']),
+  "payload": zod.record(zod.string(), zod.unknown())
+})
+
+export const PostMiniAppMutationResponse = zod.object({
+  "ok": zod.boolean(),
+  "action": zod.enum(['profile.update', 'memory.update', 'health.append', 'checkin.save', 'checkin.delete', 'reminder.create', 'reminder.update', 'reminder.delete']),
+  "record": zod.record(zod.string(), zod.unknown()).optional(),
+  "records": zod.array(zod.record(zod.string(), zod.unknown())).optional(),
+  "date": zod.coerce.date().optional(),
+  "id": zod.string().optional()
+})
+
+
+/**
  * Disabled by default. Requires the existing owner session and exact configured origin. Uses OpenAI only when the separate media AI flag is explicitly enabled.
  * @summary Analyze one image in the explicitly enabled owner-only development staging route
  */

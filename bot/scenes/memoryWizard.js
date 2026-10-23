@@ -1,6 +1,7 @@
 const { Scenes, Markup } = require('telegraf');
 const { MEMORY_FIELD_LABELS } = require('../constants');
 const { setField } = require('../memoryStorage');
+const { validateMemoryField } = require('../memoryInput');
 
 const EDITABLE_FIELDS = Object.keys(MEMORY_FIELD_LABELS);
 
@@ -60,20 +61,13 @@ const memoryWizard = new Scenes.WizardScene(
     const field = ctx.wizard.state.editingField;
 
     let newValue;
-
-    if (field === 'motivationLevel') {
-      const n = parseInt(text, 10);
-      if (isNaN(n) || n < 1 || n > 10) {
-        await ctx.reply('Моля, избери число от 1 до 10.');
-        return;
-      }
-      newValue = n;
-    } else {
-      if (!text) {
-        await ctx.reply('Стойността не може да е празна. Опитай отново.');
-        return;
-      }
-      newValue = text.toLowerCase() === 'изчисти' ? null : text;
+    try {
+      newValue = validateMemoryField(field, text);
+    } catch {
+      await ctx.reply(field === 'motivationLevel'
+        ? 'Моля, избери число от 1 до 10.'
+        : 'Стойността не може да е празна. Опитай отново.');
+      return;
     }
 
     setField(ctx.from.id, field, newValue);

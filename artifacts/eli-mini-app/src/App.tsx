@@ -38,6 +38,7 @@ import {
   ensureOwnerSession,
   getMiniAppProfileSnapshot,
   MiniAppStageError,
+  mutateMiniAppRecord,
   sendMiniAppTextTurn,
   type MiniAppTurnMode,
   type MiniAppProfileSnapshot,
@@ -859,6 +860,17 @@ function Profile() {
   const [snapshot, setSnapshot] = useState<MiniAppProfileSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [mutationBusy, setMutationBusy] = useState(false);
+  const [mutationMessage, setMutationMessage] = useState('');
+  const [profileField, setProfileField] = useState('age');
+  const [profileValue, setProfileValue] = useState('');
+  const [memoryField, setMemoryField] = useState('dailyHabits');
+  const [memoryValue, setMemoryValue] = useState('');
+  const [healthText, setHealthText] = useState('');
+  const [checkin, setCheckin] = useState({
+    water: false, trained: false, nutrition: false, sleep: '', mood: '', energy: '',
+  });
+  const [deleteDate, setDeleteDate] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -876,6 +888,46 @@ function Profile() {
   }, [initData]);
 
   const en = language === 'en';
+  const today = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Sofia', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
+  const todayCheckin = snapshot?.checkins.find((entry) => entry.date === today);
+  useEffect(() => {
+    if (todayCheckin) {
+      setCheckin({
+        water: Boolean(todayCheckin.water),
+        trained: Boolean(todayCheckin.trained),
+        nutrition: Boolean(todayCheckin.nutrition),
+        sleep: String(todayCheckin.sleep ?? ''),
+        mood: String(todayCheckin.mood ?? ''),
+        energy: String(todayCheckin.energy ?? ''),
+      });
+    }
+  }, [todayCheckin]);
+
+  async function saveMutation(action: 'profile.update' | 'memory.update' | 'health.append' | 'checkin.save' | 'checkin.delete', payload: Record<string, unknown>): Promise<boolean> {
+    if (!initData || !window.isSecureContext || mutationBusy) return false;
+    setMutationBusy(true);
+    setMutationMessage('');
+    try {
+      await mutateMiniAppRecord(initData, { action, payload });
+      const fresh = await getMiniAppProfileSnapshot(initData);
+      setSnapshot(fresh);
+      setMutationMessage(en ? 'Saved to Eli’s bot records.' : 'Записано в данните на бота Ели.');
+      return true;
+    } catch (cause) {
+      const code = cause instanceof MiniAppStageError ? cause.code : 'request_failed';
+      const message = code === 'health_event_not_recognized'
+        ? (en ? 'No supported health entry was recognized. Nothing was saved.' : 'Не разпознах поддържан здравен запис. Нищо не е записано.')
+        : code === 'owner_only'
+          ? (en ? 'This action is not allowed for the owner account.' : 'Тази операция не е разрешена за owner акаунта.')
+          : (en ? 'Could not save. Check the values and try again.' : 'Записът не мина. Провери стойностите и опитай отново.');
+      setMutationMessage(message);
+      return false;
+    } finally {
+      setMutationBusy(false);
+    }
+  }
   const format = (value: unknown): string => {
     if (value == null || value === '') return en ? 'Not recorded' : 'Няма запис';
     if (typeof value === 'boolean') return value ? (en ? 'Yes' : 'Да') : (en ? 'No' : 'Не');
@@ -936,6 +988,7 @@ function Profile() {
         <p>{en ? 'Open Eli from Telegram again. No local or sample data is shown.' : 'Отвори Ели от Telegram отново. Не показваме локални или примерни данни.'}</p>
       </section>}
       {snapshot && !loading && <>
+        {mutationMessage && <p role="status" aria-live="polite" className="panel">{mutationMessage}</p>}
         {card(en ? 'Profile' : 'Профил', rows(snapshot.profile, [
           'firstName', 'age', 'gender', 'height', 'weight', 'goal', 'activityLevel',
           'trainingExperience', 'foodPreferences', 'medicalNotes',
@@ -968,9 +1021,111 @@ function Profile() {
         {snapshot.ownerDossier && card(en ? 'Owner dossier' : 'Owner досие',
           snapshot.ownerDossier.map((entry) => [String(entry.id), entry.value] as [string, unknown]))}
         <section className="panel">
-          <h2>{en ? 'Editing' : 'Редактиране'}</h2>
-          <p>{en ? 'Editing is temporarily disabled until all writes use the bot-owned storage boundary.' :
-            'Редактирането е временно изключено, докато всички записи не минават през единната bot-owned граница.'}</p>
+          <h2>{en ? 'Edit profile' : 'Редактирай профила'}</h2>
+          <form onSubmit={(event) => {
+            event.preventDefault();
+            void saveMutation('profile.update', { field: profileField, value: profileValue });
+          }}>
+            <label className="entry-field">{en ? 'Field' : 'Поле'}
+              <select value={profileField} onChange={(event) => {
+                const field = event.target.value;
+                setProfileField(field);
+                setProfileValue(String(snapshot.profile?.[field] ?? ''));
+              }}>
+                {['firstName', 'age', 'gender', 'height', 'weight', 'goal', 'activityLevel', 'trainingExperience', 'foodPreferences', 'medicalNotes']
+                  .map((field) => <option key={field} value={field}>{field}</option>)}
+              </select>
+            </label>
+            {['gender', 'goal', 'activityLevel', 'trainingExperience'].includes(profileField)
+              ? <label className="entry-field">{en ? 'Value' : 'Стойност'}
+                <select value={profileValue} onChange={(event) => setProfileValue(event.target.value)}>
+                  {(profileField === 'gender'
+                    ? ['Мъж', 'Жена', 'Предпочитам да не споделям', 'Пропусни']
+                    : profileField === 'goal'
+                      ? ['Отслабване', 'Качване на мускулна маса', 'Здравословен начин на живот', 'По-добър сън', 'Повече енергия']
+                      : profileField === 'activityLevel'
+                        ? ['Ниска', 'Средна', 'Висока']
+                        : ['Начинаещ', 'Средно ниво', 'Напреднал']).map((value) =>
+                    <option key={value} value={value}>{value}</option>)}
+                </select>
+              </label>
+              : <label className="entry-field">{en ? 'Value' : 'Стойност'}
+                <input value={profileValue} onChange={(event) => setProfileValue(event.target.value)} />
+              </label>}
+            <button className="primary-button" type="submit" disabled={mutationBusy}>
+              {mutationBusy ? (en ? 'Saving…' : 'Записвам…') : (en ? 'Save profile field' : 'Запиши полето')}
+            </button>
+          </form>
+        </section>
+        <section className="panel">
+          <h2>{en ? 'Legacy memory' : 'Запазена памет'}</h2>
+          <p>{en ? 'Updates the bot’s existing memory fields; it does not write Universal Memory.' : 'Променя съществуващите полета на паметта на бота; не записва в Universal Memory.'}</p>
+          <form onSubmit={(event) => {
+            event.preventDefault();
+            void saveMutation('memory.update', { field: memoryField, value: memoryValue });
+          }}>
+            <label className="entry-field">{en ? 'Memory field' : 'Поле от паметта'}
+              <select value={memoryField} onChange={(event) => setMemoryField(event.target.value)}>
+                {['injuries', 'allergies', 'favoriteFoods', 'dislikedFoods', 'dailyHabits', 'motivationLevel'].map((field) =>
+                  <option key={field} value={field}>{field}</option>)}
+              </select>
+            </label>
+            <label className="entry-field">{en ? 'Value (type “Изчисти” to clear)' : 'Стойност (напиши „Изчисти“ за изчистване)'}
+              <input value={memoryValue} onChange={(event) => setMemoryValue(event.target.value)} />
+            </label>
+            <button className="primary-button" type="submit" disabled={mutationBusy}>{en ? 'Save memory field' : 'Запиши паметта'}</button>
+          </form>
+        </section>
+        <section className="panel">
+          <h2>{en ? 'Add a health log entry' : 'Добави здравен запис'}</h2>
+          <p>{en ? 'Use a factual sentence such as “I drank 500 ml water” or “I slept 7 hours”.' : 'Опиши факт, например „Изпих 500 мл вода“ или „Спах 7 часа“.'}</p>
+          <form onSubmit={(event) => {
+            event.preventDefault();
+            void saveMutation('health.append', { text: healthText }).then((saved) => {
+              if (saved) setHealthText('');
+            });
+          }}>
+            <label className="entry-field">
+              <textarea maxLength={1200} value={healthText} onChange={(event) => setHealthText(event.target.value)} required />
+            </label>
+            <button className="primary-button" type="submit" disabled={mutationBusy || !healthText.trim()}>{en ? 'Add health entry' : 'Добави запис'}</button>
+          </form>
+        </section>
+        <section className="panel">
+          <h2>{en ? 'Daily check-in' : 'Дневен check-in'}</h2>
+          <p>{en ? 'This saves the same fields used by the bot check-in.' : 'Записва същите полета като check-in-ът в бота.'}</p>
+          <form onSubmit={(event) => {
+            event.preventDefault();
+            void saveMutation('checkin.save', { answers: {
+              water: checkin.water, trained: checkin.trained, nutrition: checkin.nutrition,
+              sleep: Number(checkin.sleep), mood: Number(checkin.mood), energy: Number(checkin.energy),
+            } });
+          }}>
+            {(['water', 'trained', 'nutrition'] as const).map((field) => <label className="entry-field" key={field}>
+              <input type="checkbox" checked={checkin[field]} onChange={(event) =>
+                setCheckin((current) => ({ ...current, [field]: event.target.checked }))} />
+              {field}
+            </label>)}
+            {(['sleep', 'mood', 'energy'] as const).map((field) => <label className="entry-field" key={field}>{field}
+              <input type="number" min={field === 'sleep' ? 0 : 1} max={field === 'sleep' ? 24 : 10}
+                step={field === 'sleep' ? 0.1 : 1} value={checkin[field]}
+                onChange={(event) => setCheckin((current) => ({ ...current, [field]: event.target.value }))} required />
+            </label>)}
+            <button className="primary-button" type="submit" disabled={mutationBusy}>{todayCheckin ? (en ? 'Update today’s check-in' : 'Обнови днешния check-in') : (en ? 'Save today’s check-in' : 'Запиши днешния check-in')}</button>
+          </form>
+          {snapshot.checkins.map((entry) => <div className="entry-actions" key={String(entry.date)}>
+            <span>{String(entry.date)}</span>
+            {deleteDate === entry.date
+              ? <><button type="button" className="delete-button" onClick={() => {
+                void saveMutation('checkin.delete', { date: deleteDate }); setDeleteDate('');
+              }}>{en ? 'Confirm delete' : 'Потвърди изтриване'}</button>
+                <button type="button" onClick={() => setDeleteDate('')}>{en ? 'Cancel' : 'Отказ'}</button></>
+              : <button type="button" className="delete-button" onClick={() => setDeleteDate(String(entry.date))}>{en ? 'Delete check-in' : 'Изтрий check-in'}</button>}
+          </div>)}
+        </section>
+        <section className="panel">
+          <h2>{en ? 'Reminders' : 'Напомняния'}</h2>
+          <p>{en ? 'Bot policy does not permit the owner account to manage reminders. No reminder changes were sent.' : 'Правилата на бота не позволяват на owner акаунта да управлява напомняния. Не е изпратена промяна.'}</p>
         </section>
       </>}
     </main>

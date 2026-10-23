@@ -51,4 +51,15 @@ function getAllCheckins(userId) {
     .map(([date, entry]) => ({ date, ...entry }));
 }
 
-module.exports = { saveCheckin, getTodayCheckin, getHistory, getAllCheckins, todayKey };
+function deleteCheckin(userId, date) {
+  const data = load();
+  const uid = String(userId);
+  const days = data[uid];
+  if (!days || !Object.prototype.hasOwnProperty.call(days, date)) return false;
+  delete days[date];
+  if (Object.keys(days).length === 0) delete data[uid];
+  save(data);
+  return true;
+}
+
+module.exports = { saveCheckin, getTodayCheckin, getHistory, getAllCheckins, deleteCheckin, todayKey };

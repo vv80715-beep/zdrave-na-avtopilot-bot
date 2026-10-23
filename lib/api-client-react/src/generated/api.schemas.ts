@@ -59,6 +59,55 @@ export interface MiniAppProfileResponse {
   snapshot: MiniAppProfileResponseSnapshot;
 }
 
+export type MiniAppMutationInputAction = typeof MiniAppMutationInputAction[keyof typeof MiniAppMutationInputAction];
+
+
+export const MiniAppMutationInputAction = {
+  profileupdate: 'profile.update',
+  memoryupdate: 'memory.update',
+  healthappend: 'health.append',
+  checkinsave: 'checkin.save',
+  checkindelete: 'checkin.delete',
+  remindercreate: 'reminder.create',
+  reminderupdate: 'reminder.update',
+  reminderdelete: 'reminder.delete',
+} as const;
+
+export type MiniAppMutationInputPayload = { [key: string]: unknown };
+
+export interface MiniAppMutationInput {
+  action: MiniAppMutationInputAction;
+  payload: MiniAppMutationInputPayload;
+}
+
+export type MiniAppMutationResponseAction = typeof MiniAppMutationResponseAction[keyof typeof MiniAppMutationResponseAction];
+
+
+export const MiniAppMutationResponseAction = {
+  profileupdate: 'profile.update',
+  memoryupdate: 'memory.update',
+  healthappend: 'health.append',
+  checkinsave: 'checkin.save',
+  checkindelete: 'checkin.delete',
+  remindercreate: 'reminder.create',
+  reminderupdate: 'reminder.update',
+  reminderdelete: 'reminder.delete',
+} as const;
+
+export type MiniAppMutationResponseRecord = { [key: string]: unknown };
+
+export type MiniAppMutationResponseRecordsItem = { [key: string]: unknown };
+
+export interface MiniAppMutationResponse {
+  ok: true;
+  action: MiniAppMutationResponseAction;
+  record?: MiniAppMutationResponseRecord;
+  records?: MiniAppMutationResponseRecordsItem[];
+  date?: string;
+  id?: string;
+  [key: string]: unknown;
+ }
+
 export type MiniAppTextTurnResponseKind = typeof MiniAppTextTurnResponseKind[keyof typeof MiniAppTextTurnResponseKind];
 
 
