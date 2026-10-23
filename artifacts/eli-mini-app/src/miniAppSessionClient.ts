@@ -134,6 +134,26 @@ export async function getMiniAppProfileSnapshot(
   return body.snapshot as MiniAppProfileSnapshot;
 }
 
+export async function sendMiniAppTextTurn(
+  initData: string,
+  message: string,
+  fetchFn: FetchLike = fetch,
+): Promise<{ reply: string; kind: "eli_text" | "access_denied" }> {
+  await ensureOwnerSession(initData, fetchFn);
+  const response = await sameOriginRequest("/api/mini-app/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ message }),
+  }, fetchFn, 45_000);
+  const body = await responseBody(response);
+  if (!response.ok) throw new MiniAppStageError(safeErrorCode(body), response.status);
+  if (typeof body.reply !== "string" ||
+      (body.kind !== "eli_text" && body.kind !== "access_denied")) {
+    throw new MiniAppStageError("invalid_response", response.status);
+  }
+  return { reply: body.reply, kind: body.kind };
+}
+
 export async function sendOwnerDemoChat(
   initData: string,
   message: string,

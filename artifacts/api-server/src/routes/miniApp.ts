@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import {
   ReadMiniAppProfileSnapshotBody,
   ReadMiniAppProfileSnapshotResponse,
+  PostMiniAppTextTurnBody,
+  PostMiniAppTextTurnResponse,
 } from "../../../../lib/api-zod/src/generated/api.ts";
 import { validateTelegramInitData } from "../lib/telegramInitData.mjs";
 // @ts-expect-error Shared HMAC protocol; claims are signed from verified session subjects only.
@@ -353,7 +355,8 @@ export function createMiniAppRouter(
     const previousUse = usedInitData.get(fingerprint);
     if (previousUse) {
       const existing = readValidSession(req, sessionSecret, Math.floor(timestamp / 1000));
-      if ("session" in existing && existing.session.sub === previousUse.userId) {
+      if (previousUse.userId === ownerId &&
+          "session" in existing && existing.session.sub === ownerId) {
         res.json({
           ok: true,
           expiresAt: new Date(existing.session.exp * 1000).toISOString(),
@@ -375,6 +378,10 @@ export function createMiniAppRouter(
     }
     if (!/^[1-9]\d{4,19}$/.test(identity.telegramUserId)) {
       sendError(res, 401, "invalid_init_data");
+      return;
+    }
+    if (identity.telegramUserId !== ownerId) {
+      sendError(res, 403, "owner_only");
       return;
     }
     if (usedInitData.size >= 1000) {
@@ -420,6 +427,13 @@ export function createMiniAppRouter(
     });
   };
 
+  // This router is a development-only owner canary. Require the owner session
+  // for every route registered after this point, including routes added later.
+  router.use((req, res, next) => {
+    if (req.path === "/session") return next();
+    return requireOwnerSession(req, res, next);
+  });
+
   const readProfileSnapshot = options.readProfileSnapshot || (async (userId: string) => {
     if (bridgeSecret.trim().length < 32) throw new Error("profile_service_unavailable");
     const claim = (miniAppBridgeAuth as {
@@ -444,7 +458,7 @@ export function createMiniAppRouter(
     return body.snapshot as MiniAppSnapshot;
   });
 
-  router.post("/profile", requireSession, async (req, res): Promise<void> => {
+  router.post("/profile", requireOwnerSession, async (req, res): Promise<void> => {
     const requestBody = ReadMiniAppProfileSnapshotBody.safeParse(req.body);
     if (!requestBody.success || !req.body || Object.keys(req.body).length !== 0) {
       sendError(res, 400, "invalid_request");
@@ -460,6 +474,46 @@ export function createMiniAppRouter(
     }
   });
 
+  router.post("/chat", requireOwnerSession, async (req, res): Promise<void> => {
+    const parsed = PostMiniAppTextTurnBody.safeParse(req.body);
+    if (!parsed.success) {
+      sendError(res, 400, "invalid_request");
+      return;
+    }
+    if (bridgeSecret.trim().length < 32) {
+      sendError(res, 503, "text_engine_unavailable");
+      return;
+    }
+    try {
+      const userId = res.locals.miniAppOwnerId as string;
+      const claim = (miniAppBridgeAuth as {
+        createClaim: (userId: string, secret: string, now?: number, path?: string) => string;
+      }).createClaim(userId, bridgeSecret, undefined, "/internal/mini-app/text-turn");
+      const response = await bridgeFetch("http://127.0.0.1:3001/internal/mini-app/text-turn", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${claim}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ message: parsed.data.message }),
+        cache: "no-store",
+        redirect: "error",
+        signal: AbortSignal.timeout(40_000),
+      });
+      if (!response.ok) {
+        sendError(res, response.status === 429 ? 429 : 503,
+          response.status === 429 ? "text_rate_limited" : "text_engine_unavailable");
+        return;
+      }
+      const body = await response.json() as { ok?: unknown; reply?: unknown; kind?: unknown };
+      res.json(PostMiniAppTextTurnResponse.parse(body));
+    } catch (error) {
+      const timeout = error instanceof Error && error.name === "TimeoutError";
+      sendError(res, timeout ? 504 : 503, timeout ? "text_engine_timeout" : "text_engine_unavailable");
+    }
+  });
+
   const configuredTextAi: TextAiAdapter = options.textAi ||
     createOpenAiTextAiAdapter(env.OPENAI_API_KEY || "");
   const buildOwnerDossierContext = options.ownerDossierContext || ((verifiedOwnerId: string, message: string) => {
@@ -472,6 +526,16 @@ export function createMiniAppRouter(
   const ownerDossierFaq = options.ownerDossierFaq || (ownerDossier as OwnerDossierFaq);
 
   registerMiniAppMediaRoutes(router, requireOwnerSession, mediaEnabled, env, options.media);
+
+  // These legacy staging routes were replaced by /chat, which calls only the
+  // bot-owned text engine. Keep old URLs inert so stale clients fail closed.
+  router.use((req, res, next) => {
+    if (req.path === "/demo-chat" || req.path === "/text-ai" || req.path === "/text-ai/status") {
+      sendError(res, 404, "not_found");
+      return;
+    }
+    next();
+  });
 
   // POST is intentional: browsers include Origin on same-origin POST requests,
   // while same-origin GET requests commonly omit it and fail the router's CSRF check.

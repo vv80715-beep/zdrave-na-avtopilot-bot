@@ -6,7 +6,7 @@ const { SYSTEM_PROMPT, conversationFlowNote, stripLeadingGreeting } = require('.
 const openai = require('./openaiClient');
 const { getTextAIClient, hasTextAIProvider } = require('./textAIClient');
 const { transcribeTelegramAudio, audioSuffix, looksLikeBulgarian } = require('./voiceTranscription');
-const { isOwner } = require('./adminGuard');
+const { isOwner, isOwnerId } = require('./adminGuard');
 const { OWNER_NAME, OWNER_MEMORY } = require('./ownerContext');
 const { touchConversationState } = require('./conversationState');
 const { buildMemoryContext, recentMessages, formatFullMemory } = require('./memoryService');
@@ -106,6 +106,7 @@ const coach = require('./commands/coach');
 const reminders = require('./commands/reminders');
 const { startBotRuntimeWithHealthServer } = require('./startup');
 const { createMiniAppBridgeRouter } = require('./miniAppBridge');
+const { createMiniAppTextTurnHandler } = require('./miniAppTextTurn');
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const PORT = process.env.PORT || 3001;
@@ -369,8 +370,10 @@ async function askEli(ctx, question, opts = {}) {
   // Spoken input also gets a spoken reply, but only when the plan allows voice.
   const storedMode = getMode(ctx.from.id);
   const allowed = status.allowedModes;
-  const avatarMode = storedMode === 'avatar' && allowed.includes('avatar');
+  const avatarMode = !opts.forceTextDelivery &&
+    storedMode === 'avatar' && allowed.includes('avatar');
   const voiceMode =
+    !opts.forceTextDelivery &&
     !avatarMode &&
     allowed.includes('voice') &&
     (storedMode === 'voice' || Boolean(opts.spokenInput));
@@ -681,6 +684,9 @@ async function askEli(ctx, question, opts = {}) {
   // Tell Eli whether to greet: only for a new or resumed-after-a-pause
   // conversation, never mid-flow. Applies to owner and users alike.
   systemContent = `${systemContent}\n\n${conversationFlowNote(conversationState)}`;
+  if (opts.forceTextDelivery) {
+    systemContent += '\n\nОтговори на български. Това е текстов разговор; не обещавай гласов или видео отговор.';
+  }
 
   // Avatar mode ("Говори с аватара на Ели"): optimize the spoken script at
   // generation time, before the last-resort provider text-length cap.
@@ -785,10 +791,18 @@ async function askEli(ctx, question, opts = {}) {
       await ctx.reply(finalAnswer);
     }
   } catch (err) {
+    if (opts.rethrowProviderErrors) throw err;
     console.error('OpenAI error:', err.message);
     await ctx.reply('Нещо се обърка. Опитай отново малко по-късно.');
   }
 }
+
+const processMiniAppTextTurn = createMiniAppTextTurnHandler({
+  isOwnerId,
+  hasTextAIProvider,
+  gateChat,
+  askEli,
+});
 
 bot.command('ask', async (ctx) => {
   const question = ctx.message.text.replace(/^\/ask\s*/i, '').trim();
@@ -893,7 +907,7 @@ app.use(express.json());
 // Mini App reads go through the existing bot process, which owns legacy stores.
 // The bridge binds to this process's already-singleton health listener and
 // independently requires loopback + a signed, short-lived internal claim.
-app.use(createMiniAppBridgeRouter());
+app.use(createMiniAppBridgeRouter({ processTextTurn: processMiniAppTextTurn }));
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', bot: 'running' });

@@ -22,21 +22,21 @@ export interface MiniAppSession {
   expiresAt: string;
 }
 
-export type MiniAppDemoChatInputLanguage = typeof MiniAppDemoChatInputLanguage[keyof typeof MiniAppDemoChatInputLanguage];
+export type MiniAppTextTurnInputLanguage = typeof MiniAppTextTurnInputLanguage[keyof typeof MiniAppTextTurnInputLanguage];
 
 
-export const MiniAppDemoChatInputLanguage = {
+export const MiniAppTextTurnInputLanguage = {
   bg: 'bg',
   en: 'en',
 } as const;
 
-export interface MiniAppDemoChatInput {
+export interface MiniAppTextTurnInput {
   /**
      * @minLength 1
      * @maxLength 1200
      */
   message: string;
-  language?: MiniAppDemoChatInputLanguage;
+  language?: MiniAppTextTurnInputLanguage;
 }
 
 export interface MiniAppProfileRequest { [key: string]: unknown }
@@ -48,9 +48,18 @@ export interface MiniAppProfileResponse {
   snapshot: MiniAppProfileResponseSnapshot;
 }
 
-export interface MiniAppDemoChatResponse {
+export type MiniAppTextTurnResponseKind = typeof MiniAppTextTurnResponseKind[keyof typeof MiniAppTextTurnResponseKind];
+
+
+export const MiniAppTextTurnResponseKind = {
+  eli_text: 'eli_text',
+  access_denied: 'access_denied',
+} as const;
+
+export interface MiniAppTextTurnResponse {
+  /** @minLength 1 */
   reply: string;
-  demo: true;
+  kind: MiniAppTextTurnResponseKind;
 }
 
 export type MiniAppImageUploadLanguage = typeof MiniAppImageUploadLanguage[keyof typeof MiniAppImageUploadLanguage];

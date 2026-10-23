@@ -7,9 +7,6 @@
  */
 
 export * from './healthStatus';
-export * from './miniAppDemoChatInput';
-export * from './miniAppDemoChatInputLanguage';
-export * from './miniAppDemoChatResponse';
 export * from './miniAppImageResult';
 export * from './miniAppImageUpload';
 export * from './miniAppImageUploadLanguage';
@@ -18,6 +15,10 @@ export * from './miniAppProfileResponse';
 export * from './miniAppProfileResponseSnapshot';
 export * from './miniAppSession';
 export * from './miniAppSessionInput';
+export * from './miniAppTextTurnInput';
+export * from './miniAppTextTurnInputLanguage';
+export * from './miniAppTextTurnResponse';
+export * from './miniAppTextTurnResponseKind';
 export * from './miniAppVoiceResult';
 export * from './miniAppVoiceUpload';
 export * from './miniAppVoiceUploadLanguage';

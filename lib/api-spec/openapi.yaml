@@ -54,11 +54,12 @@ paths:
           description: Invalid or stale Telegram initData
         "403":
           description: Request is not from the configured origin
-  /mini-app/demo-chat:
+  /mini-app/chat:
     post:
-      operationId: postMiniAppDemoChat
+      operationId: postMiniAppTextTurn
       tags: [mini-app]
-      summary: Return a fixed text-only staging demo response
+      summary: Send an owner-only staging text turn through the existing bot engine
+      description: The API forwards only the validated session identity and text to the bot-owned engine. It does not call AI providers or write legacy stores itself.
       security:
         - MiniAppSessionCookie: []
       requestBody:
@@ -66,14 +67,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/MiniAppDemoChatInput"
+              $ref: "#/components/schemas/MiniAppTextTurnInput"
       responses:
         "200":
-          description: Static demo reply; no provider or persistence is used
+          description: Reply produced by the existing bot-side text engine
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MiniAppDemoChatResponse"
+                $ref: "#/components/schemas/MiniAppTextTurnResponse"
         "401":
           description: Valid owner session required
         "403":
@@ -218,7 +219,7 @@ components:
           type: string
           format: date-time
       required: [ok, expiresAt]
-    MiniAppDemoChatInput:
+    MiniAppTextTurnInput:
       type: object
       properties:
         message:
@@ -244,15 +245,17 @@ components:
           type: object
           additionalProperties: true
       required: [mode, snapshot]
-    MiniAppDemoChatResponse:
+    MiniAppTextTurnResponse:
       type: object
       properties:
         reply:
           type: string
-        demo:
-          type: boolean
-          const: true
-      required: [reply, demo]
+          minLength: 1
+        kind:
+          type: string
+          enum: [eli_text, access_denied]
+      required: [reply, kind]
+      additionalProperties: false
     MiniAppImageUpload:
       type: object
       properties:

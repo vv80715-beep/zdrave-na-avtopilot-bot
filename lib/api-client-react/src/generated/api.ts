@@ -21,14 +21,14 @@ import type {
 
 import type {
   HealthStatus,
-  MiniAppDemoChatInput,
-  MiniAppDemoChatResponse,
   MiniAppImageResult,
   MiniAppImageUpload,
   MiniAppProfileRequest,
   MiniAppProfileResponse,
   MiniAppSession,
   MiniAppSessionInput,
+  MiniAppTextTurnInput,
+  MiniAppTextTurnResponse,
   MiniAppVoiceResult,
   MiniAppVoiceUpload
 } from './api.schemas';
@@ -208,36 +208,37 @@ export const useCreateMiniAppSession = <TError = ErrorType<void>,
       return useMutation(getCreateMiniAppSessionMutationOptions(options));
     }
 
-export const getPostMiniAppDemoChatUrl = () => {
+export const getPostMiniAppTextTurnUrl = () => {
 
 
 
 
-  return `/api/mini-app/demo-chat`
+  return `/api/mini-app/chat`
 }
 
 /**
- * @summary Return a fixed text-only staging demo response
+ * The API forwards only the validated session identity and text to the bot-owned engine. It does not call AI providers or write legacy stores itself.
+ * @summary Send an owner-only staging text turn through the existing bot engine
  */
-export const postMiniAppDemoChat = async (miniAppDemoChatInput: MiniAppDemoChatInput, options?: RequestInit): Promise<MiniAppDemoChatResponse> => {
+export const postMiniAppTextTurn = async (miniAppTextTurnInput: MiniAppTextTurnInput, options?: RequestInit): Promise<MiniAppTextTurnResponse> => {
 
-  return customFetch<MiniAppDemoChatResponse>(getPostMiniAppDemoChatUrl(),
+  return customFetch<MiniAppTextTurnResponse>(getPostMiniAppTextTurnUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(miniAppDemoChatInput)
+    body: JSON.stringify(miniAppTextTurnInput)
   }
 );}
 
 
 
 
-export const getPostMiniAppDemoChatMutationOptions = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postMiniAppDemoChat>>, TError,{data: BodyType<MiniAppDemoChatInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof postMiniAppDemoChat>>, TError,{data: BodyType<MiniAppDemoChatInput>}, TContext> => {
+export const getPostMiniAppTextTurnMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postMiniAppTextTurn>>, TError,{data: BodyType<MiniAppTextTurnInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof postMiniAppTextTurn>>, TError,{data: BodyType<MiniAppTextTurnInput>}, TContext> => {
 
-const mutationKey = ['postMiniAppDemoChat'];
+const mutationKey = ['postMiniAppTextTurn'];
 const {mutation: mutationOptions, request: requestOptions} = options ?
       options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
       options
@@ -247,10 +248,10 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof postMiniAppDemoChat>>, {data: BodyType<MiniAppDemoChatInput>}> = (props) => {
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof postMiniAppTextTurn>>, {data: BodyType<MiniAppTextTurnInput>}> = (props) => {
           const {data} = props ?? {};
 
-          return  postMiniAppDemoChat(data,requestOptions)
+          return  postMiniAppTextTurn(data,requestOptions)
         }
 
 
@@ -260,22 +261,22 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
   return  { mutationFn, ...mutationOptions }}
 
-    export type PostMiniAppDemoChatMutationResult = NonNullable<Awaited<ReturnType<typeof postMiniAppDemoChat>>>
-    export type PostMiniAppDemoChatMutationBody = BodyType<MiniAppDemoChatInput>
-    export type PostMiniAppDemoChatMutationError = ErrorType<void>
+    export type PostMiniAppTextTurnMutationResult = NonNullable<Awaited<ReturnType<typeof postMiniAppTextTurn>>>
+    export type PostMiniAppTextTurnMutationBody = BodyType<MiniAppTextTurnInput>
+    export type PostMiniAppTextTurnMutationError = ErrorType<void>
 
     /**
- * @summary Return a fixed text-only staging demo response
+ * @summary Send an owner-only staging text turn through the existing bot engine
  */
-export const usePostMiniAppDemoChat = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postMiniAppDemoChat>>, TError,{data: BodyType<MiniAppDemoChatInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+export const usePostMiniAppTextTurn = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postMiniAppTextTurn>>, TError,{data: BodyType<MiniAppTextTurnInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
-        Awaited<ReturnType<typeof postMiniAppDemoChat>>,
+        Awaited<ReturnType<typeof postMiniAppTextTurn>>,
         TError,
-        {data: BodyType<MiniAppDemoChatInput>},
+        {data: BodyType<MiniAppTextTurnInput>},
         TContext
       > => {
-      return useMutation(getPostMiniAppDemoChatMutationOptions(options));
+      return useMutation(getPostMiniAppTextTurnMutationOptions(options));
     }
 
 export const getReadMiniAppProfileSnapshotUrl = () => {

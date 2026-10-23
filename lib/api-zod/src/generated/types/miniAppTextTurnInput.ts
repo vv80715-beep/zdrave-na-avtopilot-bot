@@ -5,13 +5,13 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { MiniAppDemoChatInputLanguage } from './miniAppDemoChatInputLanguage';
+import type { MiniAppTextTurnInputLanguage } from './miniAppTextTurnInputLanguage';
 
-export interface MiniAppDemoChatInput {
+export interface MiniAppTextTurnInput {
   /**
      * @minLength 1
      * @maxLength 1200
      */
   message: string;
-  language?: MiniAppDemoChatInputLanguage;
+  language?: MiniAppTextTurnInputLanguage;
 }

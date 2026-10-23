@@ -35,20 +35,24 @@ export const CreateMiniAppSessionResponse = zod.object({
 
 
 /**
- * @summary Return a fixed text-only staging demo response
+ * The API forwards only the validated session identity and text to the bot-owned engine. It does not call AI providers or write legacy stores itself.
+ * @summary Send an owner-only staging text turn through the existing bot engine
  */
-export const postMiniAppDemoChatBodyMessageMax = 1200;
+export const postMiniAppTextTurnBodyMessageMax = 1200;
 
 
 
-export const PostMiniAppDemoChatBody = zod.object({
-  "message": zod.string().min(1).max(postMiniAppDemoChatBodyMessageMax),
+export const PostMiniAppTextTurnBody = zod.object({
+  "message": zod.string().min(1).max(postMiniAppTextTurnBodyMessageMax),
   "language": zod.enum(['bg', 'en']).optional()
 })
 
-export const PostMiniAppDemoChatResponse = zod.object({
-  "reply": zod.string(),
-  "demo": zod.boolean()
+
+
+
+export const PostMiniAppTextTurnResponse = zod.object({
+  "reply": zod.string().min(1),
+  "kind": zod.enum(['eli_text', 'access_denied'])
 })
 
 

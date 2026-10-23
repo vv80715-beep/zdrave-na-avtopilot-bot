@@ -35,11 +35,10 @@ import {
 import { connectTelegramWebApp } from './telegramWebApp';
 import { useChatMedia, type ChatAttachment } from './useChatMedia';
 import {
+  ensureOwnerSession,
   getMiniAppProfileSnapshot,
-  getOwnerTextAiStatus,
   MiniAppStageError,
-  sendOwnerDemoChat,
-  sendOwnerTextAi,
+  sendMiniAppTextTurn,
   type MiniAppProfileSnapshot,
 } from './miniAppSessionClient';
 import {
@@ -273,15 +272,13 @@ function formatFileSize(bytes: number) {
 }
 
 function Chat() {
-  const { t, language } = useLanguage();
+  const { t } = useLanguage();
   const [draft, setDraft] = useState('');
   const [notice, setNotice] = useState<TranslationKey | null>(null);
   const [stageError, setStageError] = useState<TranslationKey | null>(null);
   const [stageErrorCanRetry, setStageErrorCanRetry] = useState(false);
-  const [ambiguousDraft, setAmbiguousDraft] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  const [stageMode, setStageMode] = useState<'local' | 'checking' | 'mock' | 'live' | 'unavailable'>('local');
-  const [ownerDossierContext, setOwnerDossierContext] = useState(false);
+  const [stageMode, setStageMode] = useState<'local' | 'checking' | 'live' | 'unavailable'>('local');
   const [messages, setMessages] = useState<LocalChatMessage[]>([]);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const media = useChatMedia();
@@ -302,22 +299,19 @@ function Chat() {
   useEffect(() => {
     if (!canUseOwnerStage) {
       setStageMode('local');
-      setOwnerDossierContext(false);
       return;
     }
     let current = true;
     setStageMode('checking');
-    void getOwnerTextAiStatus(signedInitData).then((status) => {
+    void ensureOwnerSession(signedInitData).then(() => {
       if (current) {
-        setStageMode(status.mode === 'test_ai' ? 'live' : 'mock');
-        setOwnerDossierContext(status.ownerDossierContext);
+        setStageMode('live');
         setStageError(null);
         setStageErrorCanRetry(false);
       }
     }).catch((error) => {
       if (current) {
         setStageMode('unavailable');
-        setOwnerDossierContext(false);
         setStageError(stageErrorKey(error));
         setStageErrorCanRetry(true);
       }
@@ -364,11 +358,6 @@ function Chat() {
     const text = draft.trim();
     const attachment = media.attachment;
     const sendText = canUseOwnerStage && Boolean(text);
-    if (sendText && ambiguousDraft === text) {
-      setStageError('stageProviderUncertain');
-      setStageErrorCanRetry(false);
-      return;
-    }
     setNotice(null);
     setStageError(null);
     setStageErrorCanRetry(false);
@@ -380,46 +369,8 @@ function Chat() {
     if (sendText) {
       sendLock.current = true;
       setSending(true);
-      let phase: 'status' | 'mock' | 'live' = 'status';
       try {
-        let mode: 'mock' | 'live';
-        if (stageMode === 'mock' || stageMode === 'live') {
-          mode = stageMode;
-        } else {
-          const checkedStatus = await getOwnerTextAiStatus(signedInitData);
-          mode = checkedStatus.mode === 'test_ai' ? 'live' : 'mock';
-          setOwnerDossierContext(checkedStatus.ownerDossierContext);
-          setStageMode(mode);
-        }
-
-        let result: { reply: string; mode: 'mock' | 'test_ai' | 'owner_dossier_faq' };
-        if (mode === 'live') {
-          phase = 'live';
-          try {
-            result = await sendOwnerTextAi(signedInitData, text, language);
-          } catch (error) {
-            if (!(error instanceof MiniAppStageError) || error.status !== 404) throw error;
-            // A 404 is safe to re-check: the guarded route rejects before any provider call.
-            phase = 'status';
-            const checkedStatus = await getOwnerTextAiStatus(signedInitData);
-            mode = checkedStatus.mode === 'test_ai' ? 'live' : 'mock';
-            setOwnerDossierContext(checkedStatus.ownerDossierContext);
-            setStageMode(mode);
-            if (mode !== 'mock') throw error;
-            setNotice('stageSwitchedToMock');
-            phase = 'mock';
-            result = {
-              ...(await sendOwnerDemoChat(signedInitData, text, language)),
-              mode: 'mock',
-            };
-          }
-        } else {
-          phase = 'mock';
-          result = {
-            ...(await sendOwnerDemoChat(signedInitData, text, language)),
-            mode: 'mock',
-          };
-        }
+        const result = await sendMiniAppTextTurn(signedInitData, text);
         const deliveredAttachment = media.detachForMessage();
         setMessages((current) => [
           ...current,
@@ -429,29 +380,19 @@ function Chat() {
             role: 'assistant',
             text: result.reply,
             attachment: null,
-            replySource: result.mode === 'mock' ? 'mock' : result.mode,
+            replySource: 'bot_text',
           },
         ]);
-        setStageMode(result.mode === 'mock' ? 'mock' : 'live');
+        setStageMode('live');
         setStageError(null);
         setStageErrorCanRetry(false);
-        setAmbiguousDraft(null);
         setDraft('');
         setAttachmentMenuOpen(false);
         if (attachment) setNotice('attachmentLocalNotice');
         media.clearError();
       } catch (error) {
-        const safelyRejected = error instanceof MiniAppStageError && [401, 403, 404].includes(error.status);
-        if (phase === 'live' && !safelyRejected) {
-          setAmbiguousDraft(text);
-          setStageError('stageProviderUncertain');
-        } else {
-          setStageError(stageErrorKey(error));
-        }
-        setStageErrorCanRetry(
-          phase === 'status' ||
-          safelyRejected,
-        );
+        setStageError(stageErrorKey(error));
+        setStageErrorCanRetry(false);
       } finally {
         sendLock.current = false;
         setSending(false);
