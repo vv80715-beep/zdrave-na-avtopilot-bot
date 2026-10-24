@@ -42,6 +42,7 @@ import {
   requestMiniAppCoaching,
   sendMiniAppVoiceTurn,
   sendMiniAppTextTurn,
+  sendOwnerDemoChat,
   type MiniAppCoachingAction,
   type MiniAppTurnMode,
   type MiniAppProfileSnapshot,
@@ -548,7 +549,13 @@ function Chat() {
           ? await sendMiniAppVoiceTurn(
             signedInitData, attachment.blob, attachment.name, language, selectedMode, text, fetch,
           )
-          : await sendMiniAppTextTurn(signedInitData, text, fetch, selectedMode);
+          : import.meta.env.DEV
+            ? {
+              ...(await sendOwnerDemoChat(signedInitData, text, language, fetch)),
+              kind: 'eli_text' as const,
+              media: undefined,
+            }
+            : await sendMiniAppTextTurn(signedInitData, text, fetch, selectedMode);
         const deliveredAttachment = media.detachForMessage();
         const visibleUserText = sendVoice
           ? (('transcript' in result && result.transcript) || t('voiceAttachment'))

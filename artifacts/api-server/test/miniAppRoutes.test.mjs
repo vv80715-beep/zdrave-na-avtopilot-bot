@@ -222,7 +222,7 @@ test("existing API routes retain the pre-existing global CORS behavior", async (
   }
 });
 
-test("owner initData issues a secure session and retired demo routes fail closed", async () => {
+test("owner initData issues a secure session and development demo chat returns fixed text", async () => {
   const h = await serverHarness();
   try {
     const sessionResponse = await h.request("/session", { initData: signedInitData() });
@@ -237,8 +237,15 @@ test("owner initData issues a secure session and retired demo routes fail closed
     assert.match(setCookie, /Max-Age=600/);
     const cookie = setCookie.split(";")[0];
 
-    assert.equal((await h.request("/demo-chat", { message: "private health detail" }, { cookie })).status, 404);
-    assert.equal((await h.request("/demo-chat/", { message: "private health detail" }, { cookie })).status, 404);
+    const demo = await h.request("/demo-chat", { message: "private health detail" }, { cookie });
+    assert.equal(demo.status, 200);
+    assert.deepEqual(await demo.json(), {
+      reply: "Това е фиксиран owner-only демо отговор. Не е изпратена AI заявка.",
+      demo: true,
+    });
+    const trailingSlashDemo = await h.request("/demo-chat/", { message: "private health detail" }, { cookie });
+    assert.equal(trailingSlashDemo.status, 200);
+    assert.equal((await trailingSlashDemo.text()).includes("private health detail"), false);
     assert.equal((await h.request("/text-ai", { message: "private health detail" }, { cookie })).status, 404);
     assert.equal((await h.request("/text-ai/", { message: "private health detail" }, { cookie })).status, 404);
 
@@ -479,6 +486,7 @@ test("valid voice upload returns mocked transcript and text reply, then removes 
     assert.deepEqual(await response.json(), {
       transcript: "Искам да се разходя.",
       reply: "Нека започнем с кратка разходка.",
+      kind: "eli_text",
       mediaType: "voice",
       staged: true,
       demo: true,
@@ -603,17 +611,37 @@ test("mock-only media flag returns fixed non-analysis copy even when an OpenAI k
   }
 });
 
-test("retired demo chat always returns 404 without calling a provider", async () => {
+test("development demo chat returns fixed text without calling a provider or bot bridge", async () => {
   let providerCalls = 0;
+  let bridgeCalls = 0;
   const h = await serverHarness({
     textAi: async () => { providerCalls += 1; return "must not run"; },
+    bridgeFetch: async () => { bridgeCalls += 1; throw new Error("must not run"); },
+  });
+  try {
+    const cookie = await ownerCookie(h);
+    const response = await h.request("/demo-chat", { message: "synthetic" }, { cookie });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      reply: "Това е фиксиран owner-only демо отговор. Не е изпратена AI заявка.",
+      demo: true,
+    });
+    assert.equal(providerCalls, 0);
+    assert.equal(bridgeCalls, 0);
+  } finally {
+    await h.close();
+  }
+});
+
+test("fixed demo chat stays unavailable outside owner-only development staging", async () => {
+  const h = await serverHarness({
+    env: config({ NODE_ENV: "production", ELI_MINI_APP_STAGE: "production" }),
   });
   try {
     const cookie = await ownerCookie(h);
     const response = await h.request("/demo-chat", { message: "synthetic" }, { cookie });
     assert.equal(response.status, 404);
     assert.deepEqual(await response.json(), { error: "not_found" });
-    assert.equal(providerCalls, 0);
   } finally {
     await h.close();
   }

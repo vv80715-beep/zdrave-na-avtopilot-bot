@@ -461,6 +461,7 @@ export function registerMiniAppMediaRoutes(
             responseBody = {
               transcript: result.transcript,
               reply: result.reply,
+              kind: "eli_text",
               mediaType: "voice",
               staged: true,
               demo: true,

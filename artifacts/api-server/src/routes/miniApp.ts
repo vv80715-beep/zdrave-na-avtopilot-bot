@@ -693,8 +693,7 @@ export function createMiniAppRouter(
   // bot-owned text engine. Keep old URLs inert so stale clients fail closed.
   router.use((req, res, next) => {
     const legacyPath = req.path.toLowerCase().replace(/\/+$/, "");
-    if (legacyPath === "/demo-chat" ||
-        legacyPath === "/text-ai" ||
+    if (legacyPath === "/text-ai" ||
         legacyPath === "/text-ai/status") {
       sendError(res, 404, "not_found");
       return;
@@ -821,6 +820,10 @@ export function createMiniAppRouter(
   });
 
   router.post("/demo-chat", requireOwnerSession, (req, res) => {
+    if (!ownerOnlyStage) {
+      sendError(res, 404, "not_found");
+      return;
+    }
     const body = req.body;
     if (
       !body ||
