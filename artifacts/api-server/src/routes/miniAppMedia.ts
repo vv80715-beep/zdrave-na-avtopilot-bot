@@ -323,6 +323,7 @@ async function normalizeAudioToWav(filePath: string, directory: string): Promise
     const ffmpeg = spawn("ffmpeg", [
       "-nostdin", "-y", "-i", filePath,
       "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
+      "-t", String(MAX_AUDIO_SECONDS + 1),
       outputPath,
     ], { stdio: ["ignore", "ignore", "ignore"] });
     let settled = false;
@@ -379,7 +380,22 @@ export function registerMiniAppMediaRoutes(
   const processor = options.processor ?? createFixedMockProcessor();
   const inspectDuration = options.inspectAudioDuration ?? probeAudioDuration;
   const normalizeAudio = options.normalizeAudio ?? normalizeAudioToWav;
-  const limiter = makeLimiter(options.now ?? Date.now);
+  const limiters = new Map<string, { limiter: ReturnType<typeof makeLimiter>; touched: number }>();
+  const now = options.now ?? Date.now;
+  function userLimiter(userId: string) {
+    const current = now();
+    for (const [id, value] of limiters) {
+      if (current - value.touched > 600_000) limiters.delete(id);
+    }
+    let value = limiters.get(userId);
+    if (!value) {
+      if (limiters.size >= 1000) return null;
+      value = { limiter: makeLimiter(now), touched: current };
+      limiters.set(userId, value);
+    }
+    value.touched = current;
+    return value.limiter;
+  }
   const tempRoot = options.tempRoot ?? os.tmpdir();
 
   const handle = (kind: MediaKind): RequestHandler => async (req, res): Promise<void> => {
@@ -389,7 +405,8 @@ export function registerMiniAppMediaRoutes(
       sendMediaError(res, 503, "media_ai_unavailable");
       return;
     }
-    if (!limiter.acquire()) {
+    const limiter = userLimiter(String(res.locals.miniAppUserId));
+    if (!limiter?.acquire()) {
       sendMediaError(res, 429, "media_request_limited");
       return;
     }
@@ -402,6 +419,8 @@ export function registerMiniAppMediaRoutes(
         return;
       }
       upload = await receiveUpload(req, kind, tempRoot);
+      req.setTimeout(0);
+      if (liveVoiceTurn && !upload.turnId) fail(400, "turn_id_required");
       if (kind === "image") {
         const result = await processor.analyzeImage({
           path: upload.path,
@@ -411,12 +430,15 @@ export function registerMiniAppMediaRoutes(
         });
         responseBody = { reply: result.reply, mediaType: "image", staged: true, demo: true };
       } else {
-        const duration = await inspectDuration(upload.path);
+        // Browser MediaRecorder WebM/MP4 often has no container duration.
+        // Decode to bounded PCM first, then measure actual samples.
+        const normalizedPath = await normalizeAudio(upload.path, upload.directory);
+        const duration = await inspectDuration(normalizedPath);
+        if (!Number.isFinite(duration) || duration <= 0) fail(415, "invalid_audio");
         if (duration > MAX_AUDIO_SECONDS) {
           responseStatus = 413;
           responseBody = { error: "audio_too_long" };
         } else {
-          const normalizedPath = await normalizeAudio(upload.path, upload.directory);
           if (liveVoiceTurn) {
             const userId = res.locals.miniAppUserId;
             if (typeof userId !== "string") fail(401, "telegram_auth_required");
@@ -451,13 +473,16 @@ export function registerMiniAppMediaRoutes(
         responseStatus = error.status;
         responseBody = { error: error.code };
       } else {
-        req.log.error({ mediaType: kind }, "Mini App media processing failed");
+        req.log?.error({ mediaType: kind }, "Mini App media processing failed");
         responseStatus = 502;
         responseBody = { error: "media_processing_failed" };
       }
     } finally {
-      if (upload) await rm(upload.directory, { recursive: true, force: true });
-      limiter.release();
+      try {
+        if (upload) await rm(upload.directory, { recursive: true, force: true });
+      } finally {
+        limiter.release();
+      }
     }
     res.setHeader("Cache-Control", "no-store");
     res.status(responseStatus).json(responseBody ?? { error: "media_processing_failed" });

@@ -138,6 +138,17 @@ function loadSyntheticOwnerDossierModule() {
   }
 }
 
+test("reordered initData cannot mint another session without the original cookie", async () => {
+  const h = await serverHarness();
+  try {
+    assert.equal((await h.request("/session", { initData: signedInitData() })).status, 200);
+    const reordered = new URLSearchParams([...new URLSearchParams(signedInitData())].reverse()).toString();
+    assert.equal((await h.request("/session", { initData: reordered })).status, 401);
+  } finally {
+    await h.close();
+  }
+});
+
 async function ownerCookie(h) {
   const response = await h.request("/session", { initData: signedInitData() });
   assert.equal(response.status, 200);
@@ -416,6 +427,7 @@ test("voice upload enforces magic bytes and the 90 second limit; responses stay 
         transcribeAndAnswer: async () => { providerCalls += 1; return { transcript: "Здравей, Ели.", reply: "Здравей!" }; },
       },
       inspectAudioDuration: async () => 91,
+      normalizeAudio: async (filePath) => filePath,
     },
   });
   try {

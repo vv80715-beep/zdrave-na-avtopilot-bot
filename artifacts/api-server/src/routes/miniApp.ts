@@ -364,7 +364,12 @@ export function createMiniAppRouter(
     for (const [key, use] of usedInitData) {
       if (use.expiresAt <= timestamp) usedInitData.delete(key);
     }
-    const fingerprint = createHash("sha256").update(body.initData).digest("hex");
+    const canonicalFields = [...new URLSearchParams(body.initData).entries()]
+      .map(([key, value]) => [key, key === "hash" ? value.toLowerCase() : value] as [string, string])
+      .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+    const fingerprint = createHash("sha256")
+      .update(new URLSearchParams(canonicalFields).toString())
+      .digest("hex");
     const previousUse = usedInitData.get(fingerprint);
     if (previousUse) {
       const existing = readValidSession(req, sessionSecret, Math.floor(timestamp / 1000));
