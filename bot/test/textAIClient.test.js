@@ -6,6 +6,7 @@ process.env.OWNER_TELEGRAM_ID = '900000001';
 const {
   GEMINI_DEFAULT_MODEL,
   createGeminiClient,
+  createOpenAIClientWrapper,
   getProvider,
   getUsageSnapshot,
 } = require('../textAIClient');
@@ -40,6 +41,29 @@ test('provider defaults to OpenAI and the Gemini canary is owner-only', () => {
   );
   assert.equal(getProvider('900000002', { TEXT_AI_PROVIDER: 'gemini' }), 'gemini');
   assert.equal(getProvider('900000002', { TEXT_AI_PROVIDER: 'unsupported' }), 'invalid');
+});
+
+test('OpenAI uses the same per-user request limit and blocks before provider work', async () => {
+  let calls = 0;
+  const client = createOpenAIClientWrapper({
+    chat: {
+      completions: {
+        async create() {
+          calls += 1;
+          return { choices: [], usage: {} };
+        },
+      },
+    },
+  }, 'text-client-test-openai-rate-limit');
+
+  for (let i = 0; i < 12; i += 1) {
+    await client.chat.completions.create({ messages: [{ role: 'user', content: 'synthetic' }] });
+  }
+  await assert.rejects(
+    client.chat.completions.create({ messages: [{ role: 'user', content: 'synthetic' }] }),
+    /text_ai_rate_limited/
+  );
+  assert.equal(calls, 12);
 });
 
 test('Gemini maps system/history and output caps, and returns OpenAI-shaped results', async () => {
@@ -125,7 +149,7 @@ test('Gemini enforces a per-user request limit without retrying or leaking upstr
     client.chat.completions.create({
       messages: [{ role: 'user', content: 'test' }],
     }),
-    /gemini_rate_limited/
+    /text_ai_rate_limited/
   );
   assert.equal(calls, 12);
 });

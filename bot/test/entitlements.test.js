@@ -188,3 +188,13 @@ test('allowed modes are derived server-side — stale stored mode cannot unlock 
   assert.strictEqual(isModeAllowed(1013, 'avatar'), false); // …is not trusted
   assert.strictEqual((await checkFeatureCredits(1013, 'avatar')).allowed, false);
 });
+
+test('a corrupt entitlement store fails closed without replacing it with a fresh trial', () => {
+  const corruptStores = ['{invalid json', '[]', 'null'];
+  for (const contents of corruptStores) {
+    fs.writeFileSync(process.env.ENTITLEMENTS_PATH, contents);
+    assert.throws(() => ensureUser(1014), /entitlement_store_unavailable/);
+    assert.throws(() => getStatus(1014), /entitlement_store_unavailable/);
+    assert.strictEqual(fs.readFileSync(process.env.ENTITLEMENTS_PATH, 'utf8'), contents);
+  }
+});

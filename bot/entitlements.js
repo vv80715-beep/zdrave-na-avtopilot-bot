@@ -39,12 +39,24 @@ const PLAN_RULES = {
 const PAID_PLANS = new Set(['seven_day', 'monthly', 'yearly']);
 
 function load() {
+  let contents;
   try {
-    const data = JSON.parse(fs.readFileSync(FILE, 'utf8'));
-    return data && typeof data === 'object' ? data : {};
-  } catch (_) {
-    return {};
+    contents = fs.readFileSync(FILE, 'utf8');
+  } catch (error) {
+    if (error?.code === 'ENOENT') return {};
+    throw new Error('entitlement_store_unavailable');
   }
+
+  let data;
+  try {
+    data = JSON.parse(contents);
+  } catch (_) {
+    throw new Error('entitlement_store_unavailable');
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('entitlement_store_unavailable');
+  }
+  return data;
 }
 
 function save(data) {

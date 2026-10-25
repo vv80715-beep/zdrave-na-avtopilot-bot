@@ -7,7 +7,7 @@ test('production reserves the health port before starting the bot runtime', () =
   const source = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
   const startupModule = fs.readFileSync(path.join(__dirname, '..', 'startup.js'), 'utf8');
   const startup = source.slice(source.indexOf('async function start()'));
-  const runtime = startup.indexOf('runtime = await startBotRuntimeWithHealthServer(bot, app, PORT);');
+  const runtime = startup.indexOf('runtime = await startBotRuntimeWithHealthServer(bot, app, PORT, {');
   const awaitLaunch = startup.indexOf('await runtime.launchPromise;');
   assert.ok(runtime >= 0 && runtime < awaitLaunch);
   assert.ok(startup.includes('runtime?.stop();'));

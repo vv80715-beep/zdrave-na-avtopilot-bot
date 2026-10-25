@@ -51,11 +51,46 @@ function enforceRateLimit(userId, now = Date.now()) {
     }
   }
   if (userTimes.length >= USER_REQUEST_LIMIT || globalRequests.length >= GLOBAL_REQUEST_LIMIT) {
-    throw new Error('gemini_rate_limited');
+    throw new Error('text_ai_rate_limited');
   }
   userTimes.push(now);
   globalRequests.push(now);
   userWindows.set(id, userTimes);
+}
+
+function createOpenAIClientWrapper(client, userId) {
+  return {
+    chat: {
+      completions: {
+        async create(options = {}) {
+          enforceRateLimit(userId);
+          const { signal, ...parameters } = options;
+          const result = await client.chat.completions.create(
+            parameters,
+            signal ? { signal } : undefined,
+          );
+          const modelName = options.model || 'unknown';
+          const prices = MODEL_PRICES[modelName];
+          const promptTokens = Number(result?.usage?.prompt_tokens) || 0;
+          const outputTokens = Number(result?.usage?.completion_tokens) || 0;
+          const cachedTokens = Number(result?.usage?.prompt_tokens_details?.cached_tokens) || 0;
+          const estimatedUsd = prices && Number.isFinite(prices.input) && Number.isFinite(prices.output)
+            ? ((promptTokens - cachedTokens) * prices.input +
+              cachedTokens * prices.input * 0.5 +
+              outputTokens * prices.output) / 1_000_000
+            : null;
+          usage.requests += 1;
+          usage.inputTokens += promptTokens;
+          usage.outputTokens += outputTokens;
+          if (estimatedUsd !== null) usage.estimatedUsd += estimatedUsd;
+          console.info(
+            `Text AI usage provider=openai model=${modelName} input_tokens=${promptTokens} output_tokens=${outputTokens} estimated_usd=${estimatedUsd === null ? 'unavailable' : estimatedUsd.toFixed(6)}`
+          );
+          return result;
+        },
+      },
+    },
+  };
 }
 
 function normalizeMessages(messages) {
@@ -177,37 +212,7 @@ function getTextAIClient(userId, env = process.env) {
   if (provider === 'invalid') return null;
   if (provider === 'openai') {
     if (!openai) return null;
-    return {
-      chat: {
-        completions: {
-          async create(options = {}) {
-            const { signal, ...parameters } = options;
-            const result = await openai.chat.completions.create(
-              parameters,
-              signal ? { signal } : undefined,
-            );
-            const modelName = options.model || 'unknown';
-            const prices = MODEL_PRICES[modelName];
-            const promptTokens = Number(result?.usage?.prompt_tokens) || 0;
-            const outputTokens = Number(result?.usage?.completion_tokens) || 0;
-            const cachedTokens = Number(result?.usage?.prompt_tokens_details?.cached_tokens) || 0;
-            const estimatedUsd = prices && Number.isFinite(prices.input) && Number.isFinite(prices.output)
-              ? ((promptTokens - cachedTokens) * prices.input +
-                cachedTokens * prices.input * 0.5 +
-                outputTokens * prices.output) / 1_000_000
-              : null;
-            usage.requests += 1;
-            usage.inputTokens += promptTokens;
-            usage.outputTokens += outputTokens;
-            if (estimatedUsd !== null) usage.estimatedUsd += estimatedUsd;
-            console.info(
-              `Text AI usage provider=openai model=${modelName} input_tokens=${promptTokens} output_tokens=${outputTokens} estimated_usd=${estimatedUsd === null ? 'unavailable' : estimatedUsd.toFixed(6)}`
-            );
-            return result;
-          },
-        },
-      },
-    };
+    return createOpenAIClientWrapper(openai, userId);
   }
   if (!env.GEMINI_API_KEY) return null;
   return createGeminiClient({
@@ -224,6 +229,7 @@ function getUsageSnapshot() {
 module.exports = {
   GEMINI_DEFAULT_MODEL,
   createGeminiClient,
+  createOpenAIClientWrapper,
   getProvider,
   getTextAIClient,
   hasTextAIProvider,
