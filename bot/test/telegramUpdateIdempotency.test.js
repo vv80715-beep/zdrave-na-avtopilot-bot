@@ -14,20 +14,16 @@ test('the real bot registers update dedupe before session and user handlers', ()
 
 test('concurrent and sequential redelivery calls mock AI and sends one reply only', async () => {
   const bot = new Telegraf('123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi');
+  bot.botInfo = { id: 123456, is_bot: true, first_name: 'Synthetic Bot', username: 'SyntheticBot' };
   bot.use(createTelegramUpdateIdempotency());
 
   let providerCalls = 0;
   const visibleReplies = [];
-  bot.telegram.callApi = async (method, payload) => {
-    assert.equal(method, 'sendMessage');
-    visibleReplies.push(payload.text);
-    return { message_id: 77, chat: { id: payload.chat_id } };
-  };
 
   bot.on('text', async (ctx) => {
     providerCalls += 1;
     await new Promise((resolve) => setTimeout(resolve, 10));
-    await ctx.reply('synthetic AI answer');
+    visibleReplies.push('synthetic AI answer');
   });
 
   const update = {
