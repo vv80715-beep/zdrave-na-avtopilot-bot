@@ -138,7 +138,7 @@ test('/plans remains the same static plan menu without creating a trial or purch
   assert.deepEqual(h.purchases, []);
 });
 
-test('Mini App /start button stays off by default and requires an explicit HTTPS URL', async () => {
+test('normal /start never shows Mini App buttons for owners or customers, even when enabled', async () => {
   assert.equal(startCommands.createMiniAppStartMarkup({}), undefined);
   assert.equal(startCommands.createMiniAppStartMarkup({
     ELI_MINI_APP_START_BUTTON_ENABLED: 'true',
@@ -164,19 +164,21 @@ test('Mini App /start button stays off by default and requires an explicit HTTPS
       NODE_ENV: 'development',
       ELI_MINI_APP_URL: 'https://a8d764ea-44fd-403d-b30b-c4b99af8d5ca-00-139ynzw6poze2.worf.replit.dev/chat',
     },
+    publicMiniAppEnv: {
+      ELI_MINI_APP_PUBLIC_START_BUTTON_ENABLED: 'true',
+      ELI_MINI_APP_PUBLIC_START_READY: 'true',
+      NODE_ENV: 'production',
+      ELI_MINI_APP_PUBLIC_URL: 'https://eli.replit.app/chat',
+    },
   });
-  const nonOwnerStart = await h.send('/start');
-  assert.equal(nonOwnerStart[0].data.reply_markup, undefined);
 
-  const start = await h.send('/start', { from: 12345 });
-  const rows = start[0].data.reply_markup.inline_keyboard;
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].length, 1);
-  const button = rows[0][0];
-  assert.equal(button.text, 'Влез в Ели');
-  assert.deepEqual(button.web_app, {
-    url: 'https://a8d764ea-44fd-403d-b30b-c4b99af8d5ca-00-139ynzw6poze2.worf.replit.dev/chat',
-  });
+  for (const from of [23456, 12345]) {
+    const start = await h.send('/start', { from });
+    assert.equal(start.length, 1);
+    assert.equal(start[0].data.reply_markup, undefined);
+    assert.match(start[0].data.text, /Здравей/);
+    assert.doesNotMatch(start[0].data.text, /Влез в Ели|WebApp/i);
+  }
 
   const purchase = await h.send('/start buy_monthly');
   assert.equal(purchase[0].data.reply_markup.inline_keyboard[0][0].text, 'Confirm payment');
@@ -253,7 +255,7 @@ test('public /start CTA is default-off and requires production readiness plus a 
   }
 });
 
-test('public CTA is the only customer path; owner staging flag cannot expose its dev URL', async () => {
+test('staging and public Mini App settings never expose a /start button', async () => {
   const h = harness({
     miniAppEnv: {
       ELI_MINI_APP_START_BUTTON_ENABLED: 'true',
@@ -263,11 +265,9 @@ test('public CTA is the only customer path; owner staging flag cannot expose its
     },
     publicMiniAppEnv: {},
   });
-  assert.equal((await h.send('/start'))[0].data.reply_markup, undefined);
-  assert.equal(
-    (await h.send('/start', { from: 12345 }))[0].data.reply_markup.inline_keyboard[0][0].text,
-    'Влез в Ели',
-  );
+  for (const from of [23456, 12345]) {
+    assert.equal((await h.send('/start', { from }))[0].data.reply_markup, undefined);
+  }
 
   const publicH = harness({
     publicMiniAppEnv: {
@@ -279,11 +279,7 @@ test('public CTA is the only customer path; owner staging flag cannot expose its
   });
   for (const from of [23456, 12345]) {
     const reply = await publicH.send('/start', { from });
-    const rows = reply[0].data.reply_markup.inline_keyboard;
-    assert.equal(rows.length, 1);
-    assert.equal(rows[0].length, 1);
-    assert.equal(rows[0][0].text, 'Влез в Ели');
-    assert.deepEqual(rows[0][0].web_app, { url: 'https://eli.replit.app/chat' });
+    assert.equal(reply[0].data.reply_markup, undefined);
   }
   const group = await publicH.send('/start', {
     from: 23456,

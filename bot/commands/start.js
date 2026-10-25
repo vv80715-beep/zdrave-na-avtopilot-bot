@@ -132,8 +132,6 @@ function register(bot, {
   ownerName,
   purchasePlan,
   refreshPaymentComplete,
-  miniAppStartMarkup = () => createMiniAppStartMarkup(),
-  publicMiniAppStartMarkup = () => createPublicMiniAppStartMarkup(),
 }) {
   // Register after session and before stage: active wizards cannot swallow these
   // commands. Do not erase other session state or conversation memory.
@@ -156,16 +154,9 @@ function register(bot, {
     }
     ensureUser(ctx.from.id);
     const owner = isOwner(ctx);
-    let replyMarkup;
-    if (ctx.chat?.type === 'private') {
-      replyMarkup =
-        publicMiniAppStartMarkup() ||
-        (owner ? miniAppStartMarkup() : undefined);
-    }
     return ctx.reply(owner
       ? `Здравей, ${ownerName}! 👑 Радвам се да те видя.`
-      : `Здравей, ${ctx.from.first_name || 'приятелю'}! 👋 Аз съм Ели. Пиши ми или виж /help.`,
-    replyMarkup);
+      : `Здравей, ${ctx.from.first_name || 'приятелю'}! 👋 Аз съм Ели. Пиши ми или виж /help.`);
   });
 
   bot.help((ctx) => {
