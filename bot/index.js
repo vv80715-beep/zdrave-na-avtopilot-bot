@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const express = require('express');
 const { Telegraf, Scenes, session, Markup } = require('telegraf');
+const { createTelegramUpdateIdempotency } = require('./telegramUpdateIdempotency');
 const { SYSTEM_PROMPT, conversationFlowNote, stripLeadingGreeting } = require('./prompts');
 const openai = require('./openaiClient');
 const { getTextAIClient, hasTextAIProvider } = require('./textAIClient');
@@ -155,7 +156,10 @@ if (!TELEGRAM_BOT_TOKEN) {
 // Telegraf waits before logging a TimeoutError — not costs or retries.
 const bot = new Telegraf(TELEGRAM_BOT_TOKEN, { handlerTimeout: 8 * 60 * 1000 });
 
-// Session must be first
+// Drop duplicate Telegram deliveries before they can repeat paid work.
+bot.use(createTelegramUpdateIdempotency());
+
+// Session is the first stateful middleware.
 bot.use(session());
 
 // ── Escape commands ──────────────────────────────────────────────────────────
