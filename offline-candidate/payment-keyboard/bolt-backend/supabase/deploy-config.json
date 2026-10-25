@@ -1,0 +1,5 @@
+{
+  "approvedProjectRef": "aoaylzncorwakxcactox",
+  "functionName": "api",
+  "entrypoint": "supabase/functions/api/index.ts"
+}

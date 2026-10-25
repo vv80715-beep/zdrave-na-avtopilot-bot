@@ -1,0 +1,139 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const { MODE_BUTTON_LABELS, createModeKeyboard } = require('../modeKeyboard');
+
+// Execute the actual registered handlers, without starting Telegram, schedulers,
+// providers, or importing any production data stores.
+test('/mode -> select Avatar -> как си invokes Avatar, not text delivery', async () => {
+  const source = fs.readFileSync(require.resolve('../index'), 'utf8');
+  const between = (start, end) => {
+    const a = source.indexOf(start);
+    const b = source.indexOf(end, a);
+    assert.ok(a >= 0 && b > a);
+    return source.slice(a, b);
+  };
+  const commands = new Map(), hears = new Map(), handlers = new Map();
+  const modes = new Map();
+  const status = { canChat: true, plan: 'owner', allowedModes: ['text', 'voice', 'avatar'] };
+  let avatars = 0, voices = 0, triggerOverlong = false;
+  const replies = [];
+  const canaryFlags = {
+    aiBrain: true,
+    contextBuilder: true,
+    memoryCandidates: true,
+    unifiedProfile: true,
+    durableMemory: false,
+    durableReads: false,
+  };
+  const disabledFlags = {
+    aiBrain: false,
+    contextBuilder: false,
+    memoryCandidates: false,
+    unifiedProfile: false,
+    durableMemory: false,
+    durableReads: false,
+  };
+  const ownerV22Context = {
+    profile: { contractVersion: 'mock-profile' },
+    longTermFacts: [{ category: 'general', key: 'mock-fact', value: 'known mock fact' }],
+  };
+  const v22Inputs = [];
+  const ctx = {
+    from: { id: 900000020 }, message: { text: '/mode' },
+    reply: async text => replies.push(text), sendChatAction: async () => {},
+  };
+  const sandbox = {
+    MODE_BUTTON_LABELS, createModeKeyboard,
+    bot: {
+      command: (name, fn) => commands.set(name, fn),
+      hears: (name, fn) => hears.set(name, fn),
+      on: (name, fn) => handlers.set(name, fn),
+    },
+    Markup: { keyboard: () => ({ resize() { return this; }, oneTime() { return this; } }), removeKeyboard: () => ({}) },
+    getMode: id => modes.get(id) || 'text', setMode: (id, mode) => modes.set(id, mode),
+    resolveAccessStatus: async () => status, gateChat: async () => status,
+    modePermissionsText: () => 'Avatar ✅', planKeyboard: () => ({}),
+    maybeHandleCommandText: async () => false,
+    isOwner: () => true, touchConversationState: () => 'continuing',
+    getOwnerScopedEliV22Flags: owner => owner ? canaryFlags : disabledFlags,
+    ownerUniversalMemoryRuntime: {
+      prepareContext: async () => ({ flags: canaryFlags, facts: [], loaded: false }),
+      handle: async () => ({ handled: false }),
+    },
+    buildOwnerV22Context: userId => {
+      assert.equal(String(userId), String(ctx.from.id));
+      return ownerV22Context;
+    },
+    eliV22Adapter: {
+      prepare: input => {
+        v22Inputs.push(input);
+        return { legacy: true, safety: null, systemAddenda: [] };
+      },
+      rememberExchange: () => {},
+    },
+    isProfileQuery: () => false,
+    getOwnerDossierEntries: () => [],
+    applyOwnerDossierMemoryCommand: () => null,
+    detectOwnerDossierQuestion: () => null,
+    answerOwnerDossierQuestion: () => 'MOCK OWNER DOSSIER ANSWER',
+    formatOwnerDossierSummary: () => '',
+    buildOwnerDossierPrompt: () => '',
+    clearOwnerDossier: () => true,
+    detectExplicitPreferenceCommand: () => null,
+    detectOwnerFitnessMemoryCommand: () => null,
+    saveOwnerFitnessGoal: () => ({ ok: false, reason: 'invalid' }),
+    getOwnerRelationshipMemoryCaptureEnabled: () => false,
+    detectMemoryCommand: () => null,
+    isExplicitMemoryCue: () => false,
+    resolveLogQuery: () => null,
+    extractHealthEvents: () => [], ownerRecentTurns: () => [],
+    ownerRememberTurn: () => {}, conversationFlowNote: () => '',
+    SYSTEM_PROMPT: 'Mock persona', OWNER_MEMORY: 'Mock owner', LOOK_PROMPT_NOTE: '',
+    stripLeadingGreeting: text => text, parseLookTag: text => ({ text, category: 'default' }),
+    chooseLookCategory: () => 'default', resolveLookId: () => undefined,
+    openai: { chat: { completions: { create: async () => ({
+      choices: [{ message: { content: 'Добре съм.' } }],
+    }) } } },
+    hasTextAIProvider: () => true,
+    getTextAIClient: () => sandbox.openai,
+    sendAvatarReply: async (_ctx, _text, opts) => {
+      avatars++;
+      if (triggerOverlong) {
+        opts.onDurationExceeded?.(28);
+        return false;
+      }
+      return true;
+    },
+    sendVoiceReply: async () => { voices++; return true; },
+    console: { error: (...args) => assert.fail(args.join(' ')) },
+  };
+  vm.runInNewContext(
+    between('const MODE_TEXT_LABEL', '// ── Slash-command safety net') +
+    between('bot.hears(MODE_TEXT_LABEL', 'myprofile.register') +
+    between('async function askEli(', "bot.command('ask'") +
+    between("bot.on('text',", 'bot.catch('), sandbox);
+  await commands.get('mode')(ctx);
+  assert.match(replies.at(-1), /Avatar ✅/);
+  await hears.get('Говори с аватара на Ели')(ctx);
+  assert.equal(modes.get(ctx.from.id), 'avatar');
+  assert.match(replies.at(-1), /кратко видео/);
+  replies.length = 0;
+  ctx.message.text = 'как си';
+  await handlers.get('text')(ctx);
+  assert.equal(avatars, 1);
+  assert.equal(voices, 0);
+  assert.deepEqual(v22Inputs.at(-1).featureFlags, canaryFlags);
+  assert.deepEqual(v22Inputs.at(-1).profile, ownerV22Context.profile);
+  assert.deepEqual(v22Inputs.at(-1).longTermFacts, ownerV22Context.longTermFacts);
+  assert.deepEqual(replies, [], 'normal message must not use text delivery');
+
+  triggerOverlong = true;
+  await handlers.get('text')(ctx);
+  assert.equal(avatars, 2);
+  assert.equal(voices, 0);
+  assert.match(replies.at(-1), /^Добре съм\./, 'the existing AI answer remains the text fallback');
+  assert.match(replies.at(-1), /надхвърли лимита от 20 секунди/);
+  assert.match(replies.at(-1), /няма да стартирам второ видео автоматично/);
+});

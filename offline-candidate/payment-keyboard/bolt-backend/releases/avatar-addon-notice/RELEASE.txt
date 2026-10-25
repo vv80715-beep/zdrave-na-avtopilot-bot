@@ -1,0 +1,149 @@
+AVATAR ADD-ON NOTIFICATION — ACTIVATED WITH USER APPROVAL
+
+Activation verification — 2026-10-01
+------------------------------------
+The user explicitly approved the single notification migration and both Edge
+deployments. Before activation, deployed API/aftercare files and the two SQL
+functions matched the captured baselines; relevant catalog entries matched.
+The notification migration was applied, then payment-aftercare and api deployed.
+Both returned ACTIVE. Read-only health checks returned HTTP 200: api ready,
+aftercare ready, and Supabase-runtime bot identity verified as EliZdraveBot.
+Both updated RPCs retain service-role-only execution. Before/after fingerprints
+of existing outbox rows, add-on purchases and add-on balances were identical.
+No bot restart, real purchase, Telegram message or HeyGen generation was run.
+Actual payment-to-Telegram delivery was not exercised in production.
+
+The preparation and rollout instructions below document this release's original
+scope. The migration is now applied: DO NOT reapply it or deploy these snapshots
+over newer live source without a new drift check and approval.
+
+Scope and source
+---------------
+Prepared solely for the uploaded Bulgarian notification request.
+baseline/ contains freshly captured deployed api v38 and payment-aftercare v6
+source, their metadata and two live SQL function definitions. schema.json is a
+read-only catalog capture (no customer rows). Do NOT deploy the stale tracked
+bolt-backend/supabase/functions/api/index.ts over production.
+
+supabase/ here is the release candidate derived from those live sources.
+No production mutations, deployments, real purchases, Telegram sends, HeyGen
+calls, secret changes, bot restarts or reservation migrations were performed.
+
+Exact delivery
+--------------
+✅ Плащането е потвърдено. Добавихме {MINUTES} допълнителни Avatar минути към профила ти. Те не изтичат и се използват след включеното Avatar време от плана.
+
+MINUTES comes from the credited purchase, only 20/50/100/200. No LLM, metadata
+minute count, buttons or extra message. The existing shared aftercare sender
+verifies EliZdraveBot identity, claims the existing outbox, renders this event
+type, sends once and acknowledges with the existing lease fence.
+
+Transaction and limitations
+---------------------------
+The existing credit RPC keeps its signature, arithmetic and duplicate path.
+Its only functional addition inserts a receipt after the paid-purchase update,
+inside the SAME credit transaction. Credit + receipt commit before the API
+attempts delivery. If receipt persistence fails, uncommitted credit rolls back;
+this is distinct from a Telegram failure after commit, which cannot undo credit.
+The API adds only an import, post-credit hook and notification result field.
+
+Purchase ID and Checkout session each have a unique outbox constraint. Claim
+rechecks paid purchase, session, recipient, minutes/seconds, package, amount,
+currency, paid timestamp and balance evidence, with no new subscription gate.
+This preserves Owner/Admin behavior and purchased minutes after plan expiry.
+Unpaid/failed/cancelled/expired paths do not dispatch. Duplicate paid purchases
+do not create missing receipts: no retrospective sending or backfill.
+
+Telegram has no sendMessage idempotency key. Exactly-once delivery cannot be
+guaranteed across a lost response/process crash. Ambiguous timeout, malformed
+response, 5xx, wrong returned chat or lost DB acknowledgement are NOT resent.
+Persisted sending intent becomes uncertain on a subsequent claim after lease
+expiry; if no subsequent dispatch occurs it remains sending, not retryable.
+Manual review is required; never reset uncertain/sending to pending blindly.
+Only an explicit 429 rejection is retry-eligible, subject to existing due time
+and five-attempt cap. Definitive 4xx rejection is terminal.
+
+No scheduler is introduced. Delivery is attempted immediately after a successful
+credit RPC. A safely pending/due-retry receipt can be dispatched through the
+existing authenticated admin /admin/dispatch endpoint in payment-aftercare;
+duplicate new Stripe processing may also revisit an existing receipt. Existing
+webhook event deduplication is unchanged and must NOT be relied on as a worker.
+Missed dispatch/crash-before-hook remains durable for operator dispatch. No
+automatic sweep/backfill is included. Admin overview remains plan-only to avoid
+changing existing UI contract; addon receipt IDs are available to an authorized
+operator from payment_notification_outbox. The existing admin dispatch endpoint
+can handle both event types after this candidate is deployed.
+
+EXACT PROPOSED LIVE SURFACES — EXPLICIT USER APPROVAL REQUIRED FIRST
+----------------------------------------------------------------
+1 database migration ONLY:
+  supabase/migrations/20261001150000_avatar_addon_notification.sql
+  - Extend ONE existing table, payment_notification_outbox:
+    4 new addon columns; 4 existing plan-only columns become nullable, with a
+    strict event-shape CHECK preserving their required presence for plan events.
+    1 new foreign key, 2 UNIQUE constraints/indexes (purchase and Checkout),
+    1 new event-shape CHECK, expanded existing event-type CHECK.
+    Other constraints/indexes/RLS remain unchanged.
+  - Replace TWO existing functions:
+    credit_avatar_addon_purchase: insert receipt after credit, no other changes.
+    claim_payment_notification: addon-specific proof branch; existing plan
+    evidence, leasing, ambiguity and five-attempt logic preserved.
+  - Preserve service_role-only execute permissions (explicit reassertion).
+  - ZERO new tables, triggers or DB functions. ZERO existing-row backfill.
+
+2 Edge Function deployments ONLY, from THIS candidate, verify_jwt=false as live:
+  api bundle (7 files):
+    api/index.ts
+    _shared/revolut-checkout.mjs                  [unchanged live dependency]
+    _shared/revolut-test-links.mjs                [unchanged live dependency]
+    _shared/avatar-addon-aftercare.mjs
+    _shared/avatar-addon-notification.mjs
+    _shared/payment-notification.mjs
+    _shared/payment-notification-store.mjs
+  payment-aftercare bundle (4 files):
+    payment-aftercare/index.ts
+    _shared/payment-notification.mjs
+    _shared/avatar-addon-notification.mjs
+    _shared/payment-notification-store.mjs
+  8 distinct source files total across the two bundles.
+  Existing plan sender/renderer is unchanged except event-specific routing;
+  its DB adapter is extracted verbatim for both entrypoints. Existing customer/
+  admin auth and confirm routes remain unchanged. Overview explicitly filters
+  plan events so nullable addon-only fields do not alter the plan UI.
+
+ZERO bot deployments/restarts, frontend changes, price/Stripe Checkout changes,
+Text/Voice/Community/HeyGen changes, reservation/usage/consumption changes.
+The already-applied 20261001120000_avatar_addon_reservations migration is NOT
+included and must NOT be applied/reapplied as part of this release.
+
+Before any live action: explain the above and obtain explicit permission for
+exactly this one migration and two Edge deployments. "Please begin" authorizes
+local preparation only, not production changes. No bot restart is needed.
+Re-fetch live source/schema/function definitions before approval execution and
+compare to baseline; stop/rebase on drift. Do not run broad supabase db push or
+repository-wide deploy scripts. Confirm existing API runtime has the intended
+Telegram token configured without printing/changing secrets. No real send for
+deployment verification without separate permission.
+
+Suggested approved sequence: migration, payment-aftercare bundle, API bundle.
+The outbox holds notices until a dispatcher runs. Existing API plan dispatch
+is unaffected. Never rollback durable receipts or paid balances. Any rollback
+needs separate review; restoring old claim logic while addon events exist can
+incorrectly suppress them.
+
+Local verification (no network/customer files)
+---------------------------------------------
+node --test bolt-backend/releases/avatar-addon-notice/tests/notification.test.mjs
+bash bolt-backend/releases/avatar-addon-notice/tests/run-local-db.sh
+
+The database test initializes a disposable socket-only PostgreSQL cluster under
+/tmp, unsets connection variables, loads catalog-derived fixtures, applies only
+the notification migration and removes its cluster on exit. It never uses
+Supabase credentials. This test server is not the app or a production workflow.
+JS tests execute actual API functions in a VM and shared sender with mocked
+Stripe/Telegram/DB boundaries; no bot customer JSON writers are imported.
+
+Verified locally: 36/36 Node tests passed, 26 PostgreSQL checks passed (including
+real concurrent credit and claim sessions), both Edge entrypoints transpile
+without TypeScript syntax diagnostics, all six shared .mjs modules pass
+node --check. These are isolated tests, not live Supabase/Telegram verification.

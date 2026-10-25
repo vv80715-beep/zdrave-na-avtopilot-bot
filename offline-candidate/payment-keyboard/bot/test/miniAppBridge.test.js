@@ -1,0 +1,241 @@
+const assert = require('node:assert/strict');
+const express = require('express');
+const test = require('node:test');
+const {
+  createClaim, verifyClaim, CLAIM_PATH, TEXT_TURN_PATH, MUTATION_PATH, VOICE_TURN_PATH, COACH_TURN_PATH,
+} = require('../miniAppBridgeAuth');
+const { createMiniAppBridgeRouter } = require('../miniAppBridge');
+const { createMiniAppSnapshotReader } = require('../miniAppReadModel');
+
+const SECRET = 'synthetic-bridge-secret-at-least-32-characters';
+const NOW = 1_800_000_000;
+const OWNER = '123456789';
+const CLIENT_ONE = '987654321';
+const CLIENT_TWO = '876543219';
+
+async function listen(readSnapshot, processTextTurn, processMutation, processCoachTurn) {
+  const app = express();
+  app.use(express.json());
+  app.use(createMiniAppBridgeRouter({
+    secret: SECRET,
+    now: () => NOW,
+    readSnapshot,
+    processTextTurn,
+    processMutation,
+    processCoachTurn,
+  }));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((resolve, reject) => {
+    server.once('listening', resolve);
+    server.once('error', reject);
+  });
+  const address = server.address();
+  return {
+    request(token, body = {}, path = CLAIM_PATH) {
+      return fetch(`http://127.0.0.1:${address.port}${path}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+    },
+    close() {
+      return new Promise((resolve, reject) =>
+        server.close(error => error ? reject(error) : resolve()));
+    },
+  };
+}
+
+test('coaching bridge verifies the user-bound claim and forwards only the chosen coaching action', async () => {
+  let received;
+  const server = await listen(undefined, undefined, undefined, async (input) => {
+    received = input;
+    return { kind: 'coaching', text: 'Synthetic coaching response' };
+  });
+  try {
+    const token = createClaim(CLIENT_ONE, SECRET, NOW, COACH_TURN_PATH);
+    const response = await server.request(token, { action: 'weeklyreview' }, COACH_TURN_PATH);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      ok: true, kind: 'coaching', text: 'Synthetic coaching response',
+    });
+    assert.deepEqual(received, { userId: CLIENT_ONE, action: 'weeklyreview' });
+    assert.equal((await server.request(token, { action: 'coach' }, COACH_TURN_PATH)).status, 401);
+  } finally {
+    await server.close();
+  }
+});
+
+test('internal mutation bridge uses a separate path-bound claim and bot-derived identity', async () => {
+  let received;
+  const server = await listen(async () => ({}), undefined, async (input) => {
+    received = input;
+    return { action: input.action, record: { field: 'age', value: 40 } };
+  });
+  try {
+    const token = createClaim(OWNER, SECRET, NOW, MUTATION_PATH);
+    const response = await server.request(token, {
+      action: 'profile.update', payload: { field: 'age', value: '40' },
+    }, MUTATION_PATH);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      ok: true, action: 'profile.update', record: { field: 'age', value: 40 },
+    });
+    assert.deepEqual(received, {
+      userId: OWNER, action: 'profile.update', payload: { field: 'age', value: '40' },
+    });
+    assert.equal((await server.request(token, {}, MUTATION_PATH)).status, 401);
+  } finally {
+    await server.close();
+  }
+});
+
+test('voice bridge accepts only binary audio on the voice-bound signed claim and keeps user identity server-side', async () => {
+  const calls = [];
+  const app = express();
+  app.use(express.json());
+  app.use(createMiniAppBridgeRouter({
+    secret: SECRET,
+    now: () => NOW,
+    processVoiceTurn: async input => {
+      calls.push(input);
+      return { transcript: 'synthetic transcript', reply: 'synthetic reply', kind: 'eli_text' };
+    },
+  }));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((resolve, reject) => {
+    server.once('listening', resolve);
+    server.once('error', reject);
+  });
+  const { port } = server.address();
+  const turnId = 'f9b2d7a0-0e22-4e10-a987-7eea4ebf0667';
+  const audio = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WAVE'), Buffer.alloc(36)]);
+  const token = createClaim(CLIENT_ONE, SECRET, NOW, VOICE_TURN_PATH);
+  const request = () => fetch(`http://127.0.0.1:${port}${VOICE_TURN_PATH}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/octet-stream',
+      'X-Eli-Mode': 'voice',
+      'X-Eli-Turn-Id': turnId,
+      'X-Eli-Prompt': Buffer.from('synthetic prompt').toString('base64url'),
+    },
+    body: audio,
+  });
+  try {
+    const response = await request();
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      ok: true, transcript: 'synthetic transcript', reply: 'synthetic reply', kind: 'eli_text',
+    });
+    assert.deepEqual(calls, [{
+      userId: CLIENT_ONE, audio, mode: 'voice', turnId, prompt: 'synthetic prompt',
+    }]);
+    assert.equal((await request()).status, 401, 'signed claims are one-use');
+  } finally {
+    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
+test('internal bridge requires valid short-lived signed claims and rejects replay', async () => {
+  let calls = 0;
+  const server = await listen(async userId => {
+    calls += 1;
+    return { owner: userId === OWNER, userId };
+  });
+  try {
+    assert.equal((await server.request('invalid')).status, 401);
+    const expired = createClaim(CLIENT_ONE, SECRET, NOW - 31);
+    assert.equal((await server.request(expired)).status, 401);
+
+    const token = createClaim(CLIENT_ONE, SECRET, NOW);
+    assert.deepEqual(verifyClaim(token, SECRET, NOW), {
+      userId: CLIENT_ONE,
+      nonce: verifyClaim(token, SECRET, NOW).nonce,
+      path: CLAIM_PATH,
+    });
+    const response = await server.request(token, { userId: OWNER });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      ok: true,
+      snapshot: { owner: false, userId: CLIENT_ONE },
+    });
+    assert.equal((await server.request(token)).status, 401);
+    assert.equal(calls, 1);
+  } finally {
+    await server.close();
+  }
+});
+
+test('internal text turn is owner checked, one-delivery, and protected by a path-bound claim', async () => {
+  const calls = [];
+  const server = await listen(
+    async () => ({}),
+    async input => {
+      calls.push(input);
+      return { reply: 'synthetic bot reply', kind: 'eli_text' };
+    },
+  );
+  try {
+    const token = createClaim(OWNER, SECRET, NOW, TEXT_TURN_PATH);
+    const turnId = 'f9b2d7a0-0e22-4e10-a987-7eea4ebf0667';
+    const response = await server.request(token, {
+      message: 'synthetic prompt', mode: 'text', turnId,
+    }, TEXT_TURN_PATH);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      ok: true, reply: 'synthetic bot reply', kind: 'eli_text',
+    });
+    assert.deepEqual(calls, [{
+      userId: OWNER, message: 'synthetic prompt', mode: 'text', turnId,
+    }]);
+    assert.equal((await server.request(token, {
+      message: 'again', mode: 'text', turnId,
+    }, TEXT_TURN_PATH)).status, 401);
+
+    const wrongPath = createClaim(OWNER, SECRET, NOW);
+    assert.equal((await server.request(wrongPath, {
+      message: 'no', mode: 'text', turnId,
+    }, TEXT_TURN_PATH)).status, 401);
+  } finally {
+    await server.close();
+  }
+});
+
+test('legacy read model scopes all source stores to verified subject and dossier to owner only', async () => {
+  const calls = [];
+  const reader = createMiniAppSnapshotReader({
+    getUser: id => (calls.push(['profile', id]), { id }),
+    getMemory: id => (calls.push(['memory', id]), { id }),
+    getUserMemories: id => (calls.push(['relationship', id]), []),
+    getHealthLogs: id => (calls.push(['health', id]), []),
+    getCheckins: id => (calls.push(['checkins', id]), []),
+    getReminders: id => (calls.push(['reminders', id]), []),
+    getMode: id => (calls.push(['mode', id]), 'text'),
+    resolveAccessStatus: async ctx => {
+      const id = String(ctx.from.id);
+      calls.push(['entitlement', id]);
+      return {
+        plan: 'free', state: 'trial_expired', allowedModes: [], canChat: false,
+        planExpiresAt: null, trialExpiresAt: null, backendVerified: true,
+      };
+    },
+    isOwnerId: id => id === OWNER,
+    getOwnerDossierEntries: id => (calls.push(['dossier', id]), [{ id: 'synthetic-owner-only' }]),
+  });
+
+  const owner = await reader(OWNER);
+  const one = await reader(CLIENT_ONE);
+  const two = await reader(CLIENT_TWO);
+  assert.equal(owner.ownerDossier.length, 1);
+  assert.equal(Object.hasOwn(one, 'ownerDossier'), false);
+  assert.equal(Object.hasOwn(two, 'ownerDossier'), false);
+  assert.equal(one.entitlement.state, 'trial_expired');
+  assert.deepEqual(one.checkins, []);
+  assert.deepEqual(one.healthLogs, []);
+  for (const [, id] of calls) assert.ok([OWNER, CLIENT_ONE, CLIENT_TWO].includes(id));
+  assert.equal(calls.filter(([source]) => source === 'dossier').length, 1);
+  await assert.rejects(reader('not-a-telegram-id'), /mini_app_user_invalid/);
+});

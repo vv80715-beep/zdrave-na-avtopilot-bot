@@ -1,0 +1,484 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: API specification
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: mini-app
+    description: Disabled-by-default owner-only staging demo routes
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+  /mini-app/session:
+    post:
+      operationId: createMiniAppSession
+      tags: [mini-app]
+      summary: Validate Telegram initData and create a short-lived per-user session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MiniAppSessionInput"
+      responses:
+        "200":
+          description: Session cookie issued for the Telegram user in signed initData
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniAppSession"
+        "400":
+          description: Invalid request
+        "401":
+          description: Invalid or stale Telegram initData
+        "403":
+          description: Request is not from the configured origin
+  /mini-app/chat:
+    post:
+      operationId: postMiniAppTextTurn
+      tags: [mini-app]
+      summary: Send an owner-only staging text turn through the existing bot engine
+      description: The API forwards only the validated session identity and text to the bot-owned engine. It does not call AI providers or write legacy stores itself.
+      security:
+        - MiniAppSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MiniAppTextTurnInput"
+      responses:
+        "200":
+          description: Reply produced by the existing bot-side text engine
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniAppTextTurnResponse"
+        "401":
+          description: Valid owner session required
+        "403":
+          description: Request is not from the configured origin
+  /mini-app/coaching:
+    post:
+      operationId: postMiniAppCoaching
+      tags: [mini-app]
+      summary: Run one explicit coaching action through the existing bot coaching service
+      description: Requires the authenticated user session and active chat entitlement. The bot reuses its existing coaching generators; no action runs automatically from opening the app.
+      security:
+        - MiniAppSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MiniAppCoachingInput"
+      responses:
+        "200":
+          description: Coaching response or no-data result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniAppCoachingResponse"
+        "401":
+          description: Valid Telegram session required
+        "403":
+          description: Request is not from the configured origin
+        "429":
+          description: Coaching request rate limit reached
+        "503":
+          description: Bot bridge or text AI provider unavailable
+  /mini-app/profile:
+    post:
+      operationId: readMiniAppProfileSnapshot
+      tags: [mini-app]
+      summary: Read the authenticated Telegram user's existing bot profile and progress stores
+      description: Read-only. The Telegram ID comes only from the signed server session. The API forwards a signed internal claim to the existing bot process, which owns legacy JSON access. Owner dossier is included only for the verified owner.
+      security:
+        - MiniAppSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MiniAppProfileRequest"
+      responses:
+        "200":
+          description: Authenticated user's existing read-only bot data and entitlement status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniAppProfileResponse"
+        "400":
+          description: Invalid request or client-supplied identity
+        "401":
+          description: Valid Telegram session required
+        "403":
+          description: Request is not from the configured origin
+        "503":
+          description: Internal bot bridge, legacy store, or entitlement service unavailable
+  /mini-app/mutations:
+    post:
+      operationId: postMiniAppMutation
+      tags: [mini-app]
+      summary: Apply one validated mutation through the authenticated bot-owned writer
+      description: The Telegram ID is derived from the owner session. The API forwards the mutation over a short-lived signed loopback claim; only the running bot process accesses existing stores.
+      security:
+        - MiniAppSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MiniAppMutationInput"
+      responses:
+        "200":
+          description: The bot-owned record mutation completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniAppMutationResponse"
+        "400":
+          description: Invalid mutation
+        "401":
+          description: Valid owner session required
+        "403":
+          description: Request is not from the configured origin or operation is not allowed for this role
+        "404":
+          description: Profile or record not found
+        "422":
+          description: Health log text did not contain a recognized event
+        "503":
+          description: Bot-owned writer unavailable
+  /mini-app/media/image:
+    post:
+      operationId: postMiniAppOwnerImage
+      tags: [mini-app]
+      summary: Analyze one image in the explicitly enabled owner-only development staging route
+      description: Disabled by default. Requires the existing owner session and exact configured origin. Uses OpenAI only when the separate media AI flag is explicitly enabled.
+      security:
+        - MiniAppSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/MiniAppImageUpload"
+      responses:
+        "200":
+          description: Staging-only image analysis result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniAppImageResult"
+        "400":
+          description: Invalid multipart fields
+        "401":
+          description: Valid owner session required
+        "403":
+          description: Request is not from the configured origin
+        "404":
+          description: Media AI feature is disabled
+        "413":
+          description: Image exceeds the upload limit
+        "415":
+          description: Unsupported or invalid image type
+        "429":
+          description: Staging rate or concurrency limit reached
+        "502":
+          description: Media processing failed
+        "503":
+          description: OpenAI is not configured
+  /mini-app/media/voice:
+    post:
+      operationId: postMiniAppVoiceTurn
+      tags: [mini-app]
+      summary: Send one voice recording through the authenticated bot voice-turn path
+      description: Disabled unless explicitly enabled. Production identity and entitlements are checked server-side; development staging remains owner-only. Audio is temporary and removed after processing.
+      security:
+        - MiniAppSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/MiniAppVoiceUpload"
+      responses:
+        "200":
+          description: Transcript, Eli response, and optional audio or avatar media
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniAppVoiceResult"
+        "400":
+          description: Invalid multipart fields
+        "401":
+          description: Valid Mini App session required
+        "403":
+          description: Request is not from the configured origin
+        "404":
+          description: Media AI feature is disabled
+        "413":
+          description: Audio exceeds the upload or duration limit
+        "415":
+          description: Unsupported or invalid audio type
+        "429":
+          description: Voice request rate or concurrency limit reached
+        "502":
+          description: Media processing failed
+        "503":
+          description: Bot bridge or a required provider is unavailable
+components:
+  securitySchemes:
+    MiniAppSessionCookie:
+      type: apiKey
+      in: cookie
+      name: eli_mini_session
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+    MiniAppSessionInput:
+      type: object
+      properties:
+        initData:
+          type: string
+          minLength: 1
+          maxLength: 16384
+      required: [initData]
+      additionalProperties: false
+    MiniAppSession:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          const: true
+        expiresAt:
+          type: string
+          format: date-time
+      required: [ok, expiresAt]
+    MiniAppTextTurnInput:
+      type: object
+      properties:
+        message:
+          type: string
+          minLength: 1
+          maxLength: 1200
+        mode:
+          type: string
+          enum: [text, voice, avatar]
+        turnId:
+          type: string
+          format: uuid
+        language:
+          type: string
+          enum: [bg, en]
+      required: [message, turnId]
+      additionalProperties: false
+    MiniAppCoachingInput:
+      type: object
+      properties:
+        action:
+          type: string
+          enum: [coach, motivate, nextstep, weeklyreview]
+      required: [action]
+      additionalProperties: false
+    MiniAppCoachingResponse:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum: [coaching, no_data, access_denied]
+        text:
+          type: string
+          maxLength: 12000
+      required: [kind, text]
+      additionalProperties: false
+    MiniAppProfileRequest:
+      type: object
+      additionalProperties: false
+    MiniAppProfileResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        mode:
+          type: string
+          const: read_only
+        snapshot:
+          type: object
+          additionalProperties: true
+      required: [mode, snapshot]
+    MiniAppMutationInput:
+      type: object
+      properties:
+        action:
+          type: string
+          enum:
+            - profile.update
+            - memory.update
+            - health.append
+            - checkin.save
+            - checkin.delete
+            - reminder.create
+            - reminder.update
+            - reminder.delete
+        payload:
+          type: object
+          additionalProperties: true
+      required: [action, payload]
+      additionalProperties: false
+    MiniAppMutationResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          const: true
+        action:
+          type: string
+          enum:
+            - profile.update
+            - memory.update
+            - health.append
+            - checkin.save
+            - checkin.delete
+            - reminder.create
+            - reminder.update
+            - reminder.delete
+        record:
+          type: object
+          additionalProperties: true
+        records:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        date:
+          type: string
+          format: date
+        id:
+          type: string
+      required: [ok, action]
+      additionalProperties: true
+    MiniAppTextTurnResponse:
+      type: object
+      properties:
+        reply:
+          type: string
+          minLength: 1
+        kind:
+          type: string
+          enum: [eli_text, access_denied, voice, avatar]
+        media:
+          type: object
+          properties:
+            type:
+              type: string
+              enum: [audio, video]
+            mimeType:
+              type: string
+              enum: [audio/ogg]
+            data:
+              type: string
+              maxLength: 8000000
+            url:
+              type: string
+              format: uri
+              maxLength: 2048
+          required: [type]
+          additionalProperties: false
+      required: [reply, kind]
+      additionalProperties: false
+    MiniAppImageUpload:
+      type: object
+      properties:
+        file:
+          type: string
+          format: binary
+          description: One JPEG, PNG, or WebP image up to 8 MiB
+        language:
+          type: string
+          enum: [bg, en]
+        caption:
+          type: string
+          maxLength: 1200
+      required: [file]
+    MiniAppVoiceUpload:
+      type: object
+      properties:
+        file:
+          type: string
+          format: binary
+          description: One supported audio recording up to 15 MiB and 90 seconds
+        language:
+          type: string
+          enum: [bg, en]
+        mode:
+          type: string
+          enum: [text, voice, avatar]
+          default: text
+        turnId:
+          type: string
+          format: uuid
+        prompt:
+          type: string
+          maxLength: 1200
+      required: [file, turnId]
+    MiniAppImageResult:
+      type: object
+      properties:
+        reply:
+          type: string
+        mediaType:
+          type: string
+          const: image
+        staged:
+          type: boolean
+          const: true
+      required: [reply, mediaType, staged]
+    MiniAppVoiceResult:
+      type: object
+      properties:
+        transcript:
+          type: string
+        reply:
+          type: string
+        mediaType:
+          type: string
+          const: voice
+        staged:
+          type: boolean
+        demo:
+          type: boolean
+        kind:
+          type: string
+          enum: [eli_text, voice, avatar, access_denied, transcription_unclear]
+        media:
+          type: object
+          additionalProperties: true
+      required: [transcript, reply, mediaType, staged, demo, kind]
+      additionalProperties: false
+
