@@ -1,13 +1,14 @@
 /** Deterministic after-payment delivery; no LLM, checkout creation or access grants. */
 import { AVATAR_ADDON_EVENT, buildAvatarAddonNotification } from './avatar-addon-notification.mjs';
+import { isSupportedPlanPaymentAmount, paidPlanModeKeyboard } from './paid-plan-mode-keyboard.mjs';
 export const AFTERCARE_VERSION = '2026-09-18-v1';
 export const ELI_BOT_USERNAME = 'EliZdraveBot';
 export const DEFAULT_SITE_ORIGIN = 'https://zdrave-na-avtopilot-dkr6.bolt.host';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PLANS = Object.freeze({
-  seven_day: { label: '7-дневният план', modes: 'текст, глас и Общност' },
-  monthly: { label: 'Месечният план', modes: 'текст, глас, Avatar видео и Общност' },
-  yearly: { label: 'Годишният план', modes: 'текст, глас, Avatar видео и Общност' },
+  seven_day: { label: '7-дневният план', modes: 'текст и глас' },
+  monthly: { label: 'Месечният план', modes: 'текст, глас и Avatar видео' },
+  yearly: { label: 'Годишният план', modes: 'текст, глас и Avatar видео' },
 });
 export function isUuid(value) { return typeof value === 'string' && UUID.test(value); }
 
@@ -32,7 +33,8 @@ export function buildPaymentNotification(event, { siteOrigin = DEFAULT_SITE_ORIG
   if (!plan || event?.event_type !== 'payment_confirmed_plan_activated' || event.status !== 'sending'
       || !isUuid(event.id) || !isUuid(event.payment_id) || !isUuid(event.purchase_session_id)
       || !/^[1-9][0-9]{4,15}$/.test(chatId) || !Number.isSafeInteger(Number(chatId))
-      || event.amount_cents !== 100 || event.currency !== 'eur'
+      || !isSupportedPlanPaymentAmount(event.plan_id, event.amount_cents, event.owner_test_verified === true)
+      || event.currency !== 'eur'
       || !Number.isFinite(paidAt) || paidAt > now + 60000
       || !Number.isFinite(expiresAt) || expiresAt <= now || expiresAt <= paidAt) {
     throw new Error('invalid_verified_payment_event');
@@ -44,16 +46,15 @@ export function buildPaymentNotification(event, { siteOrigin = DEFAULT_SITE_ORIG
   return {
     chat_id: chatId,
     text: [
-      'Плащането ти от 1 € е потвърдено.',
+      `Плащането ти от ${(event.amount_cents / 100).toLocaleString('bg-BG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} € е потвърдено.`,
       `${plan.label} е активен до ${expiry} (българско време).`,
       `Включен достъп: ${plan.modes}.`,
       '',
       'Добре дошъл в „Здраве на автопилот“! Аз съм Ели и ще ти помагам стъпка по стъпка.',
-      'Отвори Общността от бутона по-долу и влез с профила, свързан с твоя Telegram.',
-      'С /mode можеш да избереш как да общуваш с мен.',
+      'Избери режим от бутоните по-долу.',
     ].join('\n'),
     link_preview_options: { is_disabled: true },
-    reply_markup: { inline_keyboard: [[{ text: 'Отвори Общността', url: communityUrlFor(siteOrigin) }]] },
+    reply_markup: paidPlanModeKeyboard(event.plan_id),
   };
 }
 
