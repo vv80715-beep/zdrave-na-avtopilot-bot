@@ -185,3 +185,28 @@ test('Gemini provider errors are sanitized and not retried', async () => {
   assert.equal(calls, 1);
   assert.deepEqual(getUsageSnapshot().requests >= 0, true);
 });
+
+test('OpenAI enforces the shared global request limit across users', async () => {
+  let calls = 0;
+  const now = Date.now() + 60_001;
+  const mockClient = {
+    chat: {
+      completions: {
+        async create() {
+          calls += 1;
+          return { choices: [], usage: {} };
+        },
+      },
+    },
+  };
+  for (let i = 0; i < 120; i += 1) {
+    await createOpenAIClientWrapper(mockClient, `global-limit-${i}`, { now: () => now })
+      .chat.completions.create({});
+  }
+  await assert.rejects(
+    createOpenAIClientWrapper(mockClient, 'global-limit-overflow', { now: () => now })
+      .chat.completions.create({}),
+    /text_ai_rate_limited/
+  );
+  assert.equal(calls, 120);
+});

@@ -58,12 +58,12 @@ function enforceRateLimit(userId, now = Date.now()) {
   userWindows.set(id, userTimes);
 }
 
-function createOpenAIClientWrapper(client, userId) {
+function createOpenAIClientWrapper(client, userId, { now = Date.now } = {}) {
   return {
     chat: {
       completions: {
         async create(options = {}) {
-          enforceRateLimit(userId);
+          enforceRateLimit(userId, now());
           const { signal, ...parameters } = options;
           const result = await client.chat.completions.create(
             parameters,
