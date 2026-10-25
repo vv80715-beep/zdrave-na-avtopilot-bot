@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
+const { createModeKeyboard } = require('../modeKeyboard');
 
 // Execute the actual registered handlers, without starting Telegram, schedulers,
 // providers, or importing any production data stores.
@@ -50,8 +51,10 @@ test('/mode -> select Avatar -> как си invokes Avatar, not text delivery', 
       on: (name, fn) => handlers.set(name, fn),
     },
     Markup: { keyboard: () => ({ resize() { return this; }, oneTime() { return this; } }), removeKeyboard: () => ({}) },
+    createModeKeyboard,
     getMode: id => modes.get(id) || 'text', setMode: (id, mode) => modes.set(id, mode),
     resolveAccessStatus: async () => status, gateChat: async () => status,
+    resolveEntitlementStatus: async () => status,
     modePermissionsText: () => 'Avatar ✅', planKeyboard: () => ({}),
     maybeHandleCommandText: async () => false,
     isOwner: () => true, touchConversationState: () => 'continuing',

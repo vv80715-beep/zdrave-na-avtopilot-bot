@@ -46,6 +46,8 @@ const planAdmin = require('./commands/planAdmin');
 const plans = require('./commands/plans');
 const link = require('./commands/link');
 const { getMode, setMode } = require('./avatarModeStorage');
+const { createModeKeyboard } = require('./modeKeyboard');
+const { resolveEntitlementStatus } = require('./entitlementResolver');
 const { modePermissionsText } = require('./modePermissions');
 const { sendAvatarReply } = require('./avatarService');
 const { sendVoiceReply } = require('./voiceReplyService');
@@ -172,6 +174,8 @@ startCommands.register(bot, {
   ownerName: OWNER_NAME,
   purchasePlan: (ctx, planId) => plans.sendPurchaseLink(ctx, planId, purchaseClient),
   refreshPaymentComplete: plans.refreshPaymentComplete,
+  resolveStartAccessStatus: (ctx, options) =>
+    resolveEntitlementStatus(ctx.from.id, options),
 });
 whoami.register(bot);
 owner.register(bot);
@@ -265,16 +269,19 @@ bot.command('editreminder', (ctx) => {
 const MODE_TEXT_LABEL = 'Пиши с Ели';
 const MODE_VOICE_LABEL = 'Говори с Ели';
 const MODE_AVATAR_LABEL = 'Говори с аватара на Ели';
-const MODE_LABELS = {
-  text: MODE_TEXT_LABEL,
-  voice: MODE_VOICE_LABEL,
-  avatar: MODE_AVATAR_LABEL,
-};
 
 const MODE_NAMES_BG = { text: 'текст 💬', voice: 'глас 🎙', avatar: 'аватар 🎬' };
 
+async function resolveModeStatus(ctx) {
+  if (isOwner(ctx)) {
+    const paidStatus = await resolveEntitlementStatus(ctx.from.id, { forceRefresh: true });
+    if (paidStatus.backendVerified && paidStatus.state === 'paid') return paidStatus;
+  }
+  return resolveAccessStatus(ctx, { forceRefresh: true });
+}
+
 async function showModeSelector(ctx) {
-  const status = await resolveAccessStatus(ctx, { forceRefresh: true });
+  const status = await resolveModeStatus(ctx);
   const permissions = modePermissionsText(status);
   if (!status.canChat) {
     return ctx.reply(`${permissions}\n\n${TRIAL_EXPIRED_MESSAGE}`, planKeyboard());
@@ -288,40 +295,34 @@ async function showModeSelector(ctx) {
       planKeyboard()
     );
   }
-  const keyboard = Markup.keyboard([
-    status.allowedModes.map((m) => MODE_LABELS[m]),
-  ])
-    .resize()
-    .oneTime();
+  const keyboard = createModeKeyboard(status.allowedModes);
   return ctx.reply(
     `${permissions}\n\nВ момента си в режим „${MODE_NAMES_BG[effective]}".\n\nИзбери режим:`,
     keyboard
   );
 }
 
-bot.command('mode', showModeSelector);
+bot.command('mode', (ctx) => (isOwner(ctx) ? showModeSelector(ctx) : undefined));
 
 // Selecting a mode — each selection is re-checked against the entitlement.
 async function handleModeSelection(ctx, mode) {
-  const status = await resolveAccessStatus(ctx, { forceRefresh: true });
+  const status = await resolveModeStatus(ctx);
   if (!status.canChat) {
-    return ctx.reply(TRIAL_EXPIRED_MESSAGE, planKeyboard());
+    return ctx.reply(TRIAL_EXPIRED_MESSAGE, Markup.removeKeyboard());
   }
   if (!status.allowedModes.includes(mode)) {
     return ctx.reply(
-      'Тази опция не е включена в текущия ти план. 💙 Виж плановете с /mode или по-долу:',
-      planKeyboard()
+      'Тази опция не е включена в текущия ти план. 💙 Виж плановете с /plans.',
+      Markup.removeKeyboard()
     );
   }
   setMode(ctx.from.id, mode);
   const confirmations = {
     text: 'Добре! 💬 Продължаваме с текст. Пиши ми!',
-    voice:
-      'Супер! 🎙 Отсега ще ти отговарям с глас. Можеш да ми пишеш или да ми пращаш гласови — с /mode сменяш режима по всяко време.',
-    avatar:
-      'Супер! 🎬 Отсега ще ти отговарям с кратко видео на моя аватар. С /mode се връщаш към текст или глас.',
+    voice: 'Супер! 🎙 Отсега ще ти отговарям с глас. Можеш да ми пишеш или да ми пращаш гласови.',
+    avatar: 'Супер! 🎬 Отсега ще ти отговарям с кратко видео на моя аватар.',
   };
-  return ctx.reply(confirmations[mode], Markup.removeKeyboard());
+  return ctx.reply(confirmations[mode], createModeKeyboard(status.allowedModes));
 }
 
 // ── Slash-command safety net ─────────────────────────────────────────────────
@@ -336,7 +337,7 @@ async function maybeHandleCommandText(ctx, text) {
   // A command addressed to a different bot is not ours — ignore silently.
   if (!parsed.ours) return true;
   if (parsed.cmd === 'mode') {
-    await showModeSelector(ctx);
+    if (isOwner(ctx)) await showModeSelector(ctx);
     return true;
   }
   // Any other command-looking text: deterministic hint, never an AI completion.

@@ -92,6 +92,12 @@ function communityButtons(ctx) {
   ).filter((button) => button.text === 'Отвори Общността ↗');
 }
 
+function modeKeyboards(ctx) {
+  return ctx.replies
+    .map(({ extra }) => extra?.reply_markup?.keyboard)
+    .filter(Boolean);
+}
+
 for (const owner of [false, true]) {
   test(`${owner ? 'owner' : 'user'} payment_complete always refreshes canonical backend and shows Community`, async () => {
     const check = receiptOptions(entitlement());
@@ -106,7 +112,12 @@ for (const owner of [false, true]) {
     assert.equal(receipts.length, 2);
     assert.match(receipts[0].message, /Активен план: Месечен/);
     assert.match(receipts[0].message, /Режими: Текст, Глас, Аватар, Общност/);
-    assert.deepEqual(communityButtons(ctx).map((b) => b.url), [ENV.ELI_COMMUNITY_URL, ENV.ELI_COMMUNITY_URL]);
+    assert.ok(receipts[0].message.includes(ENV.ELI_COMMUNITY_URL));
+    assert.deepEqual(modeKeyboards(ctx).map((keyboard) => keyboard.flat()), [
+      ['Пиши с Ели', 'Говори с Ели', 'Говори с аватара на Ели'],
+      ['Пиши с Ели', 'Говори с Ели', 'Говори с аватара на Ели'],
+    ]);
+    assert.deepEqual(communityButtons(ctx), []);
   });
 }
 
@@ -148,7 +159,8 @@ test('paid seven-day plan uses Bulgarian plan and backend modes, with origin fal
   await plans.refreshPaymentComplete(ctx, check.options);
   assert.match(ctx.replies[0].message, /Активен план: 7 дни/);
   assert.match(ctx.replies[0].message, /Режими: Текст, Глас, Общност/);
-  assert.equal(communityButtons(ctx)[0].url, 'https://website.example.test/community.html');
+  assert.ok(ctx.replies[0].message.includes('https://website.example.test/community.html'));
+  assert.deepEqual(modeKeyboards(ctx)[0].flat(), ['Пиши с Ели', 'Говори с Ели']);
 });
 
 test('invalid or missing community URL never becomes a button', async () => {
@@ -168,6 +180,7 @@ test('invalid or missing community URL never becomes a button', async () => {
     assert.ok(ctx.replies[0].message.startsWith(CONFIRMED));
     assert.match(ctx.replies[0].message, /валиден HTTPS адрес/);
     assert.deepEqual(communityButtons(ctx), []);
+    assert.deepEqual(modeKeyboards(ctx)[0].flat(), ['Пиши с Ели', 'Говори с Ели', 'Говори с аватара на Ели']);
   }
   assert.equal(communityUrl({
     ELI_COMMUNITY_URL: 'https://community.example.test/join',
@@ -191,6 +204,7 @@ test('receipt requires active + paid + backendVerified together', async () => {
       env: ENV,
     });
     assert.deepEqual(communityButtons(ctx), []);
+    assert.deepEqual(modeKeyboards(ctx), []);
     assert.ok(!ctx.replies[0].message.startsWith(CONFIRMED));
   }
 });

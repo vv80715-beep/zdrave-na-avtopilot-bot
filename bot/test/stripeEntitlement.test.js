@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
 const { Markup } = require('telegraf');
+const { createModeKeyboard } = require('../modeKeyboard');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'eli-stripe-entitlement-'));
 process.env.ENTITLEMENTS_PATH = path.join(tmp, 'entitlements.json');
@@ -76,7 +77,7 @@ function liveEntitlement(userId, plan = 'monthly', overrides = {}) {
   });
 }
 
-function modeHandlers(initialMode = 'text') {
+function modeHandlers(initialMode = 'text', owner = true) {
   const source = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
   const start = source.indexOf('// ── Chat modes: text / voice / avatar');
   const end = source.indexOf('\nmyprofile.register(bot);', start);
@@ -98,16 +99,21 @@ function modeHandlers(initialMode = 'text') {
     resolveAccessStatus,
     modePermissionsText,
     TRIAL_EXPIRED_MESSAGE,
+    createModeKeyboard,
     planKeyboard: () => ({ reply_markup: { inline_keyboard: [['plans']] } }),
     getMode: () => storedMode,
     setMode: (_id, mode) => { storedMode = mode; },
     Markup,
     parseCommandText: () => null,
+    isOwner: () => owner,
+    resolveEntitlementStatus,
   });
   assert.equal(typeof commandHandler, 'function');
   return {
     showModeSelector: commandHandler,
     selectAvatar: hears.get('Говори с аватара на Ели'),
+    selectText: hears.get('Пиши с Ели'),
+    selectVoice: hears.get('Говори с Ели'),
     getStoredMode: () => storedMode,
   };
 }
@@ -309,6 +315,25 @@ test('actual /mode handler force-refreshes a previously cached Trial', async () 
     [...labels],
     ['Пиши с Ели', 'Говори с Ели', 'Говори с аватара на Ели']
   );
+});
+
+test('mode command is silent for customers and mode choices stay available after selection', async () => {
+  const id = 9100000053;
+  ensureUser(id);
+  useEntitlement(liveEntitlement(id, 'seven_day'));
+  const ownerHandlers = modeHandlers();
+  const ctx = modeContext(id);
+  await ownerHandlers.selectVoice(ctx);
+  assert.equal(ownerHandlers.getStoredMode(), 'voice');
+  assert.deepEqual(
+    [...ctx.replies[0].extra.reply_markup.keyboard.flat()],
+    ['Пиши с Ели', 'Говори с Ели']
+  );
+
+  const customerHandlers = modeHandlers('text', false);
+  const hiddenCommand = modeContext(id);
+  await customerHandlers.showModeSelector(hiddenCommand);
+  assert.deepEqual(hiddenCommand.replies, []);
 });
 
 test('actual /mode handler immediately locks an expired cached paid plan', async () => {

@@ -4,7 +4,12 @@ const { Telegraf, Telegram, Scenes, session } = require('telegraf');
 const startCommands = require('../commands/start');
 const plans = require('../commands/plans');
 
-function harness({ failPurchase = false, miniAppEnv, publicMiniAppEnv } = {}) {
+function harness({
+  failPurchase = false,
+  miniAppEnv,
+  publicMiniAppEnv,
+  resolveStartAccessStatus,
+} = {}) {
   const bot = new Telegraf('123:offline');
   bot.botInfo = { id: 999, is_bot: true, first_name: 'Eli', username: 'EliTestBot' };
   const sent = [];
@@ -46,6 +51,7 @@ function harness({ failPurchase = false, miniAppEnv, publicMiniAppEnv } = {}) {
     },
     isOwner: (ctx) => ctx.from.id === 12345,
     ownerName: 'Собственик',
+    resolveStartAccessStatus,
     purchasePlan: (ctx, planId) => plans.sendPurchaseLink(ctx, planId, client),
     miniAppStartMarkup: () =>
       startCommands.createMiniAppStartMarkup(miniAppEnv || {}),
@@ -94,7 +100,62 @@ test('normal /start is one short welcome, owner personalized; /help is full and 
   for (const cmd of ['/profile', '/plans', '/memory', '/addreminder', '/ping']) {
     assert.ok(help[0].data.text.includes(cmd));
   }
+  assert.doesNotMatch(help[0].data.text, /\/mode/i);
   assert.deepEqual(h.purchases, []);
+});
+
+test('paid /start refreshes the exact plan reply keyboard; trial and expired start clear it', async () => {
+  for (const [plan, modes, expected] of [
+    ['seven_day', ['text', 'voice'], ['Пиши с Ели', 'Говори с Ели']],
+    ['monthly', ['text', 'voice', 'avatar'], ['Пиши с Ели', 'Говори с Ели', 'Говори с аватара на Ели']],
+    ['yearly', ['text', 'voice', 'avatar'], ['Пиши с Ели', 'Говори с Ели', 'Говори с аватара на Ели']],
+  ]) {
+    const h = harness({
+      resolveStartAccessStatus: async (_ctx, options) => {
+        assert.deepEqual(options, { forceRefresh: true });
+        return { state: 'paid', backendVerified: true, plan, allowedModes: modes };
+      },
+    });
+    const reply = await h.send('/start');
+    assert.deepEqual(
+      reply[0].data.reply_markup.keyboard.flat(),
+      expected
+    );
+    assert.equal(reply[0].data.reply_markup.one_time_keyboard, undefined);
+    assert.equal(reply[0].data.reply_markup.is_persistent, undefined);
+  }
+
+  for (const state of ['trial', 'paid_expired', 'backend_unavailable']) {
+    const h = harness({
+      resolveStartAccessStatus: async () => ({
+        state, backendVerified: false, allowedModes: ['text'],
+      }),
+    });
+    const reply = await h.send('/start');
+    assert.deepEqual(reply[0].data.reply_markup, { remove_keyboard: true });
+  }
+
+  const owner = harness({
+    resolveStartAccessStatus: async () => ({
+      state: 'paid', backendVerified: true, plan: 'seven_day',
+      allowedModes: ['text', 'voice'],
+    }),
+  });
+  assert.deepEqual(
+    (await owner.send('/start', { from: 12345 }))[0].data.reply_markup.keyboard.flat(),
+    ['Пиши с Ели', 'Говори с Ели']
+  );
+
+  const group = harness({
+    resolveStartAccessStatus: async () => ({
+      state: 'paid', backendVerified: true, plan: 'monthly',
+      allowedModes: ['text', 'voice', 'avatar'],
+    }),
+  });
+  const groupReply = await group.send('/start', {
+    from: 23456, chat: -100002, type: 'supergroup',
+  });
+  assert.equal(groupReply[0].data.reply_markup, undefined);
 });
 
 test('disabled Mini App flags restore the legacy /start conversation for owners and customers', async () => {

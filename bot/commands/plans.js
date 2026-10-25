@@ -18,6 +18,7 @@ const {
   PLAN_LABELS,
   MODE_LABELS,
 } = require('../paymentComplete');
+const { createModeKeyboard } = require('../modeKeyboard');
 
 const registeredBots = new WeakSet();
 const PURCHASE_ERROR_MESSAGE =
@@ -80,13 +81,8 @@ async function refreshPaymentComplete(ctx, {
       'Готово — плащането е потвърдено и планът ти е активен. ✅\n\n' +
       `Активен план: ${PLAN_LABELS[status.plan] || status.plan}\n` +
       `Режими: ${status.allowedModes.map((mode) => MODE_LABELS[mode]).filter(Boolean).join(', ')}` +
-      (url ? '' : '\n\nЛинкът към Общността не е конфигуриран с валиден HTTPS адрес.');
-    await ctx.reply(
-      message,
-      url ? Markup.inlineKeyboard([
-        [Markup.button.url('Отвори Общността ↗', url)],
-      ]) : undefined
-    );
+      (url ? `\n\nОбщността: ${url}` : '\n\nЛинкът към Общността не е конфигуриран с валиден HTTPS адрес.');
+    await ctx.reply(message, createModeKeyboard(status.allowedModes));
     return status;
   }
   await ctx.reply(

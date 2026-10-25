@@ -1,4 +1,5 @@
 const { Markup } = require('telegraf');
+const { createModeKeyboard } = require('../modeKeyboard');
 
 const BUY_PAYLOADS = Object.freeze({
   buy_seven_day: 'seven_day',
@@ -132,6 +133,7 @@ function register(bot, {
   ownerName,
   purchasePlan,
   refreshPaymentComplete,
+  resolveStartAccessStatus,
 }) {
   // Register after session and before stage: active wizards cannot swallow these
   // commands. Do not erase other session state or conversation memory.
@@ -154,9 +156,30 @@ function register(bot, {
     }
     ensureUser(ctx.from.id);
     const owner = isOwner(ctx);
+    let modeMarkup;
+    if (
+      ctx.chat?.type === 'private' &&
+      String(ctx.chat.id) === String(ctx.from.id) &&
+      typeof resolveStartAccessStatus === 'function'
+    ) {
+      try {
+        const status = await resolveStartAccessStatus(ctx, { forceRefresh: true });
+        if (status.state === 'paid' && status.backendVerified === true) {
+          modeMarkup =
+            createModeKeyboard(status.allowedModes) || Markup.removeKeyboard();
+        } else {
+          // Clear a stale paid reply keyboard after expiry, cancellation, or
+          // an unavailable backend. Provider calls still re-check entitlement.
+          modeMarkup = Markup.removeKeyboard();
+        }
+      } catch {
+        modeMarkup = Markup.removeKeyboard();
+      }
+    }
     return ctx.reply(owner
       ? `Здравей, ${ownerName}! 👑 Радвам се да те видя.`
-      : `Здравей, ${ctx.from.first_name || 'приятелю'}! 👋 Аз съм Ели. Пиши ми или виж /help.`);
+      : `Здравей, ${ctx.from.first_name || 'приятелю'}! 👋 Аз съм Ели. Пиши ми или виж /help.`,
+    modeMarkup);
   });
 
   bot.help((ctx) => {
