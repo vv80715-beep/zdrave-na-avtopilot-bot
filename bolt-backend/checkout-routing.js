@@ -54,7 +54,22 @@ export function extractBackendCheckoutUrl(payload) {
     return null;
   }
 
-  if (checkoutUrl.protocol !== 'https:' || checkoutUrl.username || checkoutUrl.password) return null;
+  const provider = String(payload.checkout_provider || '').trim().toLowerCase();
+  const mode = String(payload.checkout_mode || '').trim().toLowerCase();
+  const sessionId = String(payload.checkout_session_id || '').trim();
+
+  if (
+    checkoutUrl.protocol !== 'https:' ||
+    checkoutUrl.username ||
+    checkoutUrl.password ||
+    provider !== 'stripe' ||
+    mode !== 'live' ||
+    !/^cs_live_[A-Za-z0-9_]+$/.test(sessionId) ||
+    checkoutUrl.hostname !== 'checkout.stripe.com'
+  ) {
+    return null;
+  }
+
   return checkoutUrl.toString();
 }
 
@@ -149,12 +164,23 @@ export async function requestCheckout({
     };
   }
 
-  return { ok: true, status: response.status, checkout_url: checkoutUrl, payload };
+  return {
+    ok: true,
+    status: response.status,
+    checkout_url: checkoutUrl,
+    checkout_session_id: String(payload.checkout_session_id || ''),
+    payload,
+  };
 }
 
 export function redirectToBackendCheckout(result, navigate = (url) => window.location.assign(url)) {
   if (!result?.ok) return result;
-  const checkoutUrl = extractBackendCheckoutUrl({ checkout_url: result.checkout_url });
+  const checkoutUrl = extractBackendCheckoutUrl(result.payload || {
+    checkout_url: result.checkout_url,
+    checkout_provider: 'stripe',
+    checkout_mode: 'live',
+    checkout_session_id: result.checkout_session_id,
+  });
   if (!checkoutUrl) {
     return {
       ok: false,
