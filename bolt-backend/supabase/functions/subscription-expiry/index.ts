@@ -13,7 +13,6 @@ function telegram(token: string, method: string, payload: Record<string, unknown
     redirect: "error",
     signal: AbortSignal.timeout(timeout),
   }).then(async (response) => {
-    // A parse error is ambiguous for sendMessage (Telegram may have delivered).
     const body = await response.json();
     return { status: response.status, body };
   });
@@ -35,10 +34,14 @@ function createStore() {
     return data;
   }
   return {
+    queueWarnings: (args: { p_limit: number }) => rpc("queue_entitlement_expiry_warnings", args),
+    claimWarning: () => rpc("claim_entitlement_warning_notification"),
+    beginWarning: (args: { p_id: string; p_lease: string }) => rpc("begin_warning_delivery", args),
+    finishWarning: (args: Record<string, unknown>) => rpc("finish_warning_notification", args),
     expireDue: (args: { p_limit: number }) => rpc("expire_due_entitlements", args),
-    claim: () => rpc("claim_entitlement_expiry_notification"),
-    begin: (args: { p_id: string; p_lease: string }) => rpc("begin_expiry_delivery", args),
-    finish: (args: Record<string, unknown>) => rpc("finish_expiry_notification", args),
+    claimExpiry: () => rpc("claim_entitlement_expiry_notification"),
+    beginExpiry: (args: { p_id: string; p_lease: string }) => rpc("begin_expiry_delivery", args),
+    finishExpiry: (args: Record<string, unknown>) => rpc("finish_expiry_notification", args),
   };
 }
 
