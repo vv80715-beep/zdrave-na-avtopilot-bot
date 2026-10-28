@@ -19,7 +19,6 @@ const {
   MODE_LABELS,
 } = require('../paymentComplete');
 const { createModeKeyboard } = require('../modeKeyboard');
-const { isOwner: isConfiguredOwner } = require('../adminGuard');
 
 const registeredBots = new WeakSet();
 const PURCHASE_ERROR_MESSAGE =
@@ -34,15 +33,12 @@ function purchaseFailureDiagnostic(error) {
   else if (
     code === 'invalid_json' ||
     code === 'invalid_response' ||
-    code === 'invalid_purchase_response' ||
-    code === 'invalid_purchase_session_response' ||
-    code === 'invalid_owner_checkout_response'
+    code === 'invalid_purchase_response'
   ) {
     category = 'response-schema';
   } else if (
     code === 'invalid_plan' ||
     code === 'invalid_telegram_user_id' ||
-    code === 'invalid_purchase_session_token' ||
     code === 'invalid_base_url' ||
     code === 'not_configured'
   ) {
@@ -98,9 +94,7 @@ async function refreshPaymentComplete(ctx, {
 
 const PRIVATE_PURCHASE_MESSAGE = 'Отвори бота в личен чат, за да купиш план. 💙';
 
-async function sendPurchaseLink(ctx, planId, client, {
-  isOwner = isConfiguredOwner,
-} = {}) {
+async function sendPurchaseLink(ctx, planId, client) {
   if (!ctx.from || !ctx.chat || ctx.chat.id !== ctx.from.id || ctx.chat.type !== 'private') {
     return ctx.reply(PRIVATE_PURCHASE_MESSAGE);
   }
@@ -111,27 +105,6 @@ async function sendPurchaseLink(ctx, planId, client, {
     // Never accept an identity from a payload or callback; the client validates
     // the backend response and the confirmation URL before it is sent.
     const purchase = await client.createPurchaseSession(String(ctx.from.id), planId);
-    if (isOwner(ctx)) {
-      const sessionToken = new URL(purchase.purchase_url).searchParams.get('session');
-      const status = await client.getPurchaseSession(sessionToken, planId);
-      if (
-        (status.owner_test_checkout === true &&
-          status.checkout_amount_cents !== 0) ||
-        (status.owner_test_checkout !== true &&
-          status.checkout_amount_cents === 0)
-      ) {
-        throw new BoltPlatformError('invalid_purchase_session_response');
-      }
-      if (status.owner_test_checkout === true) {
-        const checkout = await client.createOwnerTestCheckout(sessionToken, planId);
-        return ctx.reply(
-          'Собственическият тестов checkout е потвърден за €0,00. Планът ще се активира само след потвърден Stripe webhook.',
-          Markup.inlineKeyboard([
-            [Markup.button.url('Отвори Stripe checkout', checkout.checkout_url)],
-          ])
-        );
-      }
-    }
     return ctx.reply(
       `Сигурният ти линк за план „${purchase.plan.name}" е готов:`,
       Markup.inlineKeyboard([
@@ -145,10 +118,7 @@ async function sendPurchaseLink(ctx, planId, client, {
   }
 }
 
-function register(bot, {
-  client = new EliPlatformClient(),
-  isOwner = isConfiguredOwner,
-} = {}) {
+function register(bot, { client = new EliPlatformClient() } = {}) {
   if (registeredBots.has(bot)) return false;
   registeredBots.add(bot);
 
@@ -161,7 +131,7 @@ function register(bot, {
   for (const planId of CANONICAL_PLAN_IDS) {
     bot.action(`buy:${planId}`, async (ctx) => {
       await ctx.answerCbQuery();
-      return sendPurchaseLink(ctx, planId, client, { isOwner });
+      return sendPurchaseLink(ctx, planId, client);
     });
   }
   return true;
