@@ -4,6 +4,7 @@
 // Paths are relative to the Supabase Edge Function slug in baseUrl
 // (/functions/v1/api). Do not prepend another /api segment.
 const PURCHASE_PATH = '/internal/purchase-sessions';
+const PUBLIC_PURCHASE_SESSION_PATH = '/purchase-sessions';
 const ENTITLEMENT_PATH = '/internal/entitlements';
 const CANONICAL_PLAN_IDS = new Set(['seven_day', 'monthly', 'yearly']);
 const CANONICAL_MODE_IDS = new Set(['text', 'voice', 'avatar', 'community']);
@@ -231,6 +232,73 @@ function validatePurchaseResponse(data, {
   };
 }
 
+function validatePurchaseSessionStatus(data, requestedPlanId, now = Date.now()) {
+  const expiresAt = parseIsoDate(
+    data?.expires_at,
+    'invalid_purchase_session_response'
+  );
+  if (
+    data?.api_version !== 1 ||
+    data?.plan_id !== requestedPlanId ||
+    !CANONICAL_PLAN_IDS.has(data?.plan_id) ||
+    !['pending', 'checkout_created'].includes(data?.status) ||
+    expiresAt <= now ||
+    typeof data?.owner_test_checkout !== 'boolean' ||
+    !Number.isSafeInteger(data?.checkout_amount_cents) ||
+    data.checkout_amount_cents < 0
+  ) {
+    throw new BoltPlatformError('invalid_purchase_session_response');
+  }
+  return {
+    api_version: data.api_version,
+    plan_id: data.plan_id,
+    status: data.status,
+    expires_at: data.expires_at,
+    owner_test_checkout: data.owner_test_checkout,
+    checkout_amount_cents: data.checkout_amount_cents,
+  };
+}
+
+function validateOwnerStripeCheckoutResponse(data, requestedPlanId) {
+  let checkoutUrl;
+  try {
+    checkoutUrl = new URL(String(data?.checkout_url || ''));
+  } catch (_) {
+    throw new BoltPlatformError('invalid_owner_checkout_response');
+  }
+  const checkoutSessionId = data?.checkout_session_id;
+  if (
+    data?.api_version !== 1 ||
+    data?.plan_id !== requestedPlanId ||
+    !CANONICAL_PLAN_IDS.has(data?.plan_id) ||
+    data?.checkout_provider !== 'stripe' ||
+    data?.checkout_mode !== 'live' ||
+    typeof checkoutSessionId !== 'string' ||
+    !checkoutSessionId.startsWith('cs_live_') ||
+    checkoutSessionId.length <= 'cs_live_'.length ||
+    checkoutUrl.protocol !== 'https:' ||
+    checkoutUrl.origin !== 'https://checkout.stripe.com' ||
+    checkoutUrl.username ||
+    checkoutUrl.password ||
+    !checkoutUrl.pathname.startsWith('/c/pay/') ||
+    checkoutUrl.href !== data.checkout_url ||
+    data?.owner_test_checkout !== true ||
+    data?.charge_amount_cents !== 0
+  ) {
+    throw new BoltPlatformError('invalid_owner_checkout_response');
+  }
+  return {
+    api_version: data.api_version,
+    plan_id: data.plan_id,
+    checkout_provider: data.checkout_provider,
+    checkout_mode: data.checkout_mode,
+    checkout_session_id: checkoutSessionId,
+    checkout_url: checkoutUrl.toString(),
+    owner_test_checkout: true,
+    charge_amount_cents: 0,
+  };
+}
+
 function validateEntitlementResponse(data, requestedTelegramUserId) {
   const checkedAt = parseIsoDate(
     data?.checked_at,
@@ -455,6 +523,47 @@ class EliPlatformClient {
     throw lastError || new BoltPlatformError('network_error');
   }
 
+  async requestPurchaseSession(path, { method = 'GET', body } = {}) {
+    if (!this.isConfigured()) throw new BoltPlatformError('not_configured');
+    if (
+      typeof path !== 'string' ||
+      !path.startsWith(`${PUBLIC_PURCHASE_SESSION_PATH}/`) ||
+      path.includes('://') ||
+      path.includes('..')
+    ) {
+      throw new BoltPlatformError('invalid_request_path');
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      let response;
+      try {
+        response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+          method,
+          signal: controller.signal,
+          redirect: 'error',
+          cache: 'no-store',
+          headers: {
+            Accept: 'application/json',
+            ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+          },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        });
+      } catch (err) {
+        const code = err?.name === 'AbortError' ? 'timeout' : 'network_error';
+        throw new BoltPlatformError(code);
+      }
+      if (!response || !response.ok) {
+        throw new BoltPlatformError('http_error', response?.status || null);
+      }
+      const text = await readResponseTextLimited(response, this.maxResponseBytes);
+      return parseJsonObject(text, response.status);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async createPurchaseSession(telegramUserId, planId) {
     const telegramId = asTelegramId(telegramUserId);
     if (!CANONICAL_PLAN_IDS.has(planId)) {
@@ -473,6 +582,33 @@ class EliPlatformClient {
     });
   }
 
+  async getPurchaseSession(sessionToken, planId) {
+    if (typeof sessionToken !== 'string' || !TOKEN_RE.test(sessionToken)) {
+      throw new BoltPlatformError('invalid_purchase_session_token');
+    }
+    if (!CANONICAL_PLAN_IDS.has(planId)) {
+      throw new BoltPlatformError('invalid_plan');
+    }
+    const data = await this.requestPurchaseSession(
+      `${PUBLIC_PURCHASE_SESSION_PATH}/${encodeURIComponent(sessionToken)}`
+    );
+    return validatePurchaseSessionStatus(data, planId);
+  }
+
+  async createOwnerTestCheckout(sessionToken, planId) {
+    if (typeof sessionToken !== 'string' || !TOKEN_RE.test(sessionToken)) {
+      throw new BoltPlatformError('invalid_purchase_session_token');
+    }
+    if (!CANONICAL_PLAN_IDS.has(planId)) {
+      throw new BoltPlatformError('invalid_plan');
+    }
+    const data = await this.requestPurchaseSession(
+      `${PUBLIC_PURCHASE_SESSION_PATH}/${encodeURIComponent(sessionToken)}/checkout`,
+      { method: 'POST', body: {} }
+    );
+    return validateOwnerStripeCheckoutResponse(data, planId);
+  }
+
   async getEntitlement(telegramUserId) {
     const telegramId = asTelegramId(telegramUserId);
     const data = await this.request(
@@ -489,6 +625,7 @@ module.exports = {
   CANONICAL_PLAN_IDS,
   CANONICAL_MODE_IDS,
   PURCHASE_PATH,
+  PUBLIC_PURCHASE_SESSION_PATH,
   ENTITLEMENT_PATH,
   DEFAULT_TIMEOUT_MS,
   DEFAULT_MAX_RESPONSE_BYTES,
@@ -502,6 +639,8 @@ module.exports = {
   isRetryableEntitlementError,
   parseBaseUrl,
   validatePurchaseResponse,
+  validatePurchaseSessionStatus,
+  validateOwnerStripeCheckoutResponse,
   validateEntitlementResponse,
   readResponseTextLimited,
 };
