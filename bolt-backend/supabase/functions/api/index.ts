@@ -1,6 +1,6 @@
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "jsr:@supabase/supabase-js@2";
-import { createRevolutCheckout, inspectTestCheckoutConfiguration } from "../_shared/revolut-checkout.mjs";
+import { createClient } from "npm:@supabase/supabase-js@2.57.4";
+import { deliverAvatarAddonNotification } from "../_shared/avatar-addon-aftercare.mjs";
+import { validAvatarAddonPurchase } from "../_shared/avatar-addon-pricing.mjs";
 
 // ---------------------------------------------------------------------------
 // Plans (mirrors server/plans.js exactly)
@@ -172,7 +172,7 @@ function getInternalSecret(): string {
 
 const DEFAULT_APP_BASE_URL = "https://zdrave-na-avtopilot-dkr6.bolt.host";
 
-function getAppBaseUrl(_req?: Request): string {
+function getAppBaseUrl(): string {
   const configured = (Deno.env.get("APP_BASE_URL") || "").replace(/\/+$/, "");
   if (configured) return configured;
   return DEFAULT_APP_BASE_URL;
@@ -217,13 +217,6 @@ async function updateSessionStatus(client: ReturnType<typeof getSupabaseClient>,
   return data as PurchaseSession | null;
 }
 
-async function claimForCheckout(client: ReturnType<typeof getSupabaseClient>, tokenHash: string): Promise<PurchaseSession | null> {
-  const now = new Date().toISOString();
-  const { data, error } = await client.from("purchase_sessions").update({ status: "pending", updated_at: now }).eq("token_hash", tokenHash).in("status", ["pending", "checkout_created"]).is("stripe_checkout_session_id", null).select().maybeSingle();
-  if (error) throw error;
-  return data as PurchaseSession | null;
-}
-
 function errorResult(code: string, message: string, status: number) {
   return { ok: false as const, status, body: { api_version: API_VERSION, error: code, message } };
 }
@@ -257,7 +250,9 @@ async function verifySessionService(client: ReturnType<typeof getSupabaseClient>
   }
   if (session.status === "cancelled" || session.status === "paid") return errorResult("session_consumed", "Сесията вече е използвана.", 410);
   const plan = PLANS[session.plan_id as PlanId] || { id: session.plan_id, name: session.plan_id };
-  return { ok: true, status: 200, body: { api_version: API_VERSION, plan_id: plan.id, plan: { id: plan.id, name: plan.name }, status: session.status, expires_at: new Date(session.expires_at).toISOString() } };
+  const ownerTestCheckout = await isOwnerTestCheckoutEligible(client, Number(session.telegram_user_id));
+  const amountCents = ownerTestCheckout ? OWNER_TEST_AMOUNT_CENTS : (PLANS[session.plan_id as PlanId]?.price.amount || 0) * 100;
+  return { ok: true, status: 200, body: { api_version: API_VERSION, plan_id: plan.id, plan: { id: plan.id, name: plan.name }, status: session.status, expires_at: new Date(session.expires_at).toISOString(), owner_test_checkout: ownerTestCheckout, checkout_amount_cents: amountCents } };
 }
 
 // ---------------------------------------------------------------------------
@@ -357,6 +352,241 @@ async function recordAvatarUsage(client: ReturnType<typeof getSupabaseClient>, t
 }
 
 // ---------------------------------------------------------------------------
+// Avatar add-on Checkout (separate from plan/subscription checkout)
+// ---------------------------------------------------------------------------
+
+const AVATAR_ADDON_PACKAGES = Object.freeze({
+  20: { id: "addon_20", minutes: 20, seconds: 1200, amountCents: 1000 },
+  50: { id: "addon_50", minutes: 50, seconds: 3000, amountCents: 2500 },
+  100: { id: "addon_100", minutes: 100, seconds: 6000, amountCents: 5000 },
+  200: { id: "addon_200", minutes: 200, seconds: 12000, amountCents: 10000 },
+} as const);
+
+function getAvatarAddonPackage(raw: unknown): { id: string; minutes: number; seconds: number; amountCents: number } | null {
+  const minutes = Number(raw);
+  if (!Number.isInteger(minutes)) return null;
+  return (AVATAR_ADDON_PACKAGES as Record<number, { id: string; minutes: number; seconds: number; amountCents: number }>)[minutes] || null;
+}
+
+async function createAvatarAddonCheckout(
+  req: Request,
+  client: ReturnType<typeof getSupabaseClient>,
+): Promise<Response> {
+  const userId = await getAuthUserId(req, client);
+  if (!userId) return sendError(401, "unauthorized", "Влезте в профила си.");
+
+  const profile = await getCommunityProfile(client, userId);
+  if (!profile) return sendError(409, "profile_required", "Профилът не е намерен.");
+
+  const effectiveTelegramUserId = await resolveEffectiveTelegramUserId(client, profile);
+  if (!effectiveTelegramUserId) {
+    return sendError(409, "telegram_not_linked", "Профилът трябва да е свързан с Telegram.");
+  }
+
+  const entitlement = await getCommunityEntitlement(client, profile);
+  const eligible = entitlement.is_admin || (entitlement.active && ["monthly", "yearly"].includes(entitlement.plan_id));
+  if (!eligible) {
+    return sendError(403, "avatar_addon_plan_required", "Допълнителните Avatar минути изискват активен месечен или годишен план.");
+  }
+
+  let body: Record<string, unknown> = {};
+  try { body = await req.json(); } catch {
+    return sendError(400, "invalid_json", "Невалидни данни.");
+  }
+  const pkg = getAvatarAddonPackage(body.minutes);
+  if (!pkg) return sendError(400, "invalid_addon_package", "Невалиден пакет.");
+
+  const purchaseId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const { error: insertError } = await client.from("avatar_addon_purchases").insert({
+    id: purchaseId,
+    user_id: userId,
+    telegram_user_id: effectiveTelegramUserId,
+    package_id: pkg.id,
+    minutes: pkg.minutes,
+    seconds: pkg.seconds,
+    amount_cents: pkg.amountCents,
+    currency: "eur",
+    status: "pending",
+    created_at: now,
+    updated_at: now,
+  });
+  if (insertError) throw insertError;
+
+  const appBaseUrl = getAppBaseUrl();
+  const params = new URLSearchParams();
+  params.set("mode", "payment");
+  params.set("line_items[0][price_data][currency]", "eur");
+  params.set("line_items[0][price_data][unit_amount]", String(pkg.amountCents));
+  params.set("line_items[0][price_data][product_data][name]", "Eli Avatar +" + pkg.minutes + " минути");
+  params.set("line_items[0][price_data][product_data][description]", "Допълнителни Avatar минути без срок на изтичане");
+  params.set("line_items[0][quantity]", "1");
+  params.set("success_url", appBaseUrl + "/profile.html?addon_payment=success&addon_session_id={CHECKOUT_SESSION_ID}");
+  params.set("cancel_url", appBaseUrl + "/profile.html?addon_payment=cancelled");
+  params.set("client_reference_id", purchaseId);
+  params.set("metadata[purchase_kind]", "avatar_addon");
+  params.set("metadata[addon_purchase_id]", purchaseId);
+  params.set("metadata[addon_minutes]", String(pkg.minutes));
+  params.set("metadata[telegram_user_id]", String(effectiveTelegramUserId));
+  params.set("metadata[user_id]", userId);
+  params.set("payment_intent_data[metadata][purchase_kind]", "avatar_addon");
+  params.set("payment_intent_data[metadata][addon_purchase_id]", purchaseId);
+  params.set("payment_intent_data[metadata][addon_minutes]", String(pkg.minutes));
+  params.set("payment_intent_data[metadata][telegram_user_id]", String(effectiveTelegramUserId));
+
+  try {
+    const stripeSession = await stripeRequest("/v1/checkout/sessions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "Idempotency-Key": "avatar_addon_" + purchaseId,
+      },
+      body: params.toString(),
+    });
+    const checkoutId = String(stripeSession.id || "");
+    const checkoutUrl = typeof stripeSession.url === "string" ? stripeSession.url : "";
+    if (!checkoutId || !checkoutUrl) throw new Error("stripe_invalid_checkout_response");
+
+    const { error: updateError } = await client.from("avatar_addon_purchases").update({
+      status: "checkout_created",
+      stripe_checkout_session_id: checkoutId,
+      updated_at: new Date().toISOString(),
+    }).eq("id", purchaseId);
+    if (updateError) throw updateError;
+
+    return sendJson({ status: 200 }, {
+      checkout_url: checkoutUrl,
+      checkout_session_id: checkoutId,
+      package: { minutes: pkg.minutes, seconds: pkg.seconds },
+      checkout_mode: "live",
+      amount: { amount_cents: pkg.amountCents, currency: "eur" },
+    });
+  } catch (error) {
+    await client.from("avatar_addon_purchases").update({
+      status: "failed",
+      updated_at: new Date().toISOString(),
+    }).eq("id", purchaseId);
+    console.error("Avatar add-on checkout create failed:", String((error as Error)?.message || error).slice(0, 180));
+    return sendError(503, "avatar_addon_checkout_failed", "Checkout не можа да бъде създаден.");
+  }
+}
+
+async function getAvatarAddonCheckoutStatus(
+  req: Request,
+  client: ReturnType<typeof getSupabaseClient>,
+  checkoutSessionId: string,
+): Promise<Response> {
+  const userId = await getAuthUserId(req, client);
+  if (!userId) return sendError(401, "unauthorized", "Влезте в профила си.");
+  if (!/^cs_[A-Za-z0-9_]+$/.test(checkoutSessionId)) {
+    return sendError(400, "invalid_checkout_session", "Невалидна Checkout сесия.");
+  }
+
+  const { data, error } = await client.from("avatar_addon_purchases")
+    .select("status,minutes,seconds,amount_cents,currency,paid_at")
+    .eq("stripe_checkout_session_id", checkoutSessionId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return sendError(404, "addon_purchase_not_found", "Покупката не е намерена.");
+
+  return sendJson({ status: 200 }, {
+    found: true,
+    status: data.status,
+    minutes: data.minutes,
+    seconds: data.seconds,
+    amount_cents: data.amount_cents,
+    currency: data.currency,
+    paid_at: data.paid_at,
+  });
+}
+
+function isAvatarAddonSession(session: Record<string, unknown> | undefined): boolean {
+  const metadata = session?.metadata as Record<string, unknown> | undefined;
+  return String(metadata?.purchase_kind || "") === "avatar_addon";
+}
+
+async function handleAvatarAddonCheckoutCompleted(
+  client: ReturnType<typeof getSupabaseClient>,
+  session: Record<string, unknown> | undefined,
+  eventId: string,
+): Promise<Record<string, unknown>> {
+  if (!session || !isAvatarAddonSession(session)) return { action: "ignored", reason: "not_avatar_addon" };
+  if (String(session.payment_status || "") !== "paid") return { action: "ignored", reason: "payment_not_settled" };
+
+  const metadata = session.metadata as Record<string, unknown>;
+  const purchaseId = String(metadata.addon_purchase_id || "");
+  const checkoutSessionId = String(session.id || "");
+  const amountTotal = Number(session.amount_total || 0);
+  const currency = String(session.currency || "").toLowerCase();
+
+  if (!/^[0-9a-f-]{36}$/i.test(purchaseId) || !checkoutSessionId) {
+    throw new Error("invalid_avatar_addon_metadata");
+  }
+  const { data: purchase, error: purchaseError } = await client.from("avatar_addon_purchases")
+    .select("package_id,minutes,seconds,amount_cents,currency,stripe_checkout_session_id")
+    .eq("id", purchaseId).maybeSingle();
+  if (purchaseError) throw purchaseError;
+  if (!purchase || !validAvatarAddonPurchase(purchase)
+      || purchase.stripe_checkout_session_id !== checkoutSessionId
+      || Number(metadata.addon_minutes) !== purchase.minutes
+      || amountTotal !== purchase.amount_cents || currency !== purchase.currency) {
+    throw new Error("avatar_addon_amount_mismatch");
+  }
+
+  const { data, error } = await client.rpc("credit_avatar_addon_purchase", {
+    p_purchase_id: purchaseId,
+    p_checkout_session_id: checkoutSessionId,
+    p_payment_intent_id: String(session.payment_intent || ""),
+    p_event_id: eventId,
+  });
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+
+  // The credit transaction (including its durable notice) has committed.
+  // Delivery failure must never invalidate payment or re-credit the purchase.
+  const notification = await deliverAvatarAddonNotification(
+    client, purchaseId, checkoutSessionId, (name: string) => Deno.env.get(name),
+  );
+
+  return {
+    action: row?.duplicate ? "avatar_addon_already_credited" : "avatar_addon_credited",
+    notification,
+    purchaseId,
+    telegramUserId: row?.telegram_user_id ? String(row.telegram_user_id) : null,
+    creditedSeconds: Number(row?.credited_seconds || 0),
+    addonPurchasedSeconds: Number(row?.addon_purchased_seconds || 0),
+    addonUsedSeconds: Number(row?.addon_used_seconds || 0),
+  };
+}
+
+async function handleAvatarAddonCheckoutFailed(
+  client: ReturnType<typeof getSupabaseClient>,
+  session: Record<string, unknown> | undefined,
+  eventId: string,
+  eventType: string,
+): Promise<Record<string, unknown>> {
+  if (!session || !isAvatarAddonSession(session)) return { action: "ignored", reason: "not_avatar_addon" };
+  const metadata = session.metadata as Record<string, unknown>;
+  const purchaseId = String(metadata.addon_purchase_id || "");
+  if (!purchaseId) return { action: "ignored", reason: "missing_addon_purchase_id" };
+
+  const { data: purchase, error } = await client.from("avatar_addon_purchases")
+    .select("status").eq("id", purchaseId).maybeSingle();
+  if (error) throw error;
+  if (!purchase) return { action: "ignored", reason: "addon_purchase_not_found" };
+  if (purchase.status === "paid") return { action: "ignored", reason: "already_paid" };
+
+  await client.from("avatar_addon_purchases").update({
+    status: eventType === "checkout.session.expired" ? "cancelled" : "failed",
+    stripe_event_id: eventId,
+    updated_at: new Date().toISOString(),
+  }).eq("id", purchaseId);
+
+  return { action: "avatar_addon_payment_failed", purchaseId };
+}
+
+// ---------------------------------------------------------------------------
 // Checkout / Stripe
 // ---------------------------------------------------------------------------
 
@@ -365,58 +595,612 @@ async function getCheckoutStatus(client: ReturnType<typeof getSupabaseClient>, s
   if (!/^cs_[A-Za-z0-9_]+$/.test(sessionId)) return { found: false, state: "invalid", payment_status: "invalid" };
   const { data: session, error: sessionError } = await client.from("purchase_sessions").select("telegram_user_id, plan_id, status, stripe_checkout_session_id").eq("stripe_checkout_session_id", sessionId).maybeSingle();
   if (sessionError) throw sessionError;
-  if (!session) return { found: false, state: "unknown", payment_status: "unknown", entitlement_status: "waiting", plan: null, access_expires_at: null };
+  if (!session) return { found: false, state: "unknown", payment_status: "unknown", entitlement_status: "waiting", plan: null, activated_at: null, access_expires_at: null };
   const plan = PLANS[session.plan_id as PlanId] || null;
-  const { data: payment, error: paymentError } = await client.from("payments").select("status, paid_at, stripe_payment_intent_id, stripe_subscription_id").eq("stripe_checkout_session_id", sessionId).maybeSingle();
-  if (paymentError) throw paymentError;
-  if (!payment || payment.status !== "paid") return { found: true, state: "pending", payment_status: payment ? payment.status : "pending", entitlement_status: "waiting", plan: plan ? { id: plan.id, name: plan.name } : null, access_expires_at: null };
+
+  const paymentResult = await client.from("payments").select("status, paid_at, stripe_payment_intent_id, stripe_subscription_id").eq("stripe_checkout_session_id", sessionId).maybeSingle();
+  if (paymentResult.error) throw paymentResult.error;
+  let payment = paymentResult.data;
+
+  // Safety fallback: if the webhook has not reconciled a LIVE Checkout yet,
+  // verify the Checkout Session directly with Stripe server-side and process it idempotently.
+  if ((!payment || payment.status !== "paid") && sessionId.startsWith("cs_live_")) {
+    try {
+      const stripeSession = await stripeRequest("/v1/checkout/sessions/" + encodeURIComponent(sessionId));
+      if (
+        String(stripeSession.status || "") === "complete" &&
+        ["paid", "no_payment_required"].includes(String(stripeSession.payment_status || ""))
+      ) {
+        await handleCheckoutCompleted(client, stripeSession, "reconcile:" + sessionId);
+        const refreshed = await client.from("payments").select("status, paid_at, stripe_payment_intent_id, stripe_subscription_id").eq("stripe_checkout_session_id", sessionId).maybeSingle();
+        if (refreshed.error) throw refreshed.error;
+        payment = refreshed.data;
+      }
+    } catch (error) {
+      console.error("Stripe checkout reconciliation failed:", error);
+    }
+  }
+
+  if (!payment || payment.status !== "paid") return { found: true, state: "pending", payment_status: payment ? payment.status : "pending", entitlement_status: "waiting", plan: plan ? { id: plan.id, name: plan.name } : null, activated_at: null, access_expires_at: null };
   const { data: entitlement, error: entError } = await client.from("entitlements").select("status, expires_at, plan_id").eq("telegram_user_id", session.telegram_user_id).maybeSingle();
   if (entError) throw entError;
   const entActive = entitlement && entitlement.status === "active" && new Date(entitlement.expires_at).getTime() > Date.now();
-  return { found: true, state: entActive ? "paid" : "processing", payment_status: "paid", entitlement_status: entitlement ? entitlement.status : "processing", plan: plan ? { id: plan.id, name: plan.name } : null, access_expires_at: entitlement ? entitlement.expires_at : null };
+  return { found: true, state: entActive ? "paid" : "processing", payment_status: "paid", entitlement_status: entitlement ? entitlement.status : "processing", plan: plan ? { id: plan.id, name: plan.name } : null, activated_at: payment.paid_at || null, access_expires_at: entitlement ? entitlement.expires_at : null };
 }
 
-function buildPriceCatalog(): Record<PlanId, string | null> { return { seven_day: Deno.env.get("STRIPE_PRICE_SEVEN_DAY") || null, monthly: Deno.env.get("STRIPE_PRICE_MONTHLY") || null, yearly: Deno.env.get("STRIPE_PRICE_YEARLY") || null }; }
-function assertTestMode(secretKey: string): boolean { if (!secretKey) return false; if (secretKey.startsWith("sk_live_")) throw new Error("STRIPE_SECRET_KEY is a LIVE key. This integration must use TEST mode only."); if (!["sk_test_", "rk_test_"].some((p) => secretKey.startsWith(p))) throw new Error("STRIPE_SECRET_KEY must be a Stripe TEST mode key (sk_test_ or rk_test_)."); return true; }
+const LIVE_STRIPE_PRICES: Record<PlanId, string> = {
+  seven_day: "price_1UVVtUPYSKogQeLGQ8mbXUtN",
+  monthly: "price_1UHLwyPYSKogQeLGzeqFqwvX",
+  yearly: "price_1UHLwyPYSKogQeLGrO34vUe9",
+};
+
+const OWNER_TEST_STRIPE_PRICES: Record<PlanId, string> = {
+  seven_day: "price_1UVVtWPYSKogQeLGHSQr7m7j",
+  monthly: "price_1UVVF5PYSKogQeLG7HrCUb2z",
+  yearly: "price_1UVVF7PYSKogQeLGrp0iPZNN",
+};
+
+// Private, single-owner, time-limited real-payment acceptance test only.
+// Public prices remain unchanged. An is_admin flag by itself is NOT an
+// authorization primitive: profile inserts can be user-controlled.
+const OWNER_TEST_AMOUNT_CENTS = 0;
+const OWNER_TEST_ENDS_AT = Date.parse("2026-10-28T21:00:00.000Z");
+// SHA-256 of the pre-existing owner's Supabase Auth UUID (never expose the UUID).
+const OWNER_TEST_AUTH_UUID_HASH = "c7a530d3b1c52b5041612b88c172cd97f75d5a5fc88bf5b1674bf3d6df8f1f91";
+async function isVerifiedOwnerProfile(client: ReturnType<typeof getSupabaseClient>, telegramUserId: number): Promise<boolean> {
+  const { data, error } = await client.from("community_profiles")
+    .select("user_id")
+    .eq("telegram_user_id", telegramUserId)
+    .eq("is_admin", true)
+    .limit(2);
+  if (error) throw error;
+  return Array.isArray(data) && data.length === 1
+    && await hashToken(String(data[0].user_id || "")) === OWNER_TEST_AUTH_UUID_HASH;
+}
+async function isOwnerTestCheckoutEligible(client: ReturnType<typeof getSupabaseClient>, telegramUserId: number): Promise<boolean> {
+  if (Date.now() >= OWNER_TEST_ENDS_AT) return false;
+  return isVerifiedOwnerProfile(client, telegramUserId);
+}
+
+function getLiveStripeSecret(): string {
+  const key = Deno.env.get("STRIPE_SECRET_KEY") || "";
+  if (!key.startsWith("sk_live_") && !key.startsWith("rk_live_")) {
+    throw new Error("STRIPE_SECRET_KEY must be a LIVE Stripe key.");
+  }
+  return key;
+}
+
+function inspectStripeCheckoutConfiguration(): Record<string, unknown> {
+  const stripeKey = Deno.env.get("STRIPE_SECRET_KEY") || "";
+  const stripeKeyConfigured = stripeKey.startsWith("sk_live_") || stripeKey.startsWith("rk_live_");
+  const webhookSecret = Deno.env.get("STRIPE_WEBHOOK_SECRET") || "";
+  const webhookConfigured = webhookSecret.startsWith("whsec_");
+  const ownerTestEnabled = Date.now() < OWNER_TEST_ENDS_AT;
+  const plans: Record<string, Record<string, unknown>> = {};
+
+  for (const id of PLAN_IDS) {
+    const priceId = LIVE_STRIPE_PRICES[id];
+    const priceConfigured = /^price_[A-Za-z0-9_]+$/.test(priceId);
+    const ready = stripeKeyConfigured && priceConfigured;
+    plans[id] = {
+      configured: ready,
+      approved_url_matches: ready,
+      ready,
+      provider: "stripe",
+      checkout_mode: "live",
+      price_id_configured: priceConfigured,
+    };
+  }
+
+  return {
+    mode: "live",
+    configuration_source: "stripe_live_backend",
+    provider: "stripe",
+    provider_availability_checked: true,
+    tester_allowlist_configured: Boolean(OWNER_TEST_AUTH_UUID_HASH),
+    owner_test_checkout_enabled: ownerTestEnabled,
+    owner_test_amount_cents: ownerTestEnabled ? OWNER_TEST_AMOUNT_CENTS : null,
+    webhook_configured: webhookConfigured,
+    webhook_event_retrieval_fallback_enabled: stripeKeyConfigured,
+    plans,
+  };
+}
+
+async function stripeRequest(path: string, init: RequestInit = {}): Promise<Record<string, unknown>> {
+  const key = getLiveStripeSecret();
+  const response = await fetch("https://api.stripe.com" + path, {
+    ...init,
+    headers: {
+      Authorization: "Bearer " + key,
+      ...(init.headers || {}),
+    },
+    redirect: "error",
+    signal: AbortSignal.timeout(15000),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = typeof (payload as { error?: { message?: unknown } } | null)?.error?.message === "string"
+      ? (payload as { error: { message: string } }).error.message
+      : "Stripe request failed.";
+    throw new Error("stripe_api_error:" + message.slice(0, 160));
+  }
+  return payload as Record<string, unknown>;
+}
 
 async function createCheckoutSession(client: ReturnType<typeof getSupabaseClient>, token: string): Promise<{ ok: boolean; status: number; body: Record<string, unknown> }> {
-  return createRevolutCheckout({
-    token,
-    plans: PLANS,
-    getEnv: (key: string) => Deno.env.get(key),
-    store: {
-      find: (tokenHash: string) => findByTokenHash(client, tokenHash),
-      claim: async (session: PurchaseSession, patch: Record<string, unknown>, now: string) => {
-        const { data, error } = await client.from("purchase_sessions")
-          .update(patch).eq("id", session.id).eq("status", "pending")
-          .eq("plan_id", session.plan_id).gt("expires_at", now)
-          .is("stripe_checkout_session_id", null).select("id").maybeSingle();
-        if (error) throw error;
-        return data;
+  const normalized = String(token || "").trim();
+  if (!TOKEN_RE.test(normalized)) return errorResult("invalid_session_token", "Невалиден session token.", 400);
+
+  const tokenHash = await hashToken(normalized);
+  const session = await findByTokenHash(client, tokenHash);
+  if (!session) return errorResult("session_not_found", "Сесията не е намерена.", 404);
+
+  const now = new Date();
+  if (!session.expires_at || new Date(session.expires_at).getTime() <= now.getTime()) {
+    if (session.status === "pending") await updateSessionStatus(client, tokenHash, "expired");
+    return errorResult("session_expired", "Сесията е изтекла.", 410);
+  }
+
+  const plan = PLANS[session.plan_id as PlanId];
+  if (!plan) return errorResult("invalid_plan", "Невалиден план.", 400);
+  // The client cannot request the discount: the canonical Telegram identity
+  // comes from a server-created purchase session and is checked against
+  // the existing admin record on every checkout attempt.
+  const ownerTestCheckout = await isOwnerTestCheckoutEligible(client, Number(session.telegram_user_id));
+
+  if (session.status === "paid" || session.status === "cancelled" || session.status === "expired") {
+    return errorResult("session_consumed", "Сесията вече не е достъпна за плащане.", 410);
+  }
+
+  if (session.stripe_checkout_session_id) {
+    try {
+      const existing = await stripeRequest("/v1/checkout/sessions/" + encodeURIComponent(session.stripe_checkout_session_id));
+      const url = typeof existing.url === "string" ? existing.url : null;
+      const status = String(existing.status || "");
+      const expectedExistingCents = ownerTestCheckout ? OWNER_TEST_AMOUNT_CENTS : plan.price.amount * 100;
+      const expectedExistingMode = "subscription";
+      if (url && status === "open"
+          && (Number(existing.amount_total) !== expectedExistingCents || String(existing.mode) !== expectedExistingMode)) {
+        return errorResult("new_session_required", "Създай нова сесия за актуалната цена.", 409);
+      }
+      if (url && status === "open") {
+        return {
+          ok: true,
+          status: 200,
+          body: {
+            api_version: API_VERSION,
+            checkout_provider: "stripe",
+            checkout_mode: "live",
+            checkout_session_id: session.stripe_checkout_session_id,
+            checkout_url: url,
+            owner_test_checkout: ownerTestCheckout,
+            charge_amount_cents: expectedExistingCents,
+            plan_id: plan.id,
+            plan: { id: plan.id, name: plan.name },
+          },
+        };
+      }
+    } catch {
+      // Fall through and create a fresh session only if the stored one is unusable.
+    }
+  }
+
+  const attemptRef = crypto.randomUUID();
+  const claimedAt = now.toISOString();
+  const { data: claimed, error: claimError } = await client.from("purchase_sessions")
+    .update({
+      status: "checkout_created",
+      checkout_provider: "stripe",
+      checkout_reference: attemptRef,
+      checkout_created_at: claimedAt,
+      updated_at: claimedAt,
+    })
+    .eq("id", session.id)
+    .in("status", ["pending", "checkout_created"])
+    .select("id")
+    .maybeSingle();
+  if (claimError) throw claimError;
+  if (!claimed) return errorResult("session_not_available", "Сесията вече се обработва.", 409);
+
+  const appBaseUrl = getAppBaseUrl();
+  const params = new URLSearchParams();
+  // Owner-only test uses dedicated EUR 0.00 Stripe Prices so Checkout,
+  // subscription creation, webhook delivery and entitlement activation can
+  // be exercised without charging the owner's payment method.
+  const recurring = true;
+  params.set("mode", recurring ? "subscription" : "payment");
+  params.set("line_items[0][price]", ownerTestCheckout
+    ? OWNER_TEST_STRIPE_PRICES[plan.id]
+    : LIVE_STRIPE_PRICES[plan.id]);
+  params.set("line_items[0][quantity]", "1");
+  params.set("success_url", appBaseUrl + "/payment-status.html?session_id={CHECKOUT_SESSION_ID}");
+  params.set("cancel_url", appBaseUrl + "/confirm-plan.html?session=" + encodeURIComponent(normalized));
+  params.set("client_reference_id", session.id);
+  params.set("metadata[purchase_session_id]", session.id);
+  params.set("metadata[telegram_user_id]", String(session.telegram_user_id));
+  params.set("metadata[plan_id]", plan.id);
+  if (ownerTestCheckout) params.set("metadata[owner_test_checkout]", "eur_000");
+  if (recurring) {
+    params.set("subscription_data[metadata][purchase_session_id]", session.id);
+    params.set("subscription_data[metadata][telegram_user_id]", String(session.telegram_user_id));
+    params.set("subscription_data[metadata][plan_id]", plan.id);
+  } else {
+    params.set("customer_creation", "always");
+    params.set("payment_intent_data[metadata][purchase_session_id]", session.id);
+    params.set("payment_intent_data[metadata][telegram_user_id]", String(session.telegram_user_id));
+    params.set("payment_intent_data[metadata][plan_id]", plan.id);
+    if (ownerTestCheckout) params.set("payment_intent_data[metadata][owner_test_checkout]", "eur_000");
+  }
+
+  let stripeSession: Record<string, unknown>;
+  try {
+    stripeSession = await stripeRequest("/v1/checkout/sessions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "Idempotency-Key": "purchase_session_" + session.id + (ownerTestCheckout ? "_owner_eur000" : ""),
       },
-    },
+      body: params.toString(),
+    });
+  } catch (error) {
+    await client.from("purchase_sessions").update({
+      status: "pending",
+      checkout_provider: null,
+      checkout_reference: null,
+      checkout_created_at: null,
+      updated_at: new Date().toISOString(),
+    }).eq("id", session.id).eq("checkout_reference", attemptRef);
+    throw error;
+  }
+
+  const checkoutId = String(stripeSession.id || "");
+  const checkoutUrl = typeof stripeSession.url === "string" ? stripeSession.url : "";
+  if (!/^cs_live_[A-Za-z0-9_]+$/.test(checkoutId) || !checkoutUrl.startsWith("https://checkout.stripe.com/")) {
+    throw new Error("stripe_checkout_invalid_response");
+  }
+
+  const checkoutExpiresAt = typeof stripeSession.expires_at === "number"
+    ? new Date(Number(stripeSession.expires_at) * 1000).toISOString()
+    : null;
+
+  const { error: sessionUpdateError } = await client.from("purchase_sessions").update({
+    stripe_checkout_session_id: checkoutId,
+    stripe_checkout_expires_at: checkoutExpiresAt,
+    checkout_reference: checkoutId,
+    updated_at: new Date().toISOString(),
+  }).eq("id", session.id).eq("checkout_reference", attemptRef);
+  if (sessionUpdateError) throw sessionUpdateError;
+
+  const paymentId = crypto.randomUUID();
+  const { error: paymentError } = await client.from("payments").insert({
+    id: paymentId,
+    telegram_user_id: Number(session.telegram_user_id),
+    plan_id: plan.id,
+    kind: "initial",
+    status: "pending",
+    amount_cents: ownerTestCheckout ? OWNER_TEST_AMOUNT_CENTS : plan.price.amount * 100,
+    currency: "eur",
+    stripe_checkout_session_id: checkoutId,
+    first_stripe_event_id: "checkout_created",
+    last_stripe_event_id: "checkout_created",
+    provider: "stripe",
+    purchase_session_id: session.id,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
   });
+  if (paymentError && !String(paymentError.message || "").toLowerCase().includes("duplicate")) throw paymentError;
+
+  return {
+    ok: true,
+    status: 200,
+    body: {
+      api_version: API_VERSION,
+      checkout_provider: "stripe",
+      checkout_mode: "live",
+      checkout_session_id: checkoutId,
+      checkout_url: checkoutUrl,
+      plan_id: plan.id,
+      owner_test_checkout: ownerTestCheckout,
+      charge_amount_cents: ownerTestCheckout ? OWNER_TEST_AMOUNT_CENTS : plan.price.amount * 100,
+      plan: { id: plan.id, name: plan.name },
+    },
+  };
 }
 
 async function verifyWebhookEvent(rawBody: string, signature: string, webhookSecret: string): Promise<Record<string, unknown>> {
-  const timestampMatch = signature.match(/t=(\d+)/); const sigMatch = signature.match(/v1=([a-f0-9]+)/); if (!timestampMatch || !sigMatch) throw new Error("Invalid signature format.");
+  const timestampMatch = signature.match(/t=(\d+)/);
+  const sigMatches = [...signature.matchAll(/v1=([a-f0-9]+)/g)].map((m) => m[1]);
+  if (!timestampMatch || sigMatches.length === 0) throw new Error("Invalid signature format.");
+  const timestamp = Number(timestampMatch[1]);
+  if (!Number.isFinite(timestamp) || Math.abs(Date.now() / 1000 - timestamp) > 300) {
+    throw new Error("Webhook timestamp outside tolerance.");
+  }
   const payload = `${timestampMatch[1]}.${rawBody}`;
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(webhookSecret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const sigBytes = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
   const expectedSig = Array.from(new Uint8Array(sigBytes)).map((b) => b.toString(16).padStart(2, "0")).join("");
-  if (!safeEqual(sigMatch[1], expectedSig)) throw new Error("Signature verification failed.");
+  if (!sigMatches.some((sig) => safeEqual(sig, expectedSig))) throw new Error("Signature verification failed.");
   return JSON.parse(rawBody);
 }
 
+async function createCommunityAccessLink(
+  client: ReturnType<typeof getSupabaseClient>,
+  telegramUserId: number,
+): Promise<string> {
+  if (!Number.isSafeInteger(telegramUserId) || telegramUserId <= 0) {
+    throw new Error("invalid_community_link_telegram_user");
+  }
+  const token = generateToken();
+  const codeHash = await hashToken(token);
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const { error } = await client.from("telegram_link_codes").insert({
+    code_hash: codeHash,
+    telegram_user_id: telegramUserId,
+    expires_at: expiresAt,
+  });
+  if (error) throw error;
+  return getAppBaseUrl() + "/community.html?link=" + encodeURIComponent(token);
+}
+
+async function sendAutomaticPaymentNotification(
+  client: ReturnType<typeof getSupabaseClient>,
+  eventId: string | null,
+): Promise<Record<string, unknown>> {
+  if (!eventId) return { status: "not_queued" };
+
+  const botToken = Deno.env.get("TELEGRAM_BOT_TOKEN") || Deno.env.get("BOT_TOKEN") || Deno.env.get("TELEGRAM_TOKEN") || "";
+  if (!/^[0-9]{5,20}:[A-Za-z0-9_-]{20,}$/.test(botToken)) {
+    return { status: "pending", error_code: "telegram_not_configured" };
+  }
+
+  const { data: claimed, error: claimError } = await client.rpc("claim_payment_notification", { p_event_id: eventId });
+  if (claimError) throw claimError;
+  if (!claimed) {
+    const { data } = await client.from("payment_notification_outbox").select("status,last_error_code").eq("id", eventId).maybeSingle();
+    return { status: data?.status || "not_found", error_code: data?.last_error_code || null };
+  }
+
+  const event = claimed as Record<string, unknown>;
+  const plan = PLANS[String(event.plan_id) as PlanId];
+  const chatId = String(event.telegram_user_id || "");
+  const expiresAt = new Date(String(event.access_expires_at || ""));
+  const paidAt = new Date(String(event.paid_at || ""));
+  const amountCents = Number(event.amount_cents || 0);
+
+  if (!plan || !/^\d{5,20}$/.test(chatId) || !Number.isFinite(expiresAt.getTime()) || !Number.isFinite(paidAt.getTime()) || amountCents < 0) {
+    await client.from("payment_notification_outbox").update({
+      status: "failed",
+      last_error_code: "invalid_verified_payment_event",
+      lease_token: null,
+      lease_until: null,
+      updated_at: new Date().toISOString(),
+    }).eq("id", eventId);
+    return { status: "failed", error_code: "invalid_verified_payment_event" };
+  }
+
+  try {
+    const identity = await fetch("https://api.telegram.org/bot" + botToken + "/getMe", {
+      method: "GET",
+      redirect: "error",
+      signal: AbortSignal.timeout(10000),
+    });
+    const identityBody = await identity.json();
+    if (!identity.ok || identityBody?.ok !== true || identityBody?.result?.username !== "EliZdraveBot") {
+      await client.from("payment_notification_outbox").update({
+        status: "retry",
+        last_error_code: "eli_bot_identity_not_verified",
+        next_attempt_at: new Date(Date.now() + 60000).toISOString(),
+        lease_token: null,
+        lease_until: null,
+        updated_at: new Date().toISOString(),
+      }).eq("id", eventId);
+      return { status: "retry", error_code: "eli_bot_identity_not_verified" };
+    }
+
+    const communityUrl = await createCommunityAccessLink(client, Number(chatId));
+    const amount = (amountCents / 100).toLocaleString("bg-BG", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+    const activated = new Intl.DateTimeFormat("bg-BG", {
+      day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit",
+      timeZone: "Europe/Sofia",
+    }).format(paidAt);
+    const expiry = new Intl.DateTimeFormat("bg-BG", {
+      day: "2-digit", month: "2-digit", year: "numeric",
+      timeZone: "Europe/Sofia",
+    }).format(expiresAt);
+    const modes = plan.id === "seven_day"
+      ? "текст, глас и Общност"
+      : "текст, глас, Avatar видео и Общност";
+
+    const modeKeyboard = plan.id === "seven_day"
+      ? [[{ text: "Пиши с Ели" }, { text: "Говори с Ели" }]]
+      : [
+          [{ text: "Пиши с Ели" }, { text: "Говори с Ели" }],
+          [{ text: "Говори с аватара на Ели" }],
+        ];
+
+    const response = await fetch("https://api.telegram.org/bot" + botToken + "/sendMessage", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: [
+          amountCents === 0
+            ? "Тестовото активиране е потвърдено. Не е извършено реално плащане."
+            : "Плащането ти от " + amount + " € е потвърдено автоматично.",
+          "Активиран на " + activated + " (българско време).",
+          plan.name + " е активен до " + expiry + ".",
+          "Включен достъп: " + modes + ".",
+          "",
+          "Общност: " + communityUrl,
+          "Отвори линка, влез в профила си и платеният Community достъп ще се свърже автоматично.",
+          "",
+          "Избери как искаш да общуваш с Ели от бутоните по-долу.",
+        ].join("\n"),
+        link_preview_options: { is_disabled: true },
+        reply_markup: {
+          keyboard: modeKeyboard,
+          resize_keyboard: true,
+          one_time_keyboard: true,
+          input_field_placeholder: "Избери режим с Ели",
+        },
+      }),
+      redirect: "error",
+      signal: AbortSignal.timeout(15000),
+    });
+    const body = await response.json();
+
+    if (response.ok && body?.ok === true && Number.isSafeInteger(body?.result?.message_id)) {
+      const sentAt = new Date().toISOString();
+      await client.from("payment_notification_outbox").update({
+        status: "sent",
+        telegram_message_id: body.result.message_id,
+        sent_at: sentAt,
+        last_error_code: null,
+        lease_token: null,
+        lease_until: null,
+        updated_at: sentAt,
+      }).eq("id", eventId);
+      return { status: "sent", delivered_now: true };
+    }
+
+    const isRetryable = response.status === 429 || response.status >= 500;
+    const nextStatus = isRetryable ? "retry" : "failed";
+    await client.from("payment_notification_outbox").update({
+      status: nextStatus,
+      last_error_code: "telegram_rejected_" + String(body?.error_code || response.status),
+      next_attempt_at: isRetryable ? new Date(Date.now() + 60000).toISOString() : new Date().toISOString(),
+      lease_token: null,
+      lease_until: null,
+      updated_at: new Date().toISOString(),
+    }).eq("id", eventId);
+    return { status: nextStatus, error_code: "telegram_rejected_" + String(body?.error_code || response.status) };
+  } catch {
+    await client.from("payment_notification_outbox").update({
+      status: "uncertain",
+      last_error_code: "delivery_outcome_unknown",
+      lease_token: null,
+      lease_until: null,
+      updated_at: new Date().toISOString(),
+    }).eq("id", eventId);
+    return { status: "uncertain", error_code: "delivery_outcome_unknown" };
+  }
+}
+
 async function handleCheckoutCompleted(client: ReturnType<typeof getSupabaseClient>, session: Record<string, unknown> | undefined, eventId: string): Promise<Record<string, unknown>> {
-  if (!session || String(session.payment_status || "") !== "paid") return { action: "ignored" };
-  const checkoutSessionId = String(session.id);
-  const { data: payment, error } = await client.from("payments").select("*").eq("stripe_checkout_session_id", checkoutSessionId).maybeSingle(); if (error) throw error; if (!payment || payment.status === "paid") return { action: "ignored" };
+  if (!session || !["paid", "no_payment_required"].includes(String(session.payment_status || ""))) {
+    return { action: "ignored", reason: "payment_not_settled" };
+  }
+
+  const checkoutSessionId = String(session.id || "");
+  const { data: payment, error } = await client.from("payments").select("*")
+    .eq("stripe_checkout_session_id", checkoutSessionId).maybeSingle();
+  if (error) throw error;
+  if (!payment) return { action: "ignored", reason: "no_matching_payment" };
+
+  // A discounted payment can activate an entitlement only for the verified
+  // admin purchase session and only for the precise paid amount.
+  if (Number(payment.amount_cents) === OWNER_TEST_AMOUNT_CENTS) {
+    const metadata = (session.metadata || {}) as Record<string, unknown>;
+    const expectedOwnerMode = "subscription";
+    if (!(await isVerifiedOwnerProfile(client, Number(payment.telegram_user_id))) ||
+        Number(session.amount_total) !== OWNER_TEST_AMOUNT_CENTS ||
+        String(session.currency || "").toLowerCase() !== "eur" ||
+        String(session.mode || "") !== expectedOwnerMode ||
+        String(session.client_reference_id || "") !== String(payment.purchase_session_id) ||
+        String(metadata.owner_test_checkout || "") !== "eur_000" ||
+        String(metadata.purchase_session_id || "") !== String(payment.purchase_session_id) ||
+        String(metadata.plan_id || "") !== String(payment.plan_id)) {
+      return { action: "ignored", reason: "invalid_owner_test_payment" };
+    }
+  }
+
+  if (payment.status === "paid") {
+    const { data: existingEvent } = await client.from("payment_notification_outbox")
+      .select("id,status").eq("payment_id", payment.id).maybeSingle();
+    return {
+      action: "already_paid",
+      paymentId: payment.id,
+      notification: existingEvent ? await sendAutomaticPaymentNotification(client, existingEvent.id) : { status: "not_queued" },
+    };
+  }
+
   const now = new Date().toISOString();
-  await client.from("payments").update({ status: "paid", paid_at: now, updated_at: now, last_stripe_event_id: eventId, stripe_payment_intent_id: session.payment_intent || null, stripe_subscription_id: session.subscription || null, stripe_customer_id: session.customer || null }).eq("stripe_checkout_session_id", checkoutSessionId);
-  const plan = PLANS[payment.plan_id as PlanId]; const startsAt = new Date(); const expiresAt = new Date(startsAt.getTime() + plan.durationDays * 86400000);
-  await client.from("entitlements").upsert({ telegram_user_id: Number(payment.telegram_user_id), plan_id: payment.plan_id, status: "active", billing_status: payment.plan_id === "seven_day" ? "paid" : "active", stripe_customer_id: session.customer || null, stripe_subscription_id: session.subscription || null, source_payment_id: payment.id, starts_at: startsAt.toISOString(), current_period_start: startsAt.toISOString(), current_period_end: expiresAt.toISOString(), expires_at: expiresAt.toISOString(), cancel_at_period_end: false, updated_at: now }, { onConflict: "telegram_user_id" });
-  return { action: "entitlement_activated", paymentId: payment.id, telegramUserId: payment.telegram_user_id, planId: payment.plan_id };
+  const { error: paymentUpdateError } = await client.from("payments").update({
+    status: "paid",
+    paid_at: now,
+    updated_at: now,
+    last_stripe_event_id: eventId,
+    stripe_payment_intent_id: session.payment_intent || null,
+    stripe_subscription_id: session.subscription || null,
+    stripe_customer_id: session.customer || null,
+  }).eq("stripe_checkout_session_id", checkoutSessionId);
+  if (paymentUpdateError) throw paymentUpdateError;
+
+  const plan = PLANS[payment.plan_id as PlanId];
+  if (!plan) throw new Error("unknown_plan");
+
+  const fallbackStart = new Date();
+  let startsAt = fallbackStart;
+  let expiresAt = new Date(fallbackStart.getTime() + plan.durationDays * 86400000);
+
+  const subscriptionId = typeof session.subscription === "string" ? session.subscription : "";
+  if (subscriptionId) {
+    try {
+      const subscription = await stripeRequest("/v1/subscriptions/" + encodeURIComponent(subscriptionId));
+      const items = (subscription.items as { data?: Array<Record<string, unknown>> } | null)?.data || [];
+      const firstItem = items[0] || {};
+      const stripeStartSeconds = Number(firstItem.current_period_start || 0);
+      const stripeEndSeconds = Number(firstItem.current_period_end || 0);
+      if (Number.isFinite(stripeStartSeconds) && stripeStartSeconds > 0) {
+        startsAt = new Date(stripeStartSeconds * 1000);
+      }
+      if (Number.isFinite(stripeEndSeconds) && stripeEndSeconds > stripeStartSeconds) {
+        expiresAt = new Date(stripeEndSeconds * 1000);
+      }
+    } catch (error) {
+      console.error("Initial subscription period lookup failed:", String((error as Error)?.message || error).slice(0, 160));
+    }
+  }
+
+  const { error: entitlementError } = await client.from("entitlements").upsert({
+    telegram_user_id: Number(payment.telegram_user_id),
+    plan_id: payment.plan_id,
+    status: "active",
+    billing_status: "active",
+    stripe_customer_id: session.customer || null,
+    stripe_subscription_id: session.subscription || null,
+    source_payment_id: payment.id,
+    starts_at: startsAt.toISOString(),
+    current_period_start: startsAt.toISOString(),
+    current_period_end: expiresAt.toISOString(),
+    expires_at: expiresAt.toISOString(),
+    cancel_at_period_end: false,
+    updated_at: now,
+  }, { onConflict: "telegram_user_id" });
+  if (entitlementError) throw entitlementError;
+
+  const { error: sessionError } = await client.from("purchase_sessions").update({
+    status: "paid",
+    consumed_at: now,
+    updated_at: now,
+  }).eq("stripe_checkout_session_id", checkoutSessionId).eq("status", "checkout_created");
+  if (sessionError) throw sessionError;
+
+  const { data: notificationEvent, error: outboxError } = await client.from("payment_notification_outbox")
+    .select("id,status").eq("payment_id", payment.id).maybeSingle();
+  if (outboxError) throw outboxError;
+
+  const notification = notificationEvent
+    ? await sendAutomaticPaymentNotification(client, notificationEvent.id)
+    : { status: "not_queued" };
+
+  return {
+    action: "entitlement_activated",
+    paymentId: payment.id,
+    telegramUserId: payment.telegram_user_id,
+    planId: payment.plan_id,
+    notification,
+  };
 }
 
 async function handleCheckoutFailed(client: ReturnType<typeof getSupabaseClient>, session: Record<string, unknown> | undefined, eventId: string, eventType: string): Promise<Record<string, unknown>> {
@@ -426,8 +1210,262 @@ async function handleCheckoutFailed(client: ReturnType<typeof getSupabaseClient>
   return { action: "payment_failed" };
 }
 
-async function processWebhookEvent(client: ReturnType<typeof getSupabaseClient>, event: Record<string, unknown>): Promise<Record<string, unknown>> { const type = String(event.type); const obj = (event.data as Record<string, unknown>)?.object as Record<string, unknown> | undefined; if (type === "checkout.session.completed" || type === "checkout.session.async_payment_succeeded") return handleCheckoutCompleted(client, obj, String(event.id)); if (type === "checkout.session.async_payment_failed" || type === "checkout.session.expired") return handleCheckoutFailed(client, obj, String(event.id), type); return { action: "ignored" }; }
-async function handleWebhook(client: ReturnType<typeof getSupabaseClient>, rawBody: string, signature: string): Promise<Response> { const secret = Deno.env.get("STRIPE_WEBHOOK_SECRET"); const stripeKey = Deno.env.get("STRIPE_SECRET_KEY"); if (!secret || !stripeKey) return sendError(503, "webhook_not_configured", "Webhook обработката не е конфигурирана."); let event: Record<string, unknown>; try { event = await verifyWebhookEvent(rawBody, signature, secret); } catch { return sendError(400, "signature_invalid", "Невалидна Stripe подписка."); } const eventId = String(event.id); const now = new Date().toISOString(); const { error: insertError } = await client.from("stripe_events").insert({ event_id: eventId, event_type: String(event.type), object_id: String((event.data as any)?.object?.id || null), livemode: Boolean(event.livemode), status: "processing", attempts: 1, received_at: now, updated_at: now }); if (insertError) return sendJson({ status: 200 }, { received: true, status: "duplicate" }); try { const result = await processWebhookEvent(client, event); await client.from("stripe_events").update({ status: "processed", processed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("event_id", eventId); return sendJson({ status: 200 }, { received: true, status: "processed", ...result }); } catch (err) { await client.from("stripe_events").update({ status: "failed", last_error_code: String((err as Error)?.message || "unknown").slice(0, 200), updated_at: new Date().toISOString() }).eq("event_id", eventId); return sendJson({ status: 500 }, { received: true, status: "failed" }); } }
+function stripeSubscriptionIdFromInvoice(invoice: Record<string, unknown>): string | null {
+  const direct = typeof invoice.subscription === "string" ? invoice.subscription : null;
+  const parent = invoice.parent as Record<string, unknown> | undefined;
+  const details = parent?.subscription_details as Record<string, unknown> | undefined;
+  const nested = typeof details?.subscription === "string" ? details.subscription : null;
+  return direct || nested || null;
+}
+
+async function handleInvoicePaid(
+  client: ReturnType<typeof getSupabaseClient>,
+  invoice: Record<string, unknown> | undefined,
+  eventId: string,
+): Promise<Record<string, unknown>> {
+  if (!invoice) return { action: "ignored", reason: "no_invoice_object" };
+  const billingReason = String(invoice.billing_reason || "");
+  if (billingReason === "subscription_create") {
+    return { action: "ignored", reason: "initial_subscription_invoice_handled_by_checkout" };
+  }
+
+  const subscriptionId = stripeSubscriptionIdFromInvoice(invoice);
+  if (!subscriptionId) return { action: "ignored", reason: "no_subscription_id" };
+
+  const { data: entitlement, error: entitlementError } = await client.from("entitlements")
+    .select("*").eq("stripe_subscription_id", subscriptionId).maybeSingle();
+  if (entitlementError) throw entitlementError;
+  if (!entitlement) return { action: "ignored", reason: "no_matching_entitlement" };
+
+  const plan = PLANS[entitlement.plan_id as PlanId];
+  if (!plan) throw new Error("unknown_plan");
+
+  const invoiceId = String(invoice.id || "");
+  if (!invoiceId) return { action: "ignored", reason: "no_invoice_id" };
+
+  const { data: existing, error: existingError } = await client.from("payments")
+    .select("id,status").eq("stripe_invoice_id", invoiceId).maybeSingle();
+  if (existingError) throw existingError;
+  if (existing) return { action: "already_recorded", paymentId: existing.id };
+
+  const periodStartMs = Number(invoice.period_start || 0) * 1000;
+  const periodEndMs = Number(invoice.period_end || 0) * 1000;
+  const nowDate = new Date();
+  const periodStart = Number.isFinite(periodStartMs) && periodStartMs > 0 ? new Date(periodStartMs) : nowDate;
+  const fallbackEnd = new Date(periodStart.getTime() + plan.durationDays * 86400000);
+  const periodEnd = Number.isFinite(periodEndMs) && periodEndMs > periodStart.getTime() ? new Date(periodEndMs) : fallbackEnd;
+  const amountPaid = Number(invoice.amount_paid || 0);
+  const currency = String(invoice.currency || "eur").toLowerCase();
+  const now = nowDate.toISOString();
+
+  const { data: sourcePayment, error: sourceError } = await client.from("payments")
+    .select("purchase_session_id").eq("id", entitlement.source_payment_id).maybeSingle();
+  if (sourceError) throw sourceError;
+  if (!sourcePayment?.purchase_session_id) {
+    return { action: "ignored", reason: "renewal_missing_origin_session" };
+  }
+
+  const paymentId = crypto.randomUUID();
+  const { error: paymentInsertError } = await client.from("payments").insert({
+    id: paymentId,
+    telegram_user_id: Number(entitlement.telegram_user_id),
+    plan_id: entitlement.plan_id,
+    kind: "renewal",
+    status: "paid",
+    amount_cents: amountPaid,
+    currency,
+    stripe_invoice_id: invoiceId,
+    stripe_subscription_id: subscriptionId,
+    stripe_customer_id: invoice.customer || entitlement.stripe_customer_id || null,
+    first_stripe_event_id: eventId,
+    last_stripe_event_id: eventId,
+    paid_at: now,
+    provider: "stripe",
+    purchase_session_id: sourcePayment.purchase_session_id,
+    created_at: now,
+    updated_at: now,
+  });
+  if (paymentInsertError) throw paymentInsertError;
+
+  const { error: entitlementUpdateError } = await client.from("entitlements").update({
+    status: "active",
+    billing_status: "active",
+    source_payment_id: paymentId,
+    current_period_start: periodStart.toISOString(),
+    current_period_end: periodEnd.toISOString(),
+    expires_at: periodEnd.toISOString(),
+    cancel_at_period_end: false,
+    updated_at: now,
+  }).eq("telegram_user_id", entitlement.telegram_user_id).eq("stripe_subscription_id", subscriptionId);
+  if (entitlementUpdateError) throw entitlementUpdateError;
+
+  const { data: notification, error: notificationError } = await client.from("payment_notification_outbox").insert({
+    payment_id: paymentId,
+    purchase_session_id: sourcePayment.purchase_session_id,
+    telegram_user_id: Number(entitlement.telegram_user_id),
+    plan_id: entitlement.plan_id,
+    amount_cents: amountPaid,
+    currency,
+    paid_at: now,
+    access_expires_at: periodEnd.toISOString(),
+  }).select("id").maybeSingle();
+  if (notificationError) throw notificationError;
+
+  return {
+    action: "subscription_renewed",
+    paymentId,
+    planId: entitlement.plan_id,
+    notification: notification?.id ? await sendAutomaticPaymentNotification(client, notification.id) : { status: "not_queued" },
+  };
+}
+
+async function handleInvoicePaymentFailed(
+  client: ReturnType<typeof getSupabaseClient>,
+  invoice: Record<string, unknown> | undefined,
+): Promise<Record<string, unknown>> {
+  if (!invoice) return { action: "ignored", reason: "no_invoice_object" };
+  const subscriptionId = stripeSubscriptionIdFromInvoice(invoice);
+  if (!subscriptionId) return { action: "ignored", reason: "no_subscription_id" };
+  const now = new Date().toISOString();
+  const { data, error } = await client.from("entitlements").update({
+    billing_status: "past_due",
+    updated_at: now,
+  }).eq("stripe_subscription_id", subscriptionId)
+    .select("telegram_user_id,plan_id,current_period_start,expires_at")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return { action: "ignored", reason: "no_matching_entitlement" };
+
+  const { error: warningError } = await client.from("entitlement_warning_outbox").upsert({
+    telegram_user_id: data.telegram_user_id,
+    plan_id: data.plan_id,
+    period_start: data.current_period_start,
+    expires_at: data.expires_at,
+    warning_kind: "payment_failed",
+    status: "pending",
+    next_attempt_at: now,
+    updated_at: now,
+  }, { onConflict: "telegram_user_id,plan_id,period_start,expires_at,warning_kind", ignoreDuplicates: true });
+  if (warningError) throw warningError;
+
+  return { action: "subscription_payment_failed", planId: data.plan_id, expiresAt: data.expires_at, warningQueued: true };
+}
+
+async function handleSubscriptionUpdated(
+  client: ReturnType<typeof getSupabaseClient>,
+  subscription: Record<string, unknown> | undefined,
+): Promise<Record<string, unknown>> {
+  if (!subscription?.id) return { action: "ignored", reason: "no_subscription_object" };
+  const now = new Date().toISOString();
+  const patch: Record<string, unknown> = {
+    cancel_at_period_end: Boolean(subscription.cancel_at_period_end),
+    updated_at: now,
+  };
+  const status = String(subscription.status || "");
+  if (["active","trialing"].includes(status)) patch.billing_status = status === "active" ? "active" : "trialing";
+  if (["past_due","unpaid","canceled"].includes(status)) patch.billing_status = status === "canceled" ? "cancelled" : status;
+  const { data, error } = await client.from("entitlements").update(patch)
+    .eq("stripe_subscription_id", String(subscription.id))
+    .select("telegram_user_id,plan_id").maybeSingle();
+  if (error) throw error;
+  return data ? { action: "subscription_updated", planId: data.plan_id } : { action: "ignored", reason: "no_matching_entitlement" };
+}
+
+async function handleSubscriptionDeleted(
+  client: ReturnType<typeof getSupabaseClient>,
+  subscription: Record<string, unknown> | undefined,
+): Promise<Record<string, unknown>> {
+  if (!subscription?.id) return { action: "ignored", reason: "no_subscription_object" };
+  const nowDate = new Date();
+  const { data: current, error: currentError } = await client.from("entitlements")
+    .select("telegram_user_id,plan_id,expires_at").eq("stripe_subscription_id", String(subscription.id)).maybeSingle();
+  if (currentError) throw currentError;
+  if (!current) return { action: "ignored", reason: "no_matching_entitlement" };
+
+  const expired = !current.expires_at || new Date(current.expires_at).getTime() <= nowDate.getTime();
+  const { error } = await client.from("entitlements").update({
+    status: expired ? "cancelled" : "active",
+    billing_status: "cancelled",
+    cancel_at_period_end: true,
+    updated_at: nowDate.toISOString(),
+  }).eq("telegram_user_id", current.telegram_user_id);
+  if (error) throw error;
+
+  return { action: "subscription_deleted", planId: current.plan_id, accessRemainsUntilExpiry: !expired };
+}
+
+async function processWebhookEvent(client: ReturnType<typeof getSupabaseClient>, event: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const type = String(event.type);
+  const obj = (event.data as Record<string, unknown>)?.object as Record<string, unknown> | undefined;
+  if ((type === "checkout.session.completed" || type === "checkout.session.async_payment_succeeded") && isAvatarAddonSession(obj)) {
+    return handleAvatarAddonCheckoutCompleted(client, obj, String(event.id));
+  }
+  if ((type === "checkout.session.async_payment_failed" || type === "checkout.session.expired") && isAvatarAddonSession(obj)) {
+    return handleAvatarAddonCheckoutFailed(client, obj, String(event.id), type);
+  }
+  if (type === "checkout.session.completed" || type === "checkout.session.async_payment_succeeded") return handleCheckoutCompleted(client, obj, String(event.id));
+  if (type === "checkout.session.async_payment_failed" || type === "checkout.session.expired") return handleCheckoutFailed(client, obj, String(event.id), type);
+  if (type === "invoice.paid") return handleInvoicePaid(client, obj, String(event.id));
+  if (type === "invoice.payment_failed") return handleInvoicePaymentFailed(client, obj);
+  if (type === "customer.subscription.updated") return handleSubscriptionUpdated(client, obj);
+  if (type === "customer.subscription.deleted") return handleSubscriptionDeleted(client, obj);
+  return { action: "ignored", reason: "unhandled_event_type: " + type };
+}
+async function handleWebhook(client: ReturnType<typeof getSupabaseClient>, rawBody: string, signature: string): Promise<Response> {
+  const secret = Deno.env.get("STRIPE_WEBHOOK_SECRET") || "";
+  const stripeKey = Deno.env.get("STRIPE_SECRET_KEY") || "";
+  if (!stripeKey || (!stripeKey.startsWith("sk_live_") && !stripeKey.startsWith("rk_live_"))) {
+    return sendError(503, "webhook_not_configured", "Webhook обработката не е конфигурирана за LIVE Stripe.");
+  }
+
+  let event: Record<string, unknown> | null = null;
+  if (secret) {
+    try {
+      event = await verifyWebhookEvent(rawBody, signature, secret);
+    } catch {
+      event = null;
+    }
+  }
+
+  // If the stored signing secret is stale or delivery verification fails,
+  // authenticate the event by retrieving the exact event ID from Stripe using the LIVE secret key.
+  if (!event) {
+    try {
+      const candidate = JSON.parse(rawBody) as Record<string, unknown>;
+      const eventId = String(candidate?.id || "");
+      if (!/^evt_[A-Za-z0-9_]+$/.test(eventId)) throw new Error("invalid_event_id");
+      const stripeEvent = await stripeRequest("/v1/events/" + encodeURIComponent(eventId));
+      if (String(stripeEvent.id || "") !== eventId) throw new Error("event_id_mismatch");
+      event = stripeEvent;
+    } catch {
+      return sendError(400, "signature_invalid", "Невалидна Stripe подписка.");
+    }
+  }
+
+  if (event.livemode !== true) return sendJson({ status: 200 }, { received: true, status: "ignored_test_event" });
+  const eventId = String(event.id);
+  const now = new Date().toISOString();
+  const { error: insertError } = await client.from("stripe_events").insert({
+    event_id: eventId,
+    event_type: String(event.type),
+    object_id: String((event.data as { object?: { id?: unknown } } | null)?.object?.id || null),
+    livemode: Boolean(event.livemode),
+    status: "processing",
+    attempts: 1,
+    received_at: now,
+    updated_at: now,
+  });
+  if (insertError) return sendJson({ status: 200 }, { received: true, status: "duplicate" });
+
+  try {
+    const result = await processWebhookEvent(client, event);
+    await client.from("stripe_events").update({ status: "processed", processed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("event_id", eventId);
+    return sendJson({ status: 200 }, { received: true, status: "processed", ...result });
+  } catch (err) {
+    await client.from("stripe_events").update({ status: "failed", last_error_code: String((err as Error)?.message || "unknown").slice(0, 200), updated_at: new Date().toISOString() }).eq("event_id", eventId);
+    return sendJson({ status: 500 }, { received: true, status: "failed" });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Community helpers
@@ -450,65 +1488,390 @@ async function confirmRevolutManualTestPayment(req: Request, client: ReturnType<
     const code = String(error.message || "manual_confirmation_failed");
     if (code.includes("already")) return sendError(409, "already_confirmed", "Това плащане или purchase session вече е използвано.");
     if (code.includes("expired")) return sendError(410, "session_expired", "Purchase session е изтекла.");
-    if (code.includes("eligible")) return sendError(409, "session_not_eligible", "Сесията не е валидна за monthly €1 test.");
+    if (code.includes("eligible")) return sendError(409, "session_not_eligible", "Сесията не е валидна за месечния план.");
     return sendError(400, "manual_confirmation_failed", "Потвърждението не беше записано.");
   }
   return sendJson({ status: 200 }, { confirmed: true, duplicate: Boolean(data?.duplicate), plan_id: data?.plan_id || "monthly", telegram_user_id: data?.telegram_user_id ? String(data.telegram_user_id) : null, entitlement_expires_at: data?.expires_at || null });
 }
 
-const POST_MAX_LENGTH = 500; const POST_MIN_LENGTH = 1; const DISPLAY_NAME_MAX_LENGTH = 50; const DUPLICATE_POST_WINDOW_SECONDS = 30; const FEED_PAGE_SIZE = 20; const MESSAGE_MAX_LENGTH = 2000; const MESSAGE_RATE_LIMIT_SECONDS = 2; const CONVERSATION_PAGE_SIZE = 50;
-interface CommunityProfile { user_id: string; telegram_user_id: number | null; display_name: string; is_admin: boolean; bio: string | null; avatar_url: string | null; }
-async function getAuthUserId(req: Request, client: ReturnType<typeof getSupabaseClient>): Promise<string | null> { const authHeader = req.headers.get("authorization") || ""; if (!authHeader.startsWith("Bearer ")) return null; const token = authHeader.slice(7).trim(); if (!token || token.length < 10) return null; try { const { data, error } = await client.auth.getUser(token); if (error || !data.user?.id) return null; return data.user.id; } catch { return null; } }
-async function getCommunityProfile(client: ReturnType<typeof getSupabaseClient>, userId: string): Promise<CommunityProfile | null> { const { data, error } = await client.from("community_profiles").select("user_id, telegram_user_id, display_name, is_admin, bio, avatar_url").eq("user_id", userId).maybeSingle(); if (error) throw error; return data as CommunityProfile | null; }
-interface EntitlementInfo { active: boolean; status: string; plan_id: string; is_admin: boolean; }
-async function getCommunityEntitlement(client: ReturnType<typeof getSupabaseClient>, profile: CommunityProfile): Promise<EntitlementInfo> { if (profile.is_admin) return { active: true, status: "active", plan_id: "admin", is_admin: true }; if (!profile.telegram_user_id) return { active: false, status: "none", plan_id: "none", is_admin: false }; const { data, error } = await client.from("entitlements").select("status, plan_id, expires_at").eq("telegram_user_id", profile.telegram_user_id).maybeSingle(); if (error) throw error; if (!data) return { active: false, status: "none", plan_id: "none", is_admin: false }; return { active: data.status === "active" && new Date(data.expires_at).getTime() > Date.now(), status: data.status, plan_id: data.plan_id, is_admin: false }; }
-function canWrite(e: EntitlementInfo): boolean { return e.active || e.is_admin; }
-function validatePostContent(raw: unknown): string | null { if (typeof raw !== "string") return null; const t = raw.trim(); return t.length >= POST_MIN_LENGTH && t.length <= POST_MAX_LENGTH ? t : null; }
-function validateDisplayName(raw: unknown): string | null { if (typeof raw !== "string") return null; const t = raw.trim(); return t.length >= 1 && t.length <= DISPLAY_NAME_MAX_LENGTH ? t : null; }
-function validateMessageText(raw: unknown): string | null { if (typeof raw !== "string") return null; const t = raw.trim(); return t.length >= 1 && t.length <= MESSAGE_MAX_LENGTH ? t : null; }
+const POST_MAX_LENGTH = 500;
+const POST_MIN_LENGTH = 1;
+const DISPLAY_NAME_MAX_LENGTH = 50;
+const FEED_PAGE_SIZE = 20;
+const MESSAGE_MAX_LENGTH = 2000;
+const CONVERSATION_PAGE_SIZE = 50;
+interface CommunityProfile {
+    user_id: string;
+    telegram_user_id: number | null;
+    display_name: string;
+    is_admin: boolean;
+    bio: string | null;
+    avatar_url: string | null;
+}
+async function getAuthUserId(req: Request, client: ReturnType<typeof getSupabaseClient>): Promise<string | null> { const authHeader = req.headers.get("authorization") || ""; if (!authHeader.startsWith("Bearer "))
+    return null; const token = authHeader.slice(7).trim(); if (!token || token.length < 10)
+    return null; try {
+    const { data, error } = await client.auth.getUser(token);
+    if (error || !data.user?.id)
+        return null;
+    return data.user.id;
+}
+catch {
+    return null;
+} }
+async function getCommunityProfile(client: ReturnType<typeof getSupabaseClient>, userId: string): Promise<CommunityProfile | null> { const { data, error } = await client.from("community_profiles").select("user_id, telegram_user_id, display_name, is_admin, bio, avatar_url").eq("user_id", userId).maybeSingle(); if (error)
+    throw error; return data as CommunityProfile | null; }
+async function resolveEffectiveTelegramUserId(client: ReturnType<typeof getSupabaseClient>, profile: CommunityProfile): Promise<number | null> {
+    if (profile.telegram_user_id)
+        return Number(profile.telegram_user_id);
+    if (!profile.is_admin)
+        return null;
+    const { data: ownerRows, error: ownerError } = await client.from("avatar_owner_generations").select("telegram_user_id").limit(50);
+    if (ownerError)
+        throw ownerError;
+    const candidateIds = Array.from(new Set((ownerRows || [])
+        .map((row: Record<string, unknown>) => Number(row.telegram_user_id))
+        .filter((id: number) => Number.isSafeInteger(id) && id > 0)));
+    if (candidateIds.length !== 1)
+        return null;
+    const candidate = candidateIds[0];
+    const { data: entitlement, error: entitlementError } = await client.from("entitlements")
+        .select("telegram_user_id").eq("telegram_user_id", candidate).maybeSingle();
+    if (entitlementError)
+        throw entitlementError;
+    return entitlement ? candidate : null;
+}
+interface EntitlementInfo {
+    active: boolean;
+    status: string;
+    plan_id: string;
+    is_admin: boolean;
+}
+async function getCommunityEntitlement(client: ReturnType<typeof getSupabaseClient>, profile: CommunityProfile): Promise<EntitlementInfo> { if (profile.is_admin)
+    return { active: true, status: "active", plan_id: "admin", is_admin: true }; if (!profile.telegram_user_id)
+    return { active: false, status: "none", plan_id: "none", is_admin: false }; const { data, error } = await client.from("entitlements").select("status, plan_id, expires_at").eq("telegram_user_id", profile.telegram_user_id).maybeSingle(); if (error)
+    throw error; if (!data)
+    return { active: false, status: "none", plan_id: "none", is_admin: false }; return { active: data.status === "active" && new Date(data.expires_at).getTime() > Date.now(), status: data.status, plan_id: data.plan_id, is_admin: false }; }
+function canWrite(e: EntitlementInfo): boolean {
+    return e.is_admin || (e.active && ["seven_day", "monthly", "yearly"].includes(e.plan_id));
+}
+function validatePostContent(raw: unknown): string | null { if (typeof raw !== "string")
+    return null; const t = raw.trim(); return t.length >= POST_MIN_LENGTH && t.length <= POST_MAX_LENGTH ? t : null; }
+function validateDisplayName(raw: unknown): string | null { if (typeof raw !== "string")
+    return null; const t = raw.trim(); return t.length >= 1 && t.length <= DISPLAY_NAME_MAX_LENGTH ? t : null; }
+function validateMessageText(raw: unknown): string | null {
+    if (typeof raw !== "string")
+        return null;
+    const text = raw.trim();
+    // eslint-disable-next-line no-control-regex -- Reject non-printable input while allowing line breaks.
+    if (/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.test(text))
+        return null;
+    return text.length >= 1 && text.length <= MESSAGE_MAX_LENGTH ? text : null;
+}
 async function isBlocked(client: ReturnType<typeof getSupabaseClient>, blockerId: string, blockedId: string): Promise<boolean> { const { data } = await client.from("community_blocks").select("blocker_id").eq("blocker_id", blockerId).eq("blocked_id", blockedId).maybeSingle(); return !!data; }
 async function verifyConversationMembership(client: ReturnType<typeof getSupabaseClient>, conversationId: string, userId: string): Promise<boolean> { const { data } = await client.from("private_conversation_members").select("conversation_id").eq("conversation_id", conversationId).eq("user_id", userId).maybeSingle(); return !!data; }
-async function getOrCreateConversation(client: ReturnType<typeof getSupabaseClient>, userA: string, userB: string): Promise<string> { const lesser = userA < userB ? userA : userB; const greater = userA < userB ? userB : userA; const { data: existing } = await client.from("private_conversations").select("id").eq("user_a", lesser).eq("user_b", greater).maybeSingle(); if (existing) return existing.id as string; const convId = crypto.randomUUID(); const now = new Date().toISOString(); await client.from("private_conversations").insert({ id: convId, user_a: lesser, user_b: greater, created_at: now }); await client.from("private_conversation_members").insert([{ conversation_id: convId, user_id: userA, created_at: now }, { conversation_id: convId, user_id: userB, created_at: now }]); return convId; }
+async function getOrCreateConversation(client: ReturnType<typeof getSupabaseClient>, userA: string, userB: string): Promise<string> {
+    const lesser = userA < userB ? userA : userB;
+    const greater = userA < userB ? userB : userA;
+    const { data, error } = await client.rpc("get_or_create_private_conversation", { p_user_a: lesser, p_user_b: greater });
+    if (error || typeof data !== "string")
+        throw new Error("conversation_create_failed");
+    return data;
+}
+async function handleGetProfile(req: Request, client: ReturnType<typeof getSupabaseClient>): Promise<Response> { const userId = await getAuthUserId(req, client); if (!userId)
+    return sendError(401, "unauthorized", "Влезте в профила си."); const profile = await getCommunityProfile(client, userId); if (!profile)
+    return sendJson({ status: 200 }, { has_profile: false }); const entitlement = await getCommunityEntitlement(client, profile); const effectiveTelegramUserId = await resolveEffectiveTelegramUserId(client, profile); const internalEntitlement = effectiveTelegramUserId ? await getInternalEntitlement(client, String(effectiveTelegramUserId)) : null; return sendJson({ status: 200 }, { has_profile: true, display_name: profile.display_name, bio: profile.bio, avatar_url: profile.avatar_url, is_admin: profile.is_admin, telegram_linked: profile.telegram_user_id !== null || (profile.is_admin && effectiveTelegramUserId !== null), owner_identity_resolved: profile.is_admin && effectiveTelegramUserId !== null, can_post: canWrite(entitlement), entitlement: { active: entitlement.active, status: entitlement.status, plan_id: entitlement.plan_id, plan_name: internalEntitlement?.plan ? (internalEntitlement.plan as Record<string, unknown>).name : null, billing_status: internalEntitlement?.billing_status || null, current_period_start: internalEntitlement?.current_period_start || null, current_period_end: internalEntitlement?.current_period_end || null, expires_at: internalEntitlement?.expires_at || null, cancel_at_period_end: Boolean(internalEntitlement?.cancel_at_period_end) }, avatar_usage: await getAvatarUsageSnapshot(client, internalEntitlement) }); }
+async function handleConsumeCommunityLink(req: Request, client: ReturnType<typeof getSupabaseClient>): Promise<Response> {
+    const userId = await getAuthUserId(req, client);
+    if (!userId) return sendError(401, "unauthorized", "Влезте в профила си.");
 
-async function handleGetProfile(req: Request, client: ReturnType<typeof getSupabaseClient>): Promise<Response> { const userId = await getAuthUserId(req, client); if (!userId) return sendError(401, "unauthorized", "Влезте в профила си."); const profile = await getCommunityProfile(client, userId); if (!profile) return sendJson({ status: 200 }, { has_profile: false }); const entitlement = await getCommunityEntitlement(client, profile); const internalEntitlement = profile.telegram_user_id ? await getInternalEntitlement(client, String(profile.telegram_user_id)) : null; return sendJson({ status: 200 }, { has_profile: true, display_name: profile.display_name, bio: profile.bio, avatar_url: profile.avatar_url, is_admin: profile.is_admin, telegram_linked: profile.telegram_user_id !== null, can_post: canWrite(entitlement), entitlement: { active: entitlement.active, status: entitlement.status, plan_id: entitlement.plan_id, plan_name: internalEntitlement?.plan ? (internalEntitlement.plan as Record<string, unknown>).name : null, billing_status: internalEntitlement?.billing_status || null, current_period_start: internalEntitlement?.current_period_start || null, current_period_end: internalEntitlement?.current_period_end || null, expires_at: internalEntitlement?.expires_at || null, cancel_at_period_end: Boolean(internalEntitlement?.cancel_at_period_end) }, avatar_usage: await getAvatarUsageSnapshot(client, internalEntitlement) }); }
-async function handleCommunityStatus(req: Request, client: ReturnType<typeof getSupabaseClient>): Promise<Response> { const userId = await getAuthUserId(req, client); if (!userId) return sendJson({ status: 200 }, { authenticated: false, has_profile: false, can_post: false, entitlement: null }); const profile = await getCommunityProfile(client, userId); if (!profile) return sendJson({ status: 200 }, { authenticated: true, has_profile: false, can_post: false, entitlement: null }); const e = await getCommunityEntitlement(client, profile); return sendJson({ status: 200 }, { authenticated: true, has_profile: true, display_name: profile.display_name, is_admin: profile.is_admin, can_post: canWrite(e), entitlement: { active: e.active, status: e.status, plan_id: e.plan_id } }); }
-async function handleUpsertProfile(req: Request, client: ReturnType<typeof getSupabaseClient>): Promise<Response> { const userId = await getAuthUserId(req, client); if (!userId) return sendError(401, "unauthorized", "Влезте в профила си."); const body = await req.json(); const displayName = validateDisplayName(body.display_name); if (!displayName) return sendError(400, "invalid_display_name", "Името трябва да бъде между 1 и 50 символа."); let telegramUserId: number | null = null; if (body.telegram_user_id != null) { const n = normalizeTelegramUserId(body.telegram_user_id); if (!n) return sendError(400, "invalid_telegram_user", "Невалиден Telegram user ID."); telegramUserId = Number(n); } const existing = await getCommunityProfile(client, userId); const now = new Date().toISOString(); if (existing) { const update: Record<string, unknown> = { display_name: displayName, updated_at: now }; if (telegramUserId !== null) update.telegram_user_id = telegramUserId; const { error } = await client.from("community_profiles").update(update).eq("user_id", userId); if (error) return sendError(503, "database_error", "Грешка при обновяване на профила."); return handleGetProfile(req, client); } const { error } = await client.from("community_profiles").insert({ user_id: userId, display_name: displayName, telegram_user_id: telegramUserId, is_admin: false, created_at: now, updated_at: now }); if (error) return sendError(503, "database_error", "Грешка при създаване на профила."); return handleGetProfile(req, client); }
+    const profile = await getCommunityProfile(client, userId);
+    if (!profile) return sendError(409, "community_profile_required", "Създай профил в Общността първо.");
 
-async function handleListPosts(req: Request, client: ReturnType<typeof getSupabaseClient>): Promise<Response> { const userId = await getAuthUserId(req, client); if (!userId) return sendError(401, "unauthorized", "Влезте в профила си."); const profile = await getCommunityProfile(client, userId); if (!profile) return sendError(403, "no_profile", "Създайте профил първо."); const { data, error } = await client.from("community_posts").select("id,user_id,content,created_at,community_profiles!inner(display_name)").is("deleted_at", null).order("created_at", { ascending: false }).limit(FEED_PAGE_SIZE); if (error) return sendError(503, "database_error", "Грешка при зареждане на публикациите."); const posts = (data || []).map((p: any) => ({ id: p.id, author_name: p.community_profiles?.display_name || "Анонимен", author_is_me: p.user_id === userId, content: p.content, created_at: p.created_at, reactions: 0, my_reaction: false })); return sendJson({ status: 200 }, { posts, has_more: false }); }
-async function handleCreatePost(req: Request, client: ReturnType<typeof getSupabaseClient>): Promise<Response> { const userId = await getAuthUserId(req, client); if (!userId) return sendError(401, "unauthorized", "Влезте в профила си."); const profile = await getCommunityProfile(client, userId); if (!profile) return sendError(403, "no_profile", "Създайте профил първо."); const e = await getCommunityEntitlement(client, profile); if (!canWrite(e)) return sendError(403, "access_denied", "Community е достъпна само с активен платен план."); const body = await req.json(); const content = validatePostContent(body.content); if (!content) return sendError(400, "invalid_content", "Текстът трябва да бъде между 1 и 500 символа."); const now = new Date().toISOString(); const { data, error } = await client.from("community_posts").insert({ id: crypto.randomUUID(), user_id: userId, content, created_at: now, updated_at: now }).select("id,content,created_at").maybeSingle(); if (error) return sendError(503, "database_error", "Грешка при създаване на публикацията."); return sendJson({ status: 201 }, { post: { id: data.id, author_name: profile.display_name, author_is_me: true, content: data.content, created_at: data.created_at, reactions: 0, my_reaction: false } }); }
-async function handleDeletePost(req: Request, client: ReturnType<typeof getSupabaseClient>, postId: string): Promise<Response> { const userId = await getAuthUserId(req, client); if (!userId) return sendError(401, "unauthorized", "Влезте в профила си."); const profile = await getCommunityProfile(client, userId); if (!profile) return sendError(403, "no_profile", "Създайте профил първо."); const { data: post } = await client.from("community_posts").select("user_id,deleted_at").eq("id", postId).maybeSingle(); if (!post || post.deleted_at) return sendError(404, "post_not_found", "Публикацията не е намерена."); if (post.user_id !== userId && !profile.is_admin) return sendError(403, "forbidden", "Можеш да изтриваш само свои публикации."); const now = new Date().toISOString(); const { error } = await client.from("community_posts").update({ deleted_at: now, updated_at: now }).eq("id", postId); if (error) return sendError(503, "database_error", "Грешка при изтриване на публикацията."); return sendJson({ status: 200 }, { deleted: true }); }
-async function handleToggleReaction(req: Request, client: ReturnType<typeof getSupabaseClient>, postId: string): Promise<Response> { const userId = await getAuthUserId(req, client); if (!userId) return sendError(401, "unauthorized", "Влезте в профила си."); const profile = await getCommunityProfile(client, userId); if (!profile) return sendError(403, "no_profile", "Създайте профил първо."); const e = await getCommunityEntitlement(client, profile); if (!canWrite(e)) return sendError(403, "access_denied", "Реакциите са достъпни само с активен платен план."); const { data: existing } = await client.from("community_reactions").select("post_id").eq("post_id", postId).eq("user_id", userId).maybeSingle(); if (existing) { await client.from("community_reactions").delete().eq("post_id", postId).eq("user_id", userId); return sendJson({ status: 200 }, { my_reaction: false }); } await client.from("community_reactions").insert({ post_id: postId, user_id: userId, created_at: new Date().toISOString() }); return sendJson({ status: 200 }, { my_reaction: true }); }
+    let body: Record<string, unknown> = {};
+    try { body = await req.json(); } catch {
+      return sendError(400, "invalid_json", "Невалидни данни.");
+    }
 
-async function handleViewMember(req: Request, client: ReturnType<typeof getSupabaseClient>, targetUserId: string): Promise<Response> { const userId = await getAuthUserId(req, client); if (!userId) return sendError(401, "unauthorized", "Влезте в профила си."); const { data: target, error } = await client.from("community_profiles").select("user_id,display_name,bio,avatar_url,created_at").eq("user_id", targetUserId).maybeSingle(); if (error || !target) return sendError(404, "member_not_found", "Потребителят не е намерен."); const blockedByMe = await isBlocked(client, userId, targetUserId); const { count } = await client.from("community_posts").select("*", { count: "exact", head: true }).eq("user_id", targetUserId).is("deleted_at", null); return sendJson({ status: 200 }, { user_id: target.user_id, display_name: target.display_name, bio: target.bio || "", avatar_url: target.avatar_url || null, post_count: count || 0, is_me: targetUserId === userId, blocked_by_me: blockedByMe }); }
-async function handleCreateConversation(req: Request, client: ReturnType<typeof getSupabaseClient>): Promise<Response> { const userId = await getAuthUserId(req, client); if (!userId) return sendError(401, "unauthorized", "Влезте в профила си."); const body = await req.json(); const targetUserId = String(body.target_user_id || "").trim(); if (!targetUserId || targetUserId === userId) return sendError(400, "invalid_user_id", "Невалиден потребителски ID."); if (await isBlocked(client, targetUserId, userId) || await isBlocked(client, userId, targetUserId)) return sendError(403, "blocked", "Съобщенията са блокирани."); const { data: target } = await client.from("community_profiles").select("display_name,avatar_url").eq("user_id", targetUserId).maybeSingle(); if (!target) return sendError(404, "member_not_found", "Потребителят не е намерен."); const convId = await getOrCreateConversation(client, userId, targetUserId); return sendJson({ status: 200 }, { conversation_id: convId, other_user_id: targetUserId, other_display_name: target.display_name, other_avatar_url: target.avatar_url || null }); }
-async function handleListConversations(req: Request, client: ReturnType<typeof getSupabaseClient>): Promise<Response> { const userId = await getAuthUserId(req, client); if (!userId) return sendError(401, "unauthorized", "Влезте в профила си."); const { data: memberships, error } = await client.from("private_conversation_members").select("conversation_id,last_read_at,muted,created_at").eq("user_id", userId).order("created_at", { ascending: false }); if (error) return sendError(503, "database_error", "Грешка при зареждане на съобщенията."); if (!memberships?.length) return sendJson({ status: 200 }, { conversations: [] }); const ids = memberships.map((m:any)=>m.conversation_id); const { data: convs } = await client.from("private_conversations").select("id,user_a,user_b,created_at").in("id", ids); const result=[]; for (const conv of convs||[]) { const other=conv.user_a===userId?conv.user_b:conv.user_a; const { data:p }=await client.from("community_profiles").select("display_name,avatar_url").eq("user_id",other).maybeSingle(); const { data:last }=await client.from("private_messages").select("type,text_content,created_at").eq("conversation_id",conv.id).order("created_at",{ascending:false}).limit(1).maybeSingle(); result.push({id:conv.id,other_user_id:other,other_display_name:p?.display_name||"Анонимен",other_avatar_url:p?.avatar_url||null,last_message_preview:last?.type==="text"?last.text_content:(last?"🎙 Гласово съобщение":""),last_message_type:last?.type||null,last_message_at:last?.created_at||conv.created_at,unread_count:0,muted:memberships.find((m:any)=>m.conversation_id===conv.id)?.muted||false}); } return sendJson({status:200},{conversations:result}); }
-async function handleListMessages(req: Request, client: ReturnType<typeof getSupabaseClient>, conversationId: string): Promise<Response> { const userId=await getAuthUserId(req,client); if(!userId)return sendError(401,"unauthorized","Влезте в профила си."); if(!await verifyConversationMembership(client,conversationId,userId))return sendError(403,"forbidden","Нямаш достъп до този разговор."); const {data,error}=await client.from("private_messages").select("id,conversation_id,sender_id,type,text_content,voice_storage_path,voice_duration_ms,voice_mime_type,voice_size_bytes,created_at").eq("conversation_id",conversationId).order("created_at",{ascending:false}).limit(CONVERSATION_PAGE_SIZE); if(error)return sendError(503,"database_error","Грешка при зареждане на съобщенията."); return sendJson({status:200},{messages:(data||[]).map((m:any)=>({...m,is_me:m.sender_id===userId})),has_more:false}); }
-async function handleSendMessage(req: Request, client: ReturnType<typeof getSupabaseClient>, conversationId: string): Promise<Response> { const userId=await getAuthUserId(req,client); if(!userId)return sendError(401,"unauthorized","Влезте в профила си."); const profile=await getCommunityProfile(client,userId); if(!profile)return sendError(403,"no_profile","Създайте профил първо."); if(!canWrite(await getCommunityEntitlement(client,profile)))return sendError(403,"access_denied","Частните съобщения изискват активен платен план."); if(!await verifyConversationMembership(client,conversationId,userId))return sendError(403,"forbidden","Нямаш достъп до този разговор."); const body=await req.json(); const content=validateMessageText(body.content); if(!content)return sendError(400,"invalid_content","Съобщението трябва да бъде между 1 и 2000 символа."); const now=new Date().toISOString(); const {data,error}=await client.from("private_messages").insert({id:crypto.randomUUID(),conversation_id:conversationId,sender_id:userId,type:"text",text_content:content,created_at:now}).select("id,created_at").maybeSingle(); if(error)return sendError(503,"database_error","Грешка при изпращане на съобщението."); return sendJson({status:201},{message:{id:data.id,conversation_id:conversationId,sender_id:userId,is_me:true,type:"text",text_content:content,created_at:data.created_at}}); }
-async function handleMarkRead(req: Request, client: ReturnType<typeof getSupabaseClient>, conversationId: string): Promise<Response> { const userId=await getAuthUserId(req,client); if(!userId)return sendError(401,"unauthorized","Влезте в профила си."); if(!await verifyConversationMembership(client,conversationId,userId))return sendError(403,"forbidden","Нямаш достъп до този разговор."); await client.from("private_conversation_members").update({last_read_at:new Date().toISOString()}).eq("conversation_id",conversationId).eq("user_id",userId); return sendJson({status:200},{marked_read:true}); }
-async function handleToggleMute(req: Request, client: ReturnType<typeof getSupabaseClient>, conversationId: string): Promise<Response> { const userId=await getAuthUserId(req,client); if(!userId)return sendError(401,"unauthorized","Влезте в профила си."); const {data}=await client.from("private_conversation_members").select("muted").eq("conversation_id",conversationId).eq("user_id",userId).maybeSingle(); if(!data)return sendError(403,"forbidden","Нямаш достъп до този разговор."); const muted=!data.muted; await client.from("private_conversation_members").update({muted}).eq("conversation_id",conversationId).eq("user_id",userId); return sendJson({status:200},{muted}); }
-async function handleBlock(req: Request, client: ReturnType<typeof getSupabaseClient>): Promise<Response> { const userId=await getAuthUserId(req,client); if(!userId)return sendError(401,"unauthorized","Влезте в профила си."); const body=await req.json(); const target=String(body.target_user_id||"").trim(); if(!target||target===userId)return sendError(400,"invalid_user_id","Невалиден потребителски ID."); await client.from("community_blocks").upsert({blocker_id:userId,blocked_id:target,created_at:new Date().toISOString()},{onConflict:"blocker_id,blocked_id"}); return sendJson({status:200},{blocked:true}); }
-async function handleUnblock(req: Request, client: ReturnType<typeof getSupabaseClient>, target:string):Promise<Response>{const userId=await getAuthUserId(req,client);if(!userId)return sendError(401,"unauthorized","Влезте в профила си.");await client.from("community_blocks").delete().eq("blocker_id",userId).eq("blocked_id",target);return sendJson({status:200},{blocked:false});}
-async function handleReport(req: Request, client: ReturnType<typeof getSupabaseClient>):Promise<Response>{const userId=await getAuthUserId(req,client);if(!userId)return sendError(401,"unauthorized","Влезте в профила си.");const body=await req.json();const reason=validateMessageText(body.reason);if(!reason)return sendError(400,"invalid_reason","Невалидна причина.");await client.from("community_reports").insert({id:crypto.randomUUID(),reporter_id:userId,reported_user_id:body.reported_user_id||null,reported_message_id:body.reported_message_id||null,reason,created_at:new Date().toISOString()});return sendJson({status:201},{reported:true});}
+    const code = String(body.code || "").trim();
+    if (!TOKEN_RE.test(code)) return sendError(400, "invalid_link_code", "Невалиден Community линк.");
 
-async function handleCommunityRequest(req: Request, client: ReturnType<typeof getSupabaseClient>, method: string, segments: string[]):Promise<Response>{
-  if(segments.length===3&&segments[2]==="status"&&method==="GET")return handleCommunityStatus(req,client);
-  if(segments.length===3&&segments[2]==="profile"&&method==="GET")return handleGetProfile(req,client);
-  if(segments.length===3&&segments[2]==="profile"&&method==="POST")return handleUpsertProfile(req,client);
-  if(segments.length===3&&segments[2]==="posts"&&method==="GET")return handleListPosts(req,client);
-  if(segments.length===3&&segments[2]==="posts"&&method==="POST")return handleCreatePost(req,client);
-  if(segments.length===4&&segments[2]==="posts"&&method==="DELETE")return handleDeletePost(req,client,segments[3]);
-  if(segments.length===5&&segments[2]==="posts"&&segments[4]==="reactions"&&method==="POST")return handleToggleReaction(req,client,segments[3]);
-  if(segments.length===4&&segments[2]==="members"&&method==="GET")return handleViewMember(req,client,segments[3]);
-  if(segments.length===3&&segments[2]==="conversations"&&method==="GET")return handleListConversations(req,client);
-  if(segments.length===3&&segments[2]==="conversations"&&method==="POST")return handleCreateConversation(req,client);
-  if(segments.length===5&&segments[2]==="conversations"&&segments[4]==="messages"&&method==="GET")return handleListMessages(req,client,segments[3]);
-  if(segments.length===5&&segments[2]==="conversations"&&segments[4]==="messages"&&method==="POST")return handleSendMessage(req,client,segments[3]);
-  if(segments.length===5&&segments[2]==="conversations"&&segments[4]==="read"&&method==="POST")return handleMarkRead(req,client,segments[3]);
-  if(segments.length===5&&segments[2]==="conversations"&&segments[4]==="mute"&&method==="POST")return handleToggleMute(req,client,segments[3]);
-  if(segments.length===3&&segments[2]==="blocks"&&method==="POST")return handleBlock(req,client);
-  if(segments.length===4&&segments[2]==="blocks"&&method==="DELETE")return handleUnblock(req,client,segments[3]);
-  if(segments.length===3&&segments[2]==="reports"&&method==="POST")return handleReport(req,client);
-  return sendError(404,"not_found","Неизвестен маршрут.");
+    const codeHash = await hashToken(code);
+    const { data, error } = await client.rpc("consume_telegram_link_code", {
+      p_user_id: userId,
+      p_code_hash: codeHash,
+    });
+
+    if (error) {
+      const message = String(error.message || "");
+      if (message.includes("invalid_or_expired_link_code")) {
+        return sendError(410, "link_expired", "Линкът е използван или е изтекъл.");
+      }
+      if (message.includes("web_account_already_linked") || message.includes("telegram_account_already_linked")) {
+        return sendError(409, "telegram_link_conflict", "Този профил вече е свързан с друг Telegram акаунт.");
+      }
+      if (message.includes("community_profile_not_found")) {
+        return sendError(409, "community_profile_required", "Създай профил в Общността първо.");
+      }
+      throw error;
+    }
+
+    const linkedProfile = await getCommunityProfile(client, userId);
+    if (!linkedProfile) return sendError(409, "community_profile_required", "Създай профил в Общността първо.");
+    const entitlement = await getCommunityEntitlement(client, linkedProfile);
+
+    return sendJson({ status: 200 }, {
+      linked: true,
+      telegram_user_id: data ? String(data) : null,
+      can_post: canWrite(entitlement),
+      entitlement: {
+        active: entitlement.active,
+        status: entitlement.status,
+        plan_id: entitlement.plan_id,
+      },
+    });
+}
+
+async function handleCommunityStatus(req: Request, client: ReturnType<typeof getSupabaseClient>): Promise<Response> {
+    const userId = await getAuthUserId(req, client);
+    if (!userId)
+        return sendJson({ status: 200 }, { authenticated: false, has_profile: false, can_post: false, entitlement: null });
+    const profile = await getCommunityProfile(client, userId);
+    if (!profile)
+        return sendJson({ status: 200 }, { authenticated: true, has_profile: false, can_post: false, entitlement: null });
+    const e = await getCommunityEntitlement(client, profile);
+    const effectiveTelegramUserId = await resolveEffectiveTelegramUserId(client, profile);
+    const internalEntitlement = effectiveTelegramUserId
+        ? await getInternalEntitlement(client, String(effectiveTelegramUserId))
+        : null;
+    return sendJson({ status: 200 }, {
+        authenticated: true,
+        has_profile: true,
+        display_name: profile.display_name,
+        is_admin: profile.is_admin,
+        can_post: canWrite(e),
+        entitlement: {
+            active: e.active,
+            status: e.status,
+            plan_id: internalEntitlement?.plan_id || e.plan_id,
+            plan_name: internalEntitlement?.plan
+                ? (internalEntitlement.plan as Record<string, unknown>).name
+                : null,
+            expires_at: internalEntitlement?.expires_at || null,
+        },
+    });
+}
+async function handleUpsertProfile(req: Request, client: ReturnType<typeof getSupabaseClient>): Promise<Response> {
+    const userId = await getAuthUserId(req, client);
+    if (!userId)
+        return sendError(401, "unauthorized", "Влезте в профила си.");
+    const body = await req.json();
+    const displayName = validateDisplayName(body.display_name);
+    if (!displayName)
+        return sendError(400, "invalid_display_name", "Името трябва да бъде между 1 и 50 символа.");
+    const telegramUserId = null;
+    if (body.telegram_user_id != null)
+        return sendError(403, "telegram_link_verification_required", "Свържи Telegram чрез защитения линк от Ели.");
+    const existing = await getCommunityProfile(client, userId);
+    const now = new Date().toISOString();
+    if (existing) {
+        const update: Record<string, unknown> = { display_name: displayName, updated_at: now };
+        const { error } = await client.from("community_profiles").update(update).eq("user_id", userId);
+        if (error)
+            return sendError(503, "database_error", "Грешка при обновяване на профила.");
+        return handleGetProfile(req, client);
+    }
+    const { error } = await client.from("community_profiles").insert({ user_id: userId, display_name: displayName, telegram_user_id: telegramUserId, is_admin: false, created_at: now, updated_at: now });
+    if (error)
+        return sendError(503, "database_error", "Грешка при създаване на профила.");
+    return handleGetProfile(req, client);
+}
+async function handleListPosts(req: Request, client: ReturnType<typeof getSupabaseClient>): Promise<Response> { const userId = await getAuthUserId(req, client); if (!userId)
+    return sendError(401, "unauthorized", "Влезте в профила си."); const profile = await getCommunityProfile(client, userId); if (!profile)
+    return sendError(403, "no_profile", "Създайте профил първо."); const { data, error } = await client.from("community_posts").select("id,user_id,content,created_at,community_profiles!inner(display_name)").is("deleted_at", null).order("created_at", { ascending: false }).limit(FEED_PAGE_SIZE); if (error)
+    return sendError(503, "database_error", "Грешка при зареждане на публикациите."); const posts = (data || []).map((p) => ({ id: p.id, author_name: p.community_profiles?.display_name || "Анонимен", author_is_me: p.user_id === userId, content: p.content, created_at: p.created_at, reactions: 0, my_reaction: false })); return sendJson({ status: 200 }, { posts, has_more: false }); }
+async function handleCreatePost(req: Request, client: ReturnType<typeof getSupabaseClient>): Promise<Response> { const userId = await getAuthUserId(req, client); if (!userId)
+    return sendError(401, "unauthorized", "Влезте в профила си."); const profile = await getCommunityProfile(client, userId); if (!profile)
+    return sendError(403, "no_profile", "Създайте профил първо."); const e = await getCommunityEntitlement(client, profile); if (!canWrite(e))
+    return sendError(403, "access_denied", "Community е достъпна само с активен платен план."); const body = await req.json(); const content = validatePostContent(body.content); if (!content)
+    return sendError(400, "invalid_content", "Текстът трябва да бъде между 1 и 500 символа."); const now = new Date().toISOString(); const { data, error } = await client.from("community_posts").insert({ id: crypto.randomUUID(), user_id: userId, content, created_at: now, updated_at: now }).select("id,content,created_at").maybeSingle(); if (error)
+    return sendError(503, "database_error", "Грешка при създаване на публикацията."); return sendJson({ status: 201 }, { post: { id: data.id, author_name: profile.display_name, author_is_me: true, content: data.content, created_at: data.created_at, reactions: 0, my_reaction: false } }); }
+async function handleDeletePost(req: Request, client: ReturnType<typeof getSupabaseClient>, postId: string): Promise<Response> { const userId = await getAuthUserId(req, client); if (!userId)
+    return sendError(401, "unauthorized", "Влезте в профила си."); const profile = await getCommunityProfile(client, userId); if (!profile)
+    return sendError(403, "no_profile", "Създайте профил първо."); const { data: post } = await client.from("community_posts").select("user_id,deleted_at").eq("id", postId).maybeSingle(); if (!post || post.deleted_at)
+    return sendError(404, "post_not_found", "Публикацията не е намерена."); if (post.user_id !== userId && !profile.is_admin)
+    return sendError(403, "forbidden", "Можеш да изтриваш само свои публикации."); const now = new Date().toISOString(); const { error } = await client.from("community_posts").update({ deleted_at: now, updated_at: now }).eq("id", postId); if (error)
+    return sendError(503, "database_error", "Грешка при изтриване на публикацията."); return sendJson({ status: 200 }, { deleted: true }); }
+async function handleToggleReaction(req: Request, client: ReturnType<typeof getSupabaseClient>, postId: string): Promise<Response> { const userId = await getAuthUserId(req, client); if (!userId)
+    return sendError(401, "unauthorized", "Влезте в профила си."); const profile = await getCommunityProfile(client, userId); if (!profile)
+    return sendError(403, "no_profile", "Създайте профил първо."); const e = await getCommunityEntitlement(client, profile); if (!canWrite(e))
+    return sendError(403, "access_denied", "Реакциите са достъпни само с активен платен план."); const { data: existing } = await client.from("community_reactions").select("post_id").eq("post_id", postId).eq("user_id", userId).maybeSingle(); if (existing) {
+    await client.from("community_reactions").delete().eq("post_id", postId).eq("user_id", userId);
+    return sendJson({ status: 200 }, { my_reaction: false });
+} await client.from("community_reactions").insert({ post_id: postId, user_id: userId, created_at: new Date().toISOString() }); return sendJson({ status: 200 }, { my_reaction: true }); }
+async function handleViewMember(req: Request, client: ReturnType<typeof getSupabaseClient>, targetUserId: string): Promise<Response> { const userId = await getAuthUserId(req, client); if (!userId)
+    return sendError(401, "unauthorized", "Влезте в профила си."); const { data: target, error } = await client.from("community_profiles").select("user_id,display_name,bio,avatar_url,created_at").eq("user_id", targetUserId).maybeSingle(); if (error || !target)
+    return sendError(404, "member_not_found", "Потребителят не е намерен."); const blockedByMe = await isBlocked(client, userId, targetUserId); const { count } = await client.from("community_posts").select("*", { count: "exact", head: true }).eq("user_id", targetUserId).is("deleted_at", null); return sendJson({ status: 200 }, { user_id: target.user_id, display_name: target.display_name, bio: target.bio || "", avatar_url: target.avatar_url || null, post_count: count || 0, is_me: targetUserId === userId, blocked_by_me: blockedByMe }); }
+async function handleCreateConversation(req: Request, client: ReturnType<typeof getSupabaseClient>): Promise<Response> {
+    const userId = await getAuthUserId(req, client);
+    if (!userId)
+        return sendError(401, "unauthorized", "Влезте в профила си.");
+    const body = await req.json();
+    const targetUserId = String(body.target_user_id || "").trim();
+    if (targetUserId === userId)
+        return sendError(400, "cannot_message_self", "Не можеш да пишеш на себе си.");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetUserId))
+        return sendError(400, "invalid_user_id", "Невалиден потребителски ID.");
+    const profile = await getCommunityProfile(client, userId);
+    if (!profile)
+        return sendError(403, "no_profile", "Създайте профил първо.");
+    const entitlement = await getCommunityEntitlement(client, profile);
+    if (!canWrite(entitlement))
+        return sendError(403, "access_denied", "Частните съобщения изискват активен платен план.");
+    if (await isBlocked(client, targetUserId, userId) || await isBlocked(client, userId, targetUserId))
+        return sendError(403, "blocked", "Този потребител не приема съобщения от теб.");
+    const { data: target, error } = await client.from("community_profiles")
+        .select("display_name,avatar_url").eq("user_id", targetUserId).maybeSingle();
+    if (error)
+        return sendError(503, "database_error", "Опитай отново след малко.");
+    if (!target)
+        return sendError(404, "member_not_found", "Потребителят не е намерен.");
+    const convId = await getOrCreateConversation(client, userId, targetUserId);
+    return sendJson({ status: 200 }, { conversation_id: convId, other_user_id: targetUserId,
+        other_display_name: target.display_name, other_avatar_url: target.avatar_url || null });
+}
+async function handleListConversations(req: Request, client: ReturnType<typeof getSupabaseClient>): Promise<Response> { const userId = await getAuthUserId(req, client); if (!userId)
+    return sendError(401, "unauthorized", "Влезте в профила си."); const { data: memberships, error } = await client.from("private_conversation_members").select("conversation_id,last_read_at,muted,created_at").eq("user_id", userId).order("created_at", { ascending: false }); if (error)
+    return sendError(503, "database_error", "Грешка при зареждане на съобщенията."); if (!memberships?.length)
+    return sendJson({ status: 200 }, { conversations: [] }); const ids = memberships.map((m) => m.conversation_id); const { data: convs } = await client.from("private_conversations").select("id,user_a,user_b,created_at").in("id", ids); const result = []; for (const conv of convs || []) {
+    const other = conv.user_a === userId ? conv.user_b : conv.user_a;
+    const { data: p } = await client.from("community_profiles").select("display_name,avatar_url").eq("user_id", other).maybeSingle();
+    const { data: last } = await client.from("private_messages").select("type,text_content,created_at").eq("conversation_id", conv.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    result.push({ id: conv.id, other_user_id: other, other_display_name: p?.display_name || "Анонимен", other_avatar_url: p?.avatar_url || null, last_message_preview: last?.type === "text" ? last.text_content : (last ? "🎙 Гласово съобщение" : ""), last_message_type: last?.type || null, last_message_at: last?.created_at || conv.created_at, unread_count: 0, muted: memberships.find((m) => m.conversation_id === conv.id)?.muted || false });
+} return sendJson({ status: 200 }, { conversations: result }); }
+async function handleListMessages(req: Request, client: ReturnType<typeof getSupabaseClient>, conversationId: string): Promise<Response> { const userId = await getAuthUserId(req, client); if (!userId)
+    return sendError(401, "unauthorized", "Влезте в профила си."); if (!await verifyConversationMembership(client, conversationId, userId))
+    return sendError(403, "forbidden", "Нямаш достъп до този разговор."); const { data, error } = await client.from("private_messages").select("id,conversation_id,sender_id,type,text_content,voice_storage_path,voice_duration_ms,voice_mime_type,voice_size_bytes,created_at").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(CONVERSATION_PAGE_SIZE); if (error)
+    return sendError(503, "database_error", "Грешка при зареждане на съобщенията."); return sendJson({ status: 200 }, { messages: (data || []).map((m) => ({ ...m, is_me: m.sender_id === userId })), has_more: false }); }
+async function handleSendMessage(req: Request, client: ReturnType<typeof getSupabaseClient>, conversationId: string): Promise<Response> {
+    const userId = await getAuthUserId(req, client);
+    if (!userId)
+        return sendError(401, "unauthorized", "Влезте в профила си.");
+    const profile = await getCommunityProfile(client, userId);
+    if (!profile)
+        return sendError(403, "no_profile", "Създайте профил първо.");
+    const entitlement = await getCommunityEntitlement(client, profile);
+    if (!canWrite(entitlement))
+        return sendError(403, "access_denied", "Частните съобщения изискват активен платен план.");
+    if (!await verifyConversationMembership(client, conversationId, userId))
+        return sendError(403, "forbidden", "Нямаш достъп до този разговор.");
+    const { data: conversation, error: conversationError } = await client.from("private_conversations")
+        .select("user_a,user_b").eq("id", conversationId).maybeSingle();
+    if (conversationError)
+        return sendError(503, "database_error", "Опитай отново след малко.");
+    if (!conversation)
+        return sendError(404, "conversation_not_found", "Разговорът не е намерен.");
+    const otherUserId = conversation.user_a === userId ? conversation.user_b : conversation.user_a;
+    if (await isBlocked(client, otherUserId, userId) || await isBlocked(client, userId, otherUserId))
+        return sendError(403, "blocked", "Този потребител не приема съобщения от теб.");
+    const body = await req.json();
+    if (body.type && body.type !== "text")
+        return sendError(400, "unsupported_message_type", "В Общността можеш да изпращаш текстови съобщения.");
+    const content = validateMessageText(body.content);
+    if (!content)
+        return sendError(400, "invalid_content", "Съобщението трябва да бъде между 1 и 2000 символа.");
+    const { data, error } = await client.from("private_messages").insert({ id: crypto.randomUUID(),
+        conversation_id: conversationId, sender_id: userId, type: "text", text_content: content,
+        created_at: new Date().toISOString() }).select("id,created_at").maybeSingle();
+    if (error) {
+        if (error.message?.includes("message_rate_limited"))
+            return sendError(429, "message_rate_limited", "Изчакай две секунди преди следващото съобщение.");
+        if (error.code === "42501")
+            return sendError(403, "access_denied", "Съобщението не може да бъде изпратено.");
+        return sendError(503, "database_error", "Грешка при изпращане на съобщението.");
+    }
+    return sendJson({ status: 201 }, { message: { id: data.id, conversation_id: conversationId,
+            sender_id: userId, is_me: true, type: "text", text_content: content, created_at: data.created_at } });
+}
+async function handleMarkRead(req: Request, client: ReturnType<typeof getSupabaseClient>, conversationId: string): Promise<Response> { const userId = await getAuthUserId(req, client); if (!userId)
+    return sendError(401, "unauthorized", "Влезте в профила си."); if (!await verifyConversationMembership(client, conversationId, userId))
+    return sendError(403, "forbidden", "Нямаш достъп до този разговор."); await client.from("private_conversation_members").update({ last_read_at: new Date().toISOString() }).eq("conversation_id", conversationId).eq("user_id", userId); return sendJson({ status: 200 }, { marked_read: true }); }
+async function handleToggleMute(req: Request, client: ReturnType<typeof getSupabaseClient>, conversationId: string): Promise<Response> { const userId = await getAuthUserId(req, client); if (!userId)
+    return sendError(401, "unauthorized", "Влезте в профила си."); const { data } = await client.from("private_conversation_members").select("muted").eq("conversation_id", conversationId).eq("user_id", userId).maybeSingle(); if (!data)
+    return sendError(403, "forbidden", "Нямаш достъп до този разговор."); const muted = !data.muted; await client.from("private_conversation_members").update({ muted }).eq("conversation_id", conversationId).eq("user_id", userId); return sendJson({ status: 200 }, { muted }); }
+async function handleBlock(req: Request, client: ReturnType<typeof getSupabaseClient>): Promise<Response> {
+    const userId = await getAuthUserId(req, client);
+    if (!userId)
+        return sendError(401, "unauthorized", "Влезте в профила си.");
+    const body = await req.json();
+    const target = String(body.target_user_id || "").trim();
+    if (target === userId)
+        return sendError(400, "cannot_block_self", "Не можеш да блокираш себе си.");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(target))
+        return sendError(400, "invalid_user_id", "Невалиден потребителски ID.");
+    const { error } = await client.from("community_blocks").upsert({ blocker_id: userId,
+        blocked_id: target, created_at: new Date().toISOString() }, { onConflict: "blocker_id,blocked_id" });
+    if (error)
+        return sendError(503, "database_error", "Не успяхме да блокираме потребителя.");
+    return sendJson({ status: 200 }, { blocked: true });
+}
+async function handleUnblock(req: Request, client: ReturnType<typeof getSupabaseClient>, target: string): Promise<Response> { const userId = await getAuthUserId(req, client); if (!userId)
+    return sendError(401, "unauthorized", "Влезте в профила си."); await client.from("community_blocks").delete().eq("blocker_id", userId).eq("blocked_id", target); return sendJson({ status: 200 }, { blocked: false }); }
+async function handleReport(req: Request, client: ReturnType<typeof getSupabaseClient>): Promise<Response> {
+    const userId = await getAuthUserId(req, client);
+    if (!userId)
+        return sendError(401, "unauthorized", "Влезте в профила си.");
+    const body = await req.json();
+    const reason = validateMessageText(body.reason);
+    if (!reason)
+        return sendError(400, "invalid_reason", "Невалидна причина.");
+    const { error } = await client.from("community_reports").insert({ id: crypto.randomUUID(),
+        reporter_id: userId, reported_user_id: body.reported_user_id || null,
+        reported_message_id: body.reported_message_id || null, reason, created_at: new Date().toISOString() });
+    if (error?.code === "42501")
+        return sendError(403, "forbidden", "Нямаш достъп до това съобщение.");
+    if (error)
+        return sendError(503, "database_error", "Не успяхме да запазим сигнала.");
+    return sendJson({ status: 201 }, { reported: true });
+}
+async function handleCommunityRequest(req: Request, client: ReturnType<typeof getSupabaseClient>, method: string, segments: string[]): Promise<Response> {
+    if (segments.length === 3 && segments[2] === "link-telegram" && method === "POST")
+        return handleConsumeCommunityLink(req, client);
+    if (segments.length === 3 && segments[2] === "status" && method === "GET")
+        return handleCommunityStatus(req, client);
+    if (segments.length === 3 && segments[2] === "profile" && method === "GET")
+        return handleGetProfile(req, client);
+    if (segments.length === 3 && segments[2] === "profile" && method === "POST")
+        return handleUpsertProfile(req, client);
+    if (segments.length === 3 && segments[2] === "posts" && method === "GET")
+        return handleListPosts(req, client);
+    if (segments.length === 3 && segments[2] === "posts" && method === "POST")
+        return handleCreatePost(req, client);
+    if (segments.length === 4 && segments[2] === "posts" && method === "DELETE")
+        return handleDeletePost(req, client, segments[3]);
+    if (segments.length === 5 && segments[2] === "posts" && segments[4] === "reactions" && method === "POST")
+        return handleToggleReaction(req, client, segments[3]);
+    if (segments.length === 4 && segments[2] === "members" && method === "GET")
+        return handleViewMember(req, client, segments[3]);
+    if (segments.length === 3 && segments[2] === "conversations" && method === "GET")
+        return handleListConversations(req, client);
+    if (segments.length === 3 && segments[2] === "conversations" && method === "POST")
+        return handleCreateConversation(req, client);
+    if (segments.length === 5 && segments[2] === "conversations" && segments[4] === "messages" && method === "GET")
+        return handleListMessages(req, client, segments[3]);
+    if (segments.length === 5 && segments[2] === "conversations" && segments[4] === "messages" && method === "POST")
+        return handleSendMessage(req, client, segments[3]);
+    if (segments.length === 5 && segments[2] === "conversations" && segments[4] === "read" && method === "POST")
+        return handleMarkRead(req, client, segments[3]);
+    if (segments.length === 5 && segments[2] === "conversations" && segments[4] === "mute" && method === "POST")
+        return handleToggleMute(req, client, segments[3]);
+    if (segments.length === 3 && segments[2] === "blocks" && method === "POST")
+        return handleBlock(req, client);
+    if (segments.length === 4 && segments[2] === "blocks" && method === "DELETE")
+        return handleUnblock(req, client, segments[3]);
+    if (segments.length === 3 && segments[2] === "reports" && method === "POST")
+        return handleReport(req, client);
+    return sendError(404, "not_found", "Неизвестен маршрут.");
 }
 
 Deno.serve(async (req: Request) => {
@@ -517,23 +1880,29 @@ Deno.serve(async (req: Request) => {
     const { segments } = parseUrl(req.url || "/"); const method = (req.method || "GET").toUpperCase(); if (segments[0] !== "api" || segments.length < 2) return sendError(404, "not_found", "Неизвестен маршрут."); const client = getSupabaseClient();
     if (segments[1] === "ready" && method === "GET" && segments.length === 2) { try { const { error } = await client.from("purchase_sessions").select("id").limit(1); return sendJson({ status: 200 }, { ok: !error }); } catch { return sendJson({ status: 200 }, { ok: false }); } }
     if (segments[1] === "webhooks" && segments.length === 3 && segments[2] === "stripe" && method === "POST") return handleWebhook(client, await req.text(), req.headers.get("stripe-signature") || "");
-    if (segments[1] === "purchase-sessions") { if (segments.length === 2 && method === "GET") return sendError(405,"method_not_allowed","Използвай POST за създаване."); if (segments.length === 2 && method === "POST") { const secret=getInternalSecret(); const token=getBearerToken(req); if(!token||!safeEqual(token,secret))return sendError(401,"unauthorized","Невалидна авторизация."); const body=await req.json(); const r=await createPurchaseSessionService(client,{telegramUserId:body.telegram_user_id,planId:body.plan_id,appBaseUrl:getAppBaseUrl(req)}); return sendJson({status:r.status},r.body); } if(segments.length===3&&method==="GET"){const r=await verifySessionService(client,segments[2]);return sendJson({status:r.status},r.body);} if(segments.length===4&&segments[3]==="checkout"&&method==="POST"){const r=await createCheckoutSession(client,segments[2]);return sendJson({status:r.status},r.body);} }
+    if (segments[1] === "purchase-sessions") { if (segments.length === 2 && method === "GET") return sendError(405,"method_not_allowed","Използвай POST за създаване."); if (segments.length === 2 && method === "POST") { const secret=getInternalSecret(); const token=getBearerToken(req); if(!token||!safeEqual(token,secret))return sendError(401,"unauthorized","Невалидна авторизация."); const body=await req.json(); const r=await createPurchaseSessionService(client,{telegramUserId:body.telegram_user_id,planId:body.plan_id,appBaseUrl:getAppBaseUrl()}); return sendJson({status:r.status},r.body); } if(segments.length===3&&method==="GET"){const r=await verifySessionService(client,segments[2]);return sendJson({status:r.status},r.body);} if(segments.length===4&&segments[3]==="checkout"&&method==="POST"){const r=await createCheckoutSession(client,segments[2]);return sendJson({status:r.status},r.body);} }
     if(segments[1]==="checkout-sessions"&&segments.length===4&&segments[3]==="status"&&method==="GET"){const status=await getCheckoutStatus(client,segments[2]);return sendJson({status:200},status);}
     if (segments[1] === "internal" && segments.length === 3 &&
         segments[2] === "checkout-config-status" && method === "GET") {
       const secret = getInternalSecret();
       const token = getBearerToken(req);
       if (!token || !safeEqual(token, secret)) return sendError(401, "unauthorized", "Невалидна авторизация.");
-      const status = await inspectTestCheckoutConfiguration({
-        getEnv: (key: string) => Deno.env.get(key),
-        plans: PLANS,
-      });
+      const status = inspectStripeCheckoutConfiguration();
       return sendJson({ status: 200 }, status);
     }
 
     if (segments[1] === "admin" && segments.length === 4 && segments[2] === "revolut" && segments[3] === "manual-confirm" && method === "POST") return confirmRevolutManualTestPayment(req, client);
-    if (segments[1] === "internal" && segments.length >= 3) { const secret=getInternalSecret(); const token=getBearerToken(req); if(!token||!safeEqual(token,secret))return sendError(401,"unauthorized","Невалидна авторизация."); if(segments[2]==="purchase-sessions"&&segments.length===3&&method==="POST"){const body=await req.json();const r=await createPurchaseSessionService(client,{telegramUserId:body.telegram_user_id,planId:body.plan_id,appBaseUrl:getAppBaseUrl(req)});return sendJson({status:r.status},r.body);} if(segments[2]==="entitlements"&&segments.length===4&&method==="GET"){const id=normalizeTelegramUserId(segments[3]);if(!id)return sendError(400,"invalid_telegram_user","Невалиден Telegram user ID.");const entitlement=await getInternalEntitlement(client,id);return sendJson({status:200},{checked_at:new Date().toISOString(),entitlement});} if(segments[2]==="avatar-usage"&&segments.length===4&&method==="GET"){const id=normalizeTelegramUserId(segments[3]);if(!id)return sendError(400,"invalid_telegram_user","Невалиден Telegram user ID.");const entitlement=await getInternalEntitlement(client,id);return sendJson({status:200},{checked_at:new Date().toISOString(),entitlement_active:Boolean(entitlement?.active),plan_id:entitlement?.plan_id||null,expires_at:entitlement?.expires_at||null,usage:await getAvatarUsageSnapshot(client,entitlement)});} if(segments[2]==="avatar-usage"&&segments.length===4&&method==="POST"){const id=normalizeTelegramUserId(segments[3]);if(!id)return sendError(400,"invalid_telegram_user","Невалиден Telegram user ID.");const body=await req.json();try{const r=await recordAvatarUsage(client,id,body.request_id,body.duration_seconds);return sendJson({status:200},{recorded:!r.duplicate,duplicate:r.duplicate,usage:r.usage});}catch(error){const code=error instanceof Error?error.message:"avatar_usage_failed";if(code==="avatar_plan_inactive"||code==="avatar_not_in_plan")return sendError(403,code,"Avatar режимът изисква активен месечен или годишен план.");if(code==="avatar_quota_exceeded")return sendError(403,code,"Нямате достатъчно оставащо Avatar време.");if(code.startsWith("invalid_avatar_"))return sendError(400,code,"Невалидни данни за Avatar използване.");throw error;}} }
+    if (segments[1] === "internal" && segments.length >= 3) { const secret=getInternalSecret(); const token=getBearerToken(req); if(!token||!safeEqual(token,secret))return sendError(401,"unauthorized","Невалидна авторизация."); if(segments[2]==="purchase-sessions"&&segments.length===3&&method==="POST"){const body=await req.json();const r=await createPurchaseSessionService(client,{telegramUserId:body.telegram_user_id,planId:body.plan_id,appBaseUrl:getAppBaseUrl()});return sendJson({status:r.status},r.body);} if(segments[2]==="entitlements"&&segments.length===4&&method==="GET"){const id=normalizeTelegramUserId(segments[3]);if(!id)return sendError(400,"invalid_telegram_user","Невалиден Telegram user ID.");const entitlement=await getInternalEntitlement(client,id);return sendJson({status:200},{checked_at:new Date().toISOString(),entitlement});} if(segments[2]==="avatar-usage"&&segments.length===4&&method==="GET"){const id=normalizeTelegramUserId(segments[3]);if(!id)return sendError(400,"invalid_telegram_user","Невалиден Telegram user ID.");const entitlement=await getInternalEntitlement(client,id);return sendJson({status:200},{checked_at:new Date().toISOString(),entitlement_active:Boolean(entitlement?.active),plan_id:entitlement?.plan_id||null,expires_at:entitlement?.expires_at||null,usage:await getAvatarUsageSnapshot(client,entitlement)});} if(segments[2]==="avatar-usage"&&segments.length===4&&method==="POST"){const id=normalizeTelegramUserId(segments[3]);if(!id)return sendError(400,"invalid_telegram_user","Невалиден Telegram user ID.");const body=await req.json();try{const r=await recordAvatarUsage(client,id,body.request_id,body.duration_seconds);return sendJson({status:200},{recorded:!r.duplicate,duplicate:r.duplicate,usage:r.usage});}catch(error){const code=error instanceof Error?error.message:"avatar_usage_failed";if(code==="avatar_plan_inactive"||code==="avatar_not_in_plan")return sendError(403,code,"Avatar режимът изисква активен месечен или годишен план.");if(code==="avatar_quota_exceeded")return sendError(403,code,"Нямате достатъчно оставащо Avatar време.");if(code.startsWith("invalid_avatar_"))return sendError(400,code,"Невалидни данни за Avatar използване.");throw error;}} }
+    if (segments[1] === "avatar-addons") {
+      if (segments.length === 3 && segments[2] === "checkout" && method === "POST") {
+        return createAvatarAddonCheckout(req, client);
+      }
+      if (segments.length === 5 && segments[2] === "checkout" && segments[4] === "status" && method === "GET") {
+        return getAvatarAddonCheckoutStatus(req, client, segments[3]);
+      }
+    }
     if (segments[1] === "community") return handleCommunityRequest(req, client, method, segments);
     return sendError(404,"not_found","Неизвестен маршрут.");
   } catch (error) { console.error("API handler error:", error); return sendError(500,"internal_error","Вътрешна грешка."); }
 });
+
