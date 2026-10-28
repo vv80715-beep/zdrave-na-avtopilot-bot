@@ -644,7 +644,7 @@ const OWNER_TEST_STRIPE_PRICES: Record<PlanId, string> = {
 // Public prices remain unchanged. An is_admin flag by itself is NOT an
 // authorization primitive: profile inserts can be user-controlled.
 const OWNER_TEST_AMOUNT_CENTS = 0;
-const OWNER_TEST_ENDS_AT = Date.parse("2026-10-28T21:00:00.000Z");
+const OWNER_TEST_ENDS_AT = 0; // Production cutover: owner €0 checkout disabled.
 // SHA-256 of the pre-existing owner's Supabase Auth UUID (never expose the UUID).
 const OWNER_TEST_AUTH_UUID_HASH = "c7a530d3b1c52b5041612b88c172cd97f75d5a5fc88bf5b1674bf3d6df8f1f91";
 async function isVerifiedOwnerProfile(client: ReturnType<typeof getSupabaseClient>, telegramUserId: number): Promise<boolean> {
