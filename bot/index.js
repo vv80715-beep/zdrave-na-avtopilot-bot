@@ -425,7 +425,7 @@ async function askEli(ctx, question, opts = {}) {
     !avatarMode &&
     allowed.includes('voice') &&
     (storedMode === 'voice' || Boolean(opts.spokenInput));
-  const freePlan = status.plan === 'free';
+  const freePlan = !owner && status.plan === 'free';
 
   // Eli V2.2 integration is opt-in only. With the default flags OFF this
   // returns the legacy route and changes nothing in the production path.
