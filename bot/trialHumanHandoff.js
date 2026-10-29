@@ -3,8 +3,13 @@ const { Markup } = require('telegraf');
 const HANDOFF_MESSAGE =
   'Разбира се. Можеш да се свържеш директно с Дани — създателя на „Здраве на автопилот“. Натисни бутона по-долу.';
 
+const HANDOFF_OFFER_MESSAGE =
+  'Разбирам, че имаш притеснение. Ако искаш, мога да те свържа с реален човек — Дани, създателя на „Здраве на автопилот“, за да ти отговори лично. Искаш ли?';
+
 const PRODUCT_CONTACT_NOTE =
-  'Ако искаш да говориш с човек за продукта, плановете или плащането, можеш да се свържеш директно с Дани от бутона по-долу.';
+  'Ако въпросът ти е към човек от екипа, можеш да се свържеш директно с Дани от бутона по-долу.';
+
+const OFFER_TTL_MS = 15 * 60 * 1000;
 
 function normalize(text) {
   return String(text || '').trim().toLowerCase();
@@ -45,6 +50,35 @@ function isProductSupportQuestion(text) {
   return patterns.some((pattern) => pattern.test(value));
 }
 
+function isProductConcern(text) {
+  const value = normalize(text);
+  if (!value || !isProductSupportQuestion(value)) return false;
+
+  return [
+    /притесн\w*/i,
+    /не\s+съм\s+сигур\w*/i,
+    /не\s+се\s+чувствам\s+сигур\w*/i,
+    /страх\s+ме\s+е/i,
+    /имам\s+(?:притеснение|притеснения|съмнение|съмнения)/i,
+    /не\s+ви\s+се\s+доверявам|мога\s+ли\s+да\s+ви\s+се\s+доверя/i,
+    /измама\s+ли\s+е|scam/i,
+    /притеснява\s+ме/i,
+    /hesitant|worried|concerned|not\s+sure|can\s+i\s+trust/i,
+  ].some((pattern) => pattern.test(value));
+}
+
+function isHandoffAcceptance(text) {
+  const value = normalize(text);
+  if (!value) return false;
+  return /^(?:да|да\s*,?\s*моля|искам|ок|окей|добре|разбира\s+се|yes|yeah|yep|sure|please|connect\s+me)[.!\s]*$/i.test(value);
+}
+
+function isHandoffDecline(text) {
+  const value = normalize(text);
+  if (!value) return false;
+  return /^(?:не|не\s*,?\s*благодаря|няма\s+нужда|не\s+засега|no|no\s+thanks)[.!\s]*$/i.test(value);
+}
+
 function getOwnerTelegramUrl() {
   const configured = String(process.env.OWNER_TELEGRAM_URL || '').trim();
   if (
@@ -66,14 +100,32 @@ function buildOwnerContactKeyboard() {
   ]);
 }
 
-function resolveTrialHandoff(status, question) {
+function isPendingOfferActive(offeredAt, now = Date.now()) {
+  return Number.isFinite(Number(offeredAt)) &&
+    now - Number(offeredAt) >= 0 &&
+    now - Number(offeredAt) <= OFFER_TTL_MS;
+}
+
+function resolveTrialHandoff(status, question, { pendingOffer = false } = {}) {
   if (!status || status.plan !== 'free' || !status.canChat) return null;
 
   const keyboard = buildOwnerContactKeyboard();
   if (!keyboard) return null;
 
+  if (pendingOffer && isHandoffAcceptance(question)) {
+    return { kind: 'immediate', keyboard };
+  }
+
+  if (pendingOffer && isHandoffDecline(question)) {
+    return { kind: 'decline' };
+  }
+
   if (isExplicitHumanHandoffRequest(question)) {
     return { kind: 'immediate', keyboard };
+  }
+
+  if (isProductConcern(question)) {
+    return { kind: 'offer' };
   }
 
   if (isProductSupportQuestion(question)) {
@@ -85,10 +137,16 @@ function resolveTrialHandoff(status, question) {
 
 module.exports = {
   HANDOFF_MESSAGE,
+  HANDOFF_OFFER_MESSAGE,
   PRODUCT_CONTACT_NOTE,
+  OFFER_TTL_MS,
   isExplicitHumanHandoffRequest,
   isProductSupportQuestion,
+  isProductConcern,
+  isHandoffAcceptance,
+  isHandoffDecline,
   getOwnerTelegramUrl,
   buildOwnerContactKeyboard,
+  isPendingOfferActive,
   resolveTrialHandoff,
 };
