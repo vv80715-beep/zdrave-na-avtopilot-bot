@@ -177,10 +177,20 @@ function consentAnswer(text) {
   return null;
 }
 
-function ownerProfileUrl(ownerTelegramId) {
+const OWNER_PUBLIC_PROFILE_URL = 'https://t.me/Danail321';
+
+function ownerIdProfileUrl(ownerTelegramId) {
   const id = String(ownerTelegramId || '').trim();
   if (!/^[1-9]\d{4,19}$/.test(id)) return null;
   return `tg://user?id=${id}`;
+}
+
+function ownerProfileUrl(ownerTelegramId, publicProfileUrl = OWNER_PUBLIC_PROFILE_URL) {
+  const url = String(publicProfileUrl || '').trim();
+  // Only Telegram public profile links, never arbitrary redirect destinations.
+  if (/^https:\/\/t\.me\/[a-z][a-z0-9_]{4,31}$/i.test(url) &&
+      !/bot$/i.test(url)) return url;
+  return ownerIdProfileUrl(ownerTelegramId);
 }
 
 function isActiveFreeTrial(status, now = Date.now()) {
@@ -195,6 +205,7 @@ function isActiveFreeTrial(status, now = Date.now()) {
 
 function createFreeTrialHandoffHandler({
   ownerTelegramId = process.env.OWNER_TELEGRAM_ID,
+  ownerPublicProfileUrl = OWNER_PUBLIC_PROFILE_URL,
   now = () => Date.now(),
   pendingConsent = new Map(),
 } = {}) {
@@ -202,11 +213,11 @@ function createFreeTrialHandoffHandler({
     const userId = String(ctx.from?.id || '');
     // Owner-only live test shortcut: never enter or consume trial consent.
     // Identity comes from Telegram, not the supplied entitlement status.
-    if (userId && ownerProfileUrl(ownerTelegramId) &&
+    if (userId && ownerIdProfileUrl(ownerTelegramId) &&
         userId === String(ownerTelegramId).trim()) {
       pendingConsent.delete(userId);
       return isExplicitHumanRequest(message, { requireHumanTarget: true })
-        ? sendOwnerLink(ctx, ownerTelegramId)
+        ? sendOwnerLink(ctx, ownerTelegramId, ownerPublicProfileUrl)
         : false;
     }
     if (!userId || !isActiveFreeTrial(status, now())) {
@@ -221,14 +232,14 @@ function createFreeTrialHandoffHandler({
       const answer = consentAnswer(message);
       if (answer === 'yes') {
         pendingConsent.delete(userId);
-        return sendOwnerLink(ctx, ownerTelegramId);
+        return sendOwnerLink(ctx, ownerTelegramId, ownerPublicProfileUrl);
       }
       if (answer === 'no') pendingConsent.delete(userId);
       else pendingConsent.delete(userId);
     }
 
     if (isExplicitHumanRequest(message)) {
-      return sendOwnerLink(ctx, ownerTelegramId);
+      return sendOwnerLink(ctx, ownerTelegramId, ownerPublicProfileUrl);
     }
     if (isProductConcern(message)) {
       pendingConsent.set(userId, { createdAt: now() });
@@ -239,8 +250,8 @@ function createFreeTrialHandoffHandler({
   };
 }
 
-async function sendOwnerLink(ctx, ownerTelegramId) {
-  const url = ownerProfileUrl(ownerTelegramId);
+async function sendOwnerLink(ctx, ownerTelegramId, publicProfileUrl) {
+  const url = ownerProfileUrl(ownerTelegramId, publicProfileUrl);
   if (!url) {
     await ctx.reply('В момента не мога да отворя профила на Дани. Опитай отново по-късно.');
     return true;

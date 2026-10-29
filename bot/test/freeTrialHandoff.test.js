@@ -47,7 +47,7 @@ test('active free trial explicit request immediately gets Dani profile button', 
   assert.equal(message.replies.length, 1);
   assert.deepEqual(message.replies[0].extra.reply_markup.inline_keyboard[0][0], {
     text: 'Свържи се с Дани',
-    url: `tg://user?id=${OWNER_ID}`,
+    url: 'https://t.me/Danail321',
   });
 });
 
@@ -64,7 +64,7 @@ test('product concern asks consent first and only an affirmative reply shows the
   assert.equal(message.replies.length, 2);
   assert.equal(
     message.replies[1].extra.reply_markup.inline_keyboard[0][0].url,
-    `tg://user?id=${OWNER_ID}`
+    'https://t.me/Danail321'
   );
 });
 
@@ -77,7 +77,7 @@ test('owner explicit requests bypass trial eligibility and show the same direct 
     const message = ctx(OWNER_ID);
     assert.equal(await handler()(message, request, { state: 'owner' }), true);
     assert.deepEqual(message.replies[0].extra.reply_markup.inline_keyboard[0][0], {
-      text: 'Свържи се с Дани', url: `tg://user?id=${OWNER_ID}`,
+      text: 'Свържи се с Дани', url: 'https://t.me/Danail321',
     });
     assert.equal(message.replies.length, 1);
   }
@@ -154,8 +154,27 @@ test('paid plans and expired trial never receive the free-trial handoff', async 
 });
 
 test('owner link uses configured numeric Telegram identity; invalid values fail closed', () => {
-  assert.equal(ownerProfileUrl(OWNER_ID), `tg://user?id=${OWNER_ID}`);
-  assert.equal(ownerProfileUrl('https://t.me/not-the-owner'), null);
+  assert.equal(ownerProfileUrl(OWNER_ID), 'https://t.me/Danail321');
+  assert.equal(ownerProfileUrl(null), 'https://t.me/Danail321');
+  for (const unavailable of ['', null, 'https://evil.example/contact', 'https://t.me/EliZdraveBot']) {
+    assert.equal(ownerProfileUrl(OWNER_ID, unavailable), `tg://user?id=${OWNER_ID}`);
+    assert.equal(ownerProfileUrl('invalid', unavailable), null);
+  }
+});
+
+test('owner-ID fallback is shared by explicit owner and trial consent paths', async () => {
+  const handle = createFreeTrialHandoffHandler({
+    ownerTelegramId: OWNER_ID, ownerPublicProfileUrl: '', now: () => NOW,
+  });
+  const owner = ctx(OWNER_ID);
+  assert.equal(await handle(owner, 'Искам да говоря с Дани', { state: 'owner' }), true);
+  const customer = ctx();
+  await handle(customer, 'Притеснявам се за плащането', trial);
+  assert.equal(await handle(customer, 'Да', trial), true);
+  for (const message of [owner, customer]) {
+    assert.equal(message.replies.at(-1).extra.reply_markup.inline_keyboard[0][0].url,
+      `tg://user?id=${OWNER_ID}`);
+  }
 });
 
 test('text handler offers trial handoff before the unavailable-AI fallback', () => {
