@@ -83,7 +83,7 @@ function isHandoffDecline(text) {
 }
 
 function getOwnerTelegramUrl() {
-  const configured = String(process.env.OWNER_TELEGRAM_URL || '').trim();
+  const configured = String(process.env.OWNER_TELEGRAM_URL || 'https://t.me/Danail321').trim();
   if (
     /^https:\/\/t\.me\/[A-Za-z0-9_]{5,32}\/?$/.test(configured) ||
     /^tg:\/\/user\?id=\d+$/.test(configured)
@@ -107,6 +107,12 @@ function isPendingOfferActive(offeredAt, now = Date.now()) {
   return Number.isFinite(Number(offeredAt)) &&
     now - Number(offeredAt) >= 0 &&
     now - Number(offeredAt) <= OFFER_TTL_MS;
+}
+
+function resolveOwnerExplicitHandoff(question) {
+  const keyboard = buildOwnerContactKeyboard();
+  if (!keyboard || !isExplicitHumanHandoffRequest(question)) return null;
+  return { kind: 'immediate', keyboard };
 }
 
 function resolveTrialHandoff(status, question, { pendingOffer = false } = {}) {
@@ -152,4 +158,5 @@ module.exports = {
   buildOwnerContactKeyboard,
   isPendingOfferActive,
   resolveTrialHandoff,
+  resolveOwnerExplicitHandoff,
 };
