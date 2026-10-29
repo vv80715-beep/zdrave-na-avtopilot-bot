@@ -47,6 +47,7 @@ const plans = require('./commands/plans');
 const link = require('./commands/link');
 const { getMode, setMode } = require('./avatarModeStorage');
 const { createModeKeyboard } = require('./modeKeyboard');
+const { createFreeTrialHandoffHandler } = require('./freeTrialHandoff');
 const { resolveEntitlementStatus } = require('./entitlementResolver');
 const { modePermissionsText } = require('./modePermissions');
 const { sendAvatarReply } = require('./avatarService');
@@ -364,16 +365,16 @@ stats.register(bot);
 // ownerSession.js. Regular users keep their persisted history.
 const { ownerRecentTurns, ownerRememberTurn } = require('./ownerSession');
 const eliV22Adapter = createAskEliAdapter();
+const handleFreeTrialHandoff = createFreeTrialHandoffHandler();
 
 // opts.status: entitlement status from gateChat (computed if missing).
 async function askEli(ctx, question, opts = {}) {
+  const status = opts.status || (await gateChat(ctx));
+  if (!status) return; // expired trial — static message already sent
   if (!hasTextAIProvider(ctx.from?.id)) {
     await ctx.reply('Текстовият AI в момента не е конфигуриран. Опитай отново по-късно.');
     return;
   }
-
-  const status = opts.status || (await gateChat(ctx));
-  if (!status) return; // expired trial — static message already sent
 
   const owner = isOwner(ctx);
   const ownerDossierQuestion = owner ? detectOwnerDossierQuestion(question) : null;
@@ -853,6 +854,7 @@ bot.command('ask', async (ctx) => {
   }
   const status = await gateChat(ctx);
   if (!status) return;
+  if (await handleFreeTrialHandoff(ctx, question, status)) return;
   await askEli(ctx, question, { status });
 });
 
@@ -920,6 +922,15 @@ bot.on('text', async (ctx) => {
 
   // Graceful fallbacks when AI is unavailable.
   if (!hasTextAIProvider(ctx.from?.id)) {
+    // Only the active local 5-day trial gets the deterministic human handoff
+    // before this provider-unavailable fallback. Expiry and paid behavior stay
+    // on their existing paths.
+    try {
+      const status = await resolveAccessStatus(ctx);
+      if (await handleFreeTrialHandoff(ctx, ctx.message.text, status)) return;
+    } catch (err) {
+      console.error('Free-trial handoff status check failed:', err?.name || 'Error');
+    }
     if (isOwner(ctx)) {
       return ctx.reply(
         `В момента не мога да ползвам AI мозъка си. Опитай пак малко по-късно. 🙏`
@@ -933,6 +944,7 @@ bot.on('text', async (ctx) => {
   // Entitlement gate: expired trial → static message, no AI call.
   const status = await gateChat(ctx);
   if (!status) return;
+  if (await handleFreeTrialHandoff(ctx, ctx.message.text, status)) return;
 
   // Any free-text message is answered by Eli. askEli injects the owner
   // identity for the owner, or the user's own long-term memory for everyone
