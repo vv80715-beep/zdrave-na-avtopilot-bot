@@ -33,6 +33,13 @@ const {
   chooseLookCategory,
 } = require('./avatarLooks');
 const { planKeyboard } = require('./planLinks');
+const {
+  HANDOFF_MESSAGE,
+  PRODUCT_CONTACT_NOTE,
+  HANDOFF_OFFER_MESSAGE,
+  isPendingOfferActive,
+  resolveTrialHandoff,
+} = require('./trialHumanHandoff');
 const { EliPlatformClient } = require('./boltPlatformClient');
 const startCommands = require('./commands/start');
 const planAdmin = require('./commands/planAdmin');
@@ -288,15 +295,52 @@ const { ownerRecentTurns, ownerRememberTurn } = require('./ownerSession');
 
 // opts.status: entitlement status from gateChat (computed if missing).
 async function askEli(ctx, question, opts = {}) {
-  if (!openai) {
-    await ctx.reply('OpenAI не е конфигуриран. Моля, провери настройките на бота.');
-    return;
-  }
-
   const status = opts.status || (await gateChat(ctx));
   if (!status) return; // expired trial — static message already sent
 
   const owner = isOwner(ctx);
+
+  // Free-trial owner handoff is deterministic and must keep working even when
+  // OpenAI is temporarily unavailable. A concern produces only an offer first;
+  // a short-lived session flag allows a plain "Да" to reveal the owner contact.
+  ctx.session ??= {};
+  const pendingOffer = isPendingOfferActive(ctx.session.trialHumanHandoffOfferedAt);
+  const trialHandoff = !owner
+    ? resolveTrialHandoff(status, question, { pendingOffer })
+    : null;
+
+  if (trialHandoff?.kind === 'immediate') {
+    delete ctx.session.trialHumanHandoffOfferedAt;
+    await ctx.reply(HANDOFF_MESSAGE, trialHandoff.keyboard);
+    addConversation(ctx.from.id, 'user', question);
+    addConversation(ctx.from.id, 'assistant', HANDOFF_MESSAGE);
+    return;
+  }
+
+  if (trialHandoff?.kind === 'offer') {
+    ctx.session.trialHumanHandoffOfferedAt = Date.now();
+    await ctx.reply(HANDOFF_OFFER_MESSAGE);
+    addConversation(ctx.from.id, 'user', question);
+    addConversation(ctx.from.id, 'assistant', HANDOFF_OFFER_MESSAGE);
+    return;
+  }
+
+  if (trialHandoff?.kind === 'decline') {
+    delete ctx.session.trialHumanHandoffOfferedAt;
+    const declineReply =
+      'Разбира се. Ако по-късно искаш да говориш с човек, просто ми кажи.';
+    await ctx.reply(declineReply);
+    addConversation(ctx.from.id, 'user', question);
+    addConversation(ctx.from.id, 'assistant', declineReply);
+    return;
+  }
+
+  if (!pendingOffer) delete ctx.session.trialHumanHandoffOfferedAt;
+
+  if (!openai) {
+    await ctx.reply('OpenAI не е конфигуриран. Моля, провери настройките на бота.');
+    return;
+  }
 
   // Record activity once per inbound turn — even for deterministic early
   // returns below — so "how long since we last talked" reflects real chatting,
@@ -494,7 +538,12 @@ async function askEli(ctx, question, opts = {}) {
       conversationState === 'continuing' ? stripLeadingGreeting(raw) : raw;
     // Health-report turns fold the deterministic confirmation into the SAME
     // single delivery — never a separate second message.
-    const finalAnswer = withNotice(healthNote ? `${healthNote}\n\n${answer}` : answer);
+    const aiAnswer = healthNote ? `${healthNote}\n\n${answer}` : answer;
+    const contactAnswer =
+      trialHandoff?.kind === 'append'
+        ? `${aiAnswer}\n\n${PRODUCT_CONTACT_NOTE}`
+        : aiAnswer;
+    const finalAnswer = withNotice(contactAnswer);
 
     // Persist the exchange to the user's long-term memory (never the owner's)
     // BEFORE delivery — memory survives even if delivery fails. The owner's
@@ -541,7 +590,11 @@ async function askEli(ctx, question, opts = {}) {
       const ok = await sendVoiceReply(ctx, finalAnswer);
       if (!ok) await ctx.reply(finalAnswer);
     } else {
-      await ctx.reply(finalAnswer);
+      if (trialHandoff?.kind === 'append') {
+        await ctx.reply(finalAnswer, trialHandoff.keyboard);
+      } else {
+        await ctx.reply(finalAnswer);
+      }
     }
   } catch (err) {
     console.error('OpenAI error:', err.message);
@@ -621,19 +674,9 @@ bot.on('text', async (ctx) => {
   // Command-looking messages never reach the AI (see maybeHandleCommandText).
   if (await maybeHandleCommandText(ctx, ctx.message.text)) return;
 
-  // Graceful fallbacks when AI is unavailable.
-  if (!openai) {
-    if (isOwner(ctx)) {
-      return ctx.reply(
-        `В момента не мога да ползвам AI мозъка си. Опитай пак малко по-късно. 🙏`
-      );
-    }
-    return ctx.reply(
-      `Разбирам те! 😊 Ако имаш въпрос, използвай /ask <въпрос>.\n\nЗа всички команди — /help.`
-    );
-  }
-
-  // Entitlement gate: expired trial → static message, no AI call.
+  // Entitlement gate first. askEli then handles deterministic Free Trial
+  // handoff before it checks OpenAI availability, so human support remains
+  // reachable even during an AI outage.
   const status = await gateChat(ctx);
   if (!status) return;
 
