@@ -97,7 +97,7 @@ function normalize(text) {
 // not the tracker. A message with an advice/how-to marker is never a
 // stored-data query, regardless of which category keywords it contains.
 const ADVICE_RE =
-  /(?<![а-яa-z])(как(во)?\s+да|да\s+предприем[аеш]*|съвет|посъветв|препоръч|предлож|идеи|идея|начин[иа]?\s+(да|за)|how\s+(to|do i|can i)|tips?|advice|recommend|suggest)(?![а-яa-z])/;
+  /(?<![а-яa-z])(как(во)?\s+да|да\s+предприем[аеш]*|съвет[а-я]*|посъветв[а-я]*|препоръч[а-я]*|предл[а-я]*|идеи|идея|начин[иа]?\s+(да|за)|how\s+(to|do i|can i)|tips?|advice|recommend[a-z]*|suggest[a-z]*)(?![а-яa-z])/;
 // "стъпки за по-добър сън", "стъпки към целта" — instructional steps, not the
 // pedometer, even without an explicit "как да".
 // NB: JS \w is ASCII-only — Cyrillic suffixes need an explicit [а-я]* class.
@@ -108,12 +108,13 @@ const INSTRUCTIONAL_STEPS_RE = /(стъпк|крачк)[а-я]*\s+(как|за|�
 // "Направих 8000 стъпки, как да подобря резултата?" is still a report. Past-
 // tense verbs and quantity questions signal data, not how-to.
 const DATA_INTENT_RE =
-  /(?<![а-яa-z])(колко|какво\s+(ти\s+)?казах|казах\s+ли|записа[хл]?|направих|изпих|изядох|ядох|спах|тежах|изминах|извървях|how\s+(much|many)|did\s+i|have\s+i)(?![а-яa-z])/;
+  /(?<![а-яa-z])(какво\s+(ти\s+)?казах|казах\s+ли|записа[хл]?|направих|изпих|изядох|ядох|спах|тежах|тренирах|изминах|извървях|did\s+i|have\s+i)(?![а-яa-z])/;
 
 function isAdviceRequest(rawText) {
   const t = normalize(rawText);
   if (DATA_INTENT_RE.test(t)) return false;
-  return ADVICE_RE.test(t) || INSTRUCTIONAL_STEPS_RE.test(t);
+  return ADVICE_RE.test(t) || INSTRUCTIONAL_STEPS_RE.test(t) ||
+    /(?<![а-яa-z])да\s+(пия|ям|тренирам|спя|правя|направя|ходя|тича[мш])(?![а-яa-z])/.test(t);
 }
 
 const ASK_RE =

@@ -16,28 +16,14 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 // Dates and times are computed in Europe/Sofia so "today" matches the user's
 // local day rather than UTC.
-function sofiaParts(d = new Date()) {
-  const date = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Europe/Sofia',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(d);
-  const time = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Europe/Sofia',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(d);
-  return { date, time };
-}
+const { sofiaParts, shiftDate } = require('./sofiaClock');
 
 function todayKey() {
   return sofiaParts().date;
 }
 
 function dateKeyDaysAgo(n) {
-  return sofiaParts(new Date(Date.now() - n * DAY_MS)).date;
+  return shiftDate(todayKey(), -n);
 }
 
 function load() {

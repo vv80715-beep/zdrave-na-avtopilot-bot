@@ -5,6 +5,7 @@ const { addWeightEntry } = require('./memoryStorage');
 const {
   CATEGORY_META,
   matchCategoryQuery,
+  isAdviceRequest,
   answerCategory,
   byCategory,
   sumWater,
@@ -310,6 +311,7 @@ function resolveLogQuery(text) {
   // Personal-memory questions take precedence over health-log keywords. For
   // example, a fitness-goal recall also contains "фитнес" and "килограма".
   if (isProfileQuery(text)) return null;
+  if (isAdviceRequest(text)) return null;
 
   const summaryType = matchSummary(t);
   if (summaryType) return { kind: 'summary', type: summaryType };

@@ -1,5 +1,6 @@
 const openai = require('./openaiClient');
 const { isOwnerId } = require('./adminGuard');
+const { withRuntimeContext } = require('./sofiaClock');
 
 // Gemini's API currently lists 2.5 Flash-Lite but rejects new-user generation
 // with NOT_FOUND and directs callers to 3.5 Flash-Lite.
@@ -65,6 +66,7 @@ function createOpenAIClientWrapper(client, userId, { now = Date.now } = {}) {
         async create(options = {}) {
           enforceRateLimit(userId, now());
           const { signal, ...parameters } = options;
+          parameters.messages = withRuntimeContext(parameters.messages, new Date(now()));
           const result = await client.chat.completions.create(
             parameters,
             signal ? { signal } : undefined,
