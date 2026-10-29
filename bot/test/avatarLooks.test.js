@@ -97,6 +97,19 @@ test('clear context signals switch immediately (coach/calm/deep/motivation)', ()
   assert.strictEqual(stabilizeLook(702, 'motivation'), 'motivation');
 });
 
+test('happy Bulgarian messages including common typo щаслив select motivation', () => {
+  const { classifyUserContext, chooseLookCategory } = require('../avatarLooks');
+  for (const text of [
+    'Ели много съм щастлив',
+    'ели много съм щаслив',
+    'днес съм щаслива',
+    'страхотно се чувствам',
+  ]) {
+    assert.strictEqual(classifyUserContext(text), 'motivation', text);
+    assert.strictEqual(chooseLookCategory(text, 'default'), 'motivation', text);
+  }
+});
+
 test('same context across messages → Look remains stable', () => {
   stabilizeLook(703, 'calm');
   assert.strictEqual(stabilizeLook(703, 'calm'), 'calm');
