@@ -48,6 +48,7 @@ const link = require('./commands/link');
 const { getMode, setMode } = require('./avatarModeStorage');
 const { createModeKeyboard } = require('./modeKeyboard');
 const { createFreeTrialHandoffHandler } = require('./freeTrialHandoff');
+const { handleFreeTrialPurchaseIntent } = require('./freeTrialPurchaseIntent');
 const { createImageHandler, IMAGE_RULES } = require('./imageInput');
 const {
   FREE_TRIAL_MAX_OUTPUT_TOKENS,
@@ -867,6 +868,7 @@ bot.command('ask', async (ctx) => {
   }
   const status = await gateChat(ctx);
   if (!status) return;
+  if (await handleFreeTrialPurchaseIntent(ctx, question, status)) return;
   if (await handleFreeTrialHandoff(ctx, question, status)) return;
   await askEli(ctx, question, { status });
 });
@@ -946,6 +948,7 @@ bot.on('text', async (ctx) => {
     // on their existing paths.
     try {
       const status = await resolveAccessStatus(ctx);
+      if (await handleFreeTrialPurchaseIntent(ctx, ctx.message.text, status)) return;
       if (await handleFreeTrialHandoff(ctx, ctx.message.text, status)) return;
     } catch (err) {
       console.error('Free-trial handoff status check failed:', err?.name || 'Error');
@@ -963,6 +966,7 @@ bot.on('text', async (ctx) => {
   // Entitlement gate: expired trial → static message, no AI call.
   const status = await gateChat(ctx);
   if (!status) return;
+  if (await handleFreeTrialPurchaseIntent(ctx, ctx.message.text, status)) return;
   if (await handleFreeTrialHandoff(ctx, ctx.message.text, status)) return;
 
   // Any free-text message is answered by Eli. askEli injects the owner
