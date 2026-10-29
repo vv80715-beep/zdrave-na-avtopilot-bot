@@ -33,6 +33,11 @@ const {
   chooseLookCategory,
 } = require('./avatarLooks');
 const { planKeyboard } = require('./planLinks');
+const {
+  HANDOFF_MESSAGE,
+  PRODUCT_CONTACT_NOTE,
+  resolveTrialHandoff,
+} = require('./trialHumanHandoff');
 const { EliPlatformClient } = require('./boltPlatformClient');
 const startCommands = require('./commands/start');
 const planAdmin = require('./commands/planAdmin');
@@ -316,6 +321,17 @@ async function askEli(ctx, question, opts = {}) {
     allowed.includes('voice') &&
     (storedMode === 'voice' || Boolean(opts.spokenInput));
   const freePlan = status.plan === 'free';
+  const trialHandoff = !owner ? resolveTrialHandoff(status, question) : null;
+
+  // Free-trial human handoff: an explicit request for a real person is handled
+  // deterministically with no OpenAI call. Product questions still get Eli's
+  // normal answer, with the same single message carrying a direct owner button.
+  if (trialHandoff?.kind === 'immediate') {
+    await ctx.reply(HANDOFF_MESSAGE, trialHandoff.keyboard);
+    addConversation(ctx.from.id, 'user', question);
+    addConversation(ctx.from.id, 'assistant', HANDOFF_MESSAGE);
+    return;
+  }
 
   // Deterministic answers (log queries, profile dumps, memory commands) follow
   // the same one-delivery rule: voice mode speaks them (text only as fallback);
@@ -494,7 +510,12 @@ async function askEli(ctx, question, opts = {}) {
       conversationState === 'continuing' ? stripLeadingGreeting(raw) : raw;
     // Health-report turns fold the deterministic confirmation into the SAME
     // single delivery — never a separate second message.
-    const finalAnswer = withNotice(healthNote ? `${healthNote}\n\n${answer}` : answer);
+    const aiAnswer = healthNote ? `${healthNote}\n\n${answer}` : answer;
+    const contactAnswer =
+      trialHandoff?.kind === 'append'
+        ? `${aiAnswer}\n\n${PRODUCT_CONTACT_NOTE}`
+        : aiAnswer;
+    const finalAnswer = withNotice(contactAnswer);
 
     // Persist the exchange to the user's long-term memory (never the owner's)
     // BEFORE delivery — memory survives even if delivery fails. The owner's
@@ -541,7 +562,11 @@ async function askEli(ctx, question, opts = {}) {
       const ok = await sendVoiceReply(ctx, finalAnswer);
       if (!ok) await ctx.reply(finalAnswer);
     } else {
-      await ctx.reply(finalAnswer);
+      if (trialHandoff?.kind === 'append') {
+        await ctx.reply(finalAnswer, trialHandoff.keyboard);
+      } else {
+        await ctx.reply(finalAnswer);
+      }
     }
   } catch (err) {
     console.error('OpenAI error:', err.message);
