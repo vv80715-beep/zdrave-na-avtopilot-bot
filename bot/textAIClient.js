@@ -65,11 +65,11 @@ function createOpenAIClientWrapper(client, userId, { now = Date.now } = {}) {
       completions: {
         async create(options = {}) {
           enforceRateLimit(userId, now());
-          const { signal, ...parameters } = options;
+          const { signal, noRetries, ...parameters } = options;
           parameters.messages = withRuntimeContext(parameters.messages, new Date(now()));
           const result = await client.chat.completions.create(
             parameters,
-            signal ? { signal } : undefined,
+            signal || noRetries ? { ...(signal ? { signal } : {}), ...(noRetries ? { maxRetries: 0 } : {}) } : undefined,
           );
           const modelName = options.model || 'unknown';
           const prices = MODEL_PRICES[modelName];

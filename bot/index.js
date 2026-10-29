@@ -48,6 +48,7 @@ const link = require('./commands/link');
 const { getMode, setMode } = require('./avatarModeStorage');
 const { createModeKeyboard } = require('./modeKeyboard');
 const { createFreeTrialHandoffHandler } = require('./freeTrialHandoff');
+const { createImageHandler, IMAGE_RULES } = require('./imageInput');
 const { resolveEntitlementStatus } = require('./entitlementResolver');
 const { modePermissionsText } = require('./modePermissions');
 const { sendAvatarReply } = require('./avatarService');
@@ -387,7 +388,7 @@ async function askEli(ctx, question, opts = {}) {
   // Optional, owner-only capture of newly stated relationship facts. The
   // separate local relationship store is opt-in and never imports RAM history.
   // Keep explicit memory commands out of passive capture.
-  if (getOwnerRelationshipMemoryCaptureEnabled(owner) &&
+  if (!opts.image && getOwnerRelationshipMemoryCaptureEnabled(owner) &&
       !ownerFitnessCommand &&
       !explicitPreferenceCommand &&
       !detectMemoryCommand(question)) {
@@ -488,6 +489,8 @@ async function askEli(ctx, question, opts = {}) {
   // Universal long-term memory is owner-only and remains inert unless both
   // durable flags are explicitly enabled and the approved backend health
   // contract is verified. Until then, preserve the existing local-memory path.
+  let healthNote = '';
+  if (!opts.image) {
   const universalMemoryResult = await ownerUniversalMemoryRuntime.handle({
     userId: ctx.from.id,
     isOwner: owner,
@@ -673,7 +676,6 @@ async function askEli(ctx, question, opts = {}) {
   // The confirmation is NOT sent here — it is merged into the single final
   // delivery below (one turn → one delivery, in every mode).
   const events = extractHealthEvents(question);
-  let healthNote = '';
   if (events.length) {
     let recorded = [];
     try {
@@ -691,6 +693,7 @@ async function askEli(ctx, question, opts = {}) {
     }
   }
 
+  }
   // Owner gets the separate owner identity and RAM-only recent turns. Everyone
   // else keeps the existing profile and relationship-memory prompt path.
   let systemContent = SYSTEM_PROMPT;
@@ -706,7 +709,7 @@ async function askEli(ctx, question, opts = {}) {
     // struggles …) from this message. The conservative classifier ignores
     // ordinary chatter and health reports, so nothing casual is stored.
     try {
-      rememberFromMessage(ctx.from.id, question);
+      if (!opts.image) rememberFromMessage(ctx.from.id, question);
     } catch (err) {
       console.error('Relationship memory save failed:', err.message);
     }
@@ -728,6 +731,7 @@ async function askEli(ctx, question, opts = {}) {
   // Tell Eli whether to greet: only for a new or resumed-after-a-pause
   // conversation, never mid-flow. Applies to owner and users alike.
   systemContent = `${systemContent}\n\n${conversationFlowNote(conversationState)}`;
+  if (opts.image) systemContent += `\n\n${IMAGE_RULES}`;
   if (opts.forceTextDelivery) {
     systemContent += '\n\nОтговори на български. Това е текстов разговор; не обещавай гласов или видео отговор.';
   }
@@ -757,12 +761,16 @@ async function askEli(ctx, question, opts = {}) {
       messages: [
         { role: 'system', content: systemContent },
         ...priorMessages,
-        { role: 'user', content: question },
+        { role: 'user', content: opts.image ? [
+          { type: 'text', text: question },
+          { type: 'image_url', image_url: { url: opts.image, detail: 'low' } },
+        ] : question },
       ],
       ...(opts.forceTextDelivery ? { signal: AbortSignal.timeout(30_000) } : {}),
       // Technical response-length control (cost): free-trial answers are
       // hard-capped shorter than premium ones, independent of prompt wording.
       max_tokens: avatarMode ? 125 : voiceMode ? 300 : freePlan ? 250 : 600,
+      ...(opts.image ? { noRetries: true } : {}),
     });
 
     const rawWithTag = completion.choices[0]?.message?.content ?? 'Не получих отговор. Опитай отново.';
@@ -842,8 +850,8 @@ async function askEli(ctx, question, opts = {}) {
     }
   } catch (err) {
     if (opts.rethrowProviderErrors) throw err;
-    console.error('OpenAI error:', err.message);
-    await ctx.reply('Нещо се обърка. Опитай отново малко по-късно.');
+    console.error('OpenAI error:', opts.image ? 'image_turn_failed' : err.message);
+    await ctx.reply(opts.image ? 'Не успях да анализирам снимката този път. Опитай отново по-късно.' : 'Нещо се обърка. Опитай отново малко по-късно.');
   }
 }
 
@@ -915,6 +923,12 @@ bot.on('voice', (ctx) =>
 bot.on('audio', (ctx) =>
   handleSpokenMessage(ctx, ctx.message.audio.file_id, audioSuffix(ctx.message.audio))
 );
+
+const handleImageMessage = createImageHandler({
+  gateChat, askEli, getProvider: require('./textAIClient').getProvider,
+});
+bot.on('photo', handleImageMessage);
+bot.on('document', handleImageMessage);
 
 bot.on('text', async (ctx) => {
   // Command-looking messages never reach the AI (see maybeHandleCommandText).

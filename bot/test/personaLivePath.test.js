@@ -22,7 +22,7 @@ const slice = (a, b) => source.slice(source.indexOf(a), source.indexOf(b, source
 const fixedNow = new Date('2026-10-29T22:30:00Z');
 let next = 880001000;
 function harness({ owner = true, mode = 'text', plan = 'monthly', blocked = false,
-  deliveryOk = true, ai = true } = {}) {
+  deliveryOk = true, ai = true, failAI = false } = {}) {
   const id = next++;
   const requests = [], sent = [], routes = {};
   let turns = 0;
@@ -33,6 +33,7 @@ function harness({ owner = true, mode = 'text', plan = 'monthly', blocked = fals
   const gate = async () => { if (blocked) { await ctx.reply('Изтекъл Trial'); return null; } return status; };
   const sandbox = {
     ...persona, ...prompts, ...ownerSession, ...memory, ...storage, ...logs,
+    IMAGE_RULES: require('../imageInput').IMAGE_RULES,
     ...require('../relationshipMemory'), ...require('../dailyLogTracker'),
     ...require('../profileIntent'), ...require('../avatarLooks'),
     isOwner: () => owner, gateChat: gate, resolveAccessStatus: gate,
@@ -52,16 +53,23 @@ function harness({ owner = true, mode = 'text', plan = 'monthly', blocked = fals
     sendAvatarReply: async (_ctx, text) => { if (deliveryOk) sent.push({ channel: 'avatar', text }); return deliveryOk; },
     getTextAIClient: () => ({ chat: { completions: { create: async request => {
       requests.push(JSON.parse(JSON.stringify({ ...request, messages: withRuntimeContext(request.messages, fixedNow) })));
+      if (failAI) throw new Error('secret provider detail');
       return { choices: [{ message: { content: 'Тестов отговор без оценка на модела.' } }] };
     } } } }),
     handleFreeTrialHandoff: createFreeTrialHandoffHandler({ ownerTelegramId: owner ? String(id) : '123456789' }),
     maybeHandleCommandText: async () => false,
     bot: { on: (name, fn) => { routes[name] = fn; } },
-    console: { error: (...args) => assert.fail(args.join(' ')) },
+    console: { error: (...args) => {
+      if (!failAI) assert.fail(args.join(' '));
+      else assert.doesNotMatch(args.join(' '), /secret|base64/);
+    } },
   };
   vm.runInNewContext(slice('async function askEli(', "bot.command('ask'") +
     slice("bot.on('text',", 'bot.catch('), sandbox);
-  return { id, requests, sent, async send(text) {
+  return { id, requests, sent, async image(caption) {
+    ctx.message.text = caption;
+    await sandbox.askEli(ctx, caption, { status, image: 'data:image/jpeg;base64,/9j/AAAA' });
+  }, async send(text) {
     ctx.message.text = text;
     const before = sent.length;
     await routes.text(ctx);
@@ -147,3 +155,41 @@ test('four few-shot conversations are system examples, not real memories', () =>
   assert.ok(persona.SYSTEM_PROMPT.length < 13742);
 });
 test.after(() => fs.rmSync(temp, { recursive: true, force: true }));
+
+test('image provider failure gives one safe fallback without retry',async()=>{
+  const h=harness({failAI:true});
+  await h.image('[Изпратена снимка]');
+  assert.equal(h.requests.length,1);
+  assert.equal(h.sent.length,1);
+  assert.match(h.sent[0].text,/Не успях да анализирам/);
+});
+test('image Trial and premium delivery fallback keep original budgets',async()=>{
+  const trial=harness({owner:false,plan:'free',mode:'avatar'});
+  await trial.image('[Изпратена снимка]');
+  assert.equal(trial.requests[0].max_tokens,250);
+  assert.equal(trial.sent[0].channel,'text');
+  for(const mode of ['voice','avatar']) {
+    const h=harness({mode,deliveryOk:false});
+    await h.image('[Изпратена снимка]');
+    assert.equal(h.requests.length,1); assert.equal(h.sent.length,1);
+    assert.equal(h.sent[0].channel,'text');
+  }
+});
+
+for (const owner of [true,false]) for (const mode of ['text','voice','avatar']) {
+  test(`image uses shared actual askEli and text-only history ${owner}/${mode}`,async()=>{
+    const h=harness({owner,mode});
+    await h.send('Говорим за обяда.');
+    await h.image('[Изпратена снимка] Какво виждаш?');
+    assert.equal(h.requests.length,2);
+    const req=h.requests[1];
+    assert.equal(req.noRetries,true);
+    assert.equal(req.messages.at(-1).content[1].type,'image_url');
+    assert.ok(req.messages.some(m=>typeof m.content==='string' && m.content.includes('Не идентифицирай реални хора')));
+    assert.equal(h.sent.length,2); assert.equal(h.sent[1].channel,mode);
+    const history=owner?ownerSession.ownerRecentTurns(h.id):memory.recentMessages(h.id,10);
+    assert.doesNotMatch(JSON.stringify(history),/base64|image_url/);
+    await h.send('А това подходящо ли е?');
+    assert.doesNotMatch(JSON.stringify(h.requests[2]),/base64|image_url/);
+  });
+}
