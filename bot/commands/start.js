@@ -157,16 +157,17 @@ function register(bot, {
     ensureUser(ctx.from.id);
     const owner = isOwner(ctx);
     let modeMarkup;
+    let startStatus = null;
     if (
       ctx.chat?.type === 'private' &&
       String(ctx.chat.id) === String(ctx.from.id) &&
       typeof resolveStartAccessStatus === 'function'
     ) {
       try {
-        const status = await resolveStartAccessStatus(ctx, { forceRefresh: true });
-        if (status.state === 'paid' && status.backendVerified === true) {
+        startStatus = await resolveStartAccessStatus(ctx, { forceRefresh: true });
+        if (startStatus.state === 'paid' && startStatus.backendVerified === true) {
           modeMarkup =
-            createModeKeyboard(status.allowedModes) || Markup.removeKeyboard();
+            createModeKeyboard(startStatus.allowedModes) || Markup.removeKeyboard();
         } else {
           // Clear a stale paid reply keyboard after expiry, cancellation, or
           // an unavailable backend. Provider calls still re-check entitlement.
@@ -176,10 +177,17 @@ function register(bot, {
         modeMarkup = Markup.removeKeyboard();
       }
     }
-    return ctx.reply(owner
-      ? `Здравей, ${ownerName}! 👑 Радвам се да те видя.`
-      : `Здравей, ${ctx.from.first_name || 'приятелю'}! 👋 Аз съм Ели. Пиши ми или виж /help.`,
-    modeMarkup);
+
+    let welcome;
+    if (owner) {
+      welcome = `Здравей, ${ownerName}! 👑 Радвам се да те видя.`;
+    } else if (startStatus?.state === 'paid' && startStatus.backendVerified === true) {
+      welcome = `Здравей, ${ctx.from.first_name || 'приятелю'}! Аз съм Ели. Пиши ми свободно — активният ти план отключва пълния ти достъп според включените режими.`;
+    } else {
+      welcome = `Здравей, ${ctx.from.first_name || 'приятелю'}! Аз съм Ели — личният ти AI спътник за здравословни навици. В 5-дневния безплатен Trial ще ти помагам кратко и практично с хранене, движение, сън, вода и навици — само с текст.`;
+    }
+
+    return ctx.reply(welcome, modeMarkup);
   });
 
   bot.help((ctx) => {
