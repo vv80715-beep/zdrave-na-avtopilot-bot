@@ -674,19 +674,9 @@ bot.on('text', async (ctx) => {
   // Command-looking messages never reach the AI (see maybeHandleCommandText).
   if (await maybeHandleCommandText(ctx, ctx.message.text)) return;
 
-  // Graceful fallbacks when AI is unavailable.
-  if (!openai) {
-    if (isOwner(ctx)) {
-      return ctx.reply(
-        `В момента не мога да ползвам AI мозъка си. Опитай пак малко по-късно. 🙏`
-      );
-    }
-    return ctx.reply(
-      `Разбирам те! 😊 Ако имаш въпрос, използвай /ask <въпрос>.\n\nЗа всички команди — /help.`
-    );
-  }
-
-  // Entitlement gate: expired trial → static message, no AI call.
+  // Entitlement gate first. askEli then handles deterministic Free Trial
+  // handoff before it checks OpenAI availability, so human support remains
+  // reachable even during an AI outage.
   const status = await gateChat(ctx);
   if (!status) return;
 
