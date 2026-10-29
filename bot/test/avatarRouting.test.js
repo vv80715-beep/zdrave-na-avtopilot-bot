@@ -23,6 +23,7 @@ test('/mode -> select Avatar -> как си invokes Avatar, not text delivery', 
     reply: async text => replies.push(text), sendChatAction: async () => {},
   };
   const sandbox = {
+    ...require('../trialHumanHandoff'),
     bot: {
       command: (name, fn) => commands.set(name, fn),
       hears: (name, fn) => hears.set(name, fn),
