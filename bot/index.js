@@ -49,6 +49,11 @@ const { getMode, setMode } = require('./avatarModeStorage');
 const { createModeKeyboard } = require('./modeKeyboard');
 const { createFreeTrialHandoffHandler } = require('./freeTrialHandoff');
 const { createImageHandler, IMAGE_RULES } = require('./imageInput');
+const {
+  FREE_TRIAL_MAX_OUTPUT_TOKENS,
+  FREE_TRIAL_HISTORY_LIMIT,
+  FREE_TRIAL_PROMPT_NOTE,
+} = require('./freeTrialResponsePolicy');
 const { resolveEntitlementStatus } = require('./entitlementResolver');
 const { modePermissionsText } = require('./modePermissions');
 const { sendAvatarReply } = require('./avatarService');
@@ -719,7 +724,7 @@ async function askEli(ctx, question, opts = {}) {
     // user's communication preferences), so Eli weaves it in naturally.
     const relBlock = buildRelationshipContext(ctx.from.id, question);
     if (relBlock) systemContent = `${relBlock}\n\n${systemContent}`;
-    priorMessages = recentMessages(ctx.from.id, 10);
+    priorMessages = recentMessages(ctx.from.id, freePlan ? FREE_TRIAL_HISTORY_LIMIT : 10);
   }
 
   // When explicitly enabled, V2.2 contributes read-only safety/context
@@ -769,7 +774,7 @@ async function askEli(ctx, question, opts = {}) {
       ...(opts.forceTextDelivery ? { signal: AbortSignal.timeout(30_000) } : {}),
       // Technical response-length control (cost): free-trial answers are
       // hard-capped shorter than premium ones, independent of prompt wording.
-      max_tokens: avatarMode ? 125 : voiceMode ? 300 : freePlan ? 250 : 600,
+      max_tokens: avatarMode ? 125 : voiceMode ? 300 : freePlan ? FREE_TRIAL_MAX_OUTPUT_TOKENS : 600,
       ...(opts.image ? { noRetries: true } : {}),
     });
 
