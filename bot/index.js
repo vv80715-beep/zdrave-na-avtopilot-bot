@@ -39,6 +39,7 @@ const {
   HANDOFF_OFFER_MESSAGE,
   isPendingOfferActive,
   resolveTrialHandoff,
+  resolveOwnerExplicitHandoff,
 } = require('./trialHumanHandoff');
 const { EliPlatformClient } = require('./boltPlatformClient');
 const startCommands = require('./commands/start');
@@ -317,9 +318,9 @@ async function askEli(ctx, question, opts = {}) {
   // a short-lived session flag allows a plain "Да" to reveal the owner contact.
   ctx.session ??= {};
   const pendingOffer = isPendingOfferActive(ctx.session.trialHumanHandoffOfferedAt);
-  const trialHandoff = !owner
-    ? resolveTrialHandoff(status, question, { pendingOffer })
-    : null;
+  const trialHandoff = owner
+    ? resolveOwnerExplicitHandoff(question)
+    : resolveTrialHandoff(status, question, { pendingOffer });
 
   if (trialHandoff?.kind === 'immediate') {
     delete ctx.session.trialHumanHandoffOfferedAt;
