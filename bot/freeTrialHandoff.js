@@ -15,6 +15,7 @@ function containsAny(text, phrases) {
 }
 
 const HUMAN_TARGETS = [
+  'човек',
   'реален човек',
   'истински човек',
   'човек от екипа',
@@ -119,16 +120,19 @@ const CONCERN_CUES = [
   'scam',
 ];
 
-function isExplicitHumanRequest(text) {
-  const normalized = ` ${normalize(text)} `;
+function isExplicitHumanRequest(text, { requireHumanTarget = false } = {}) {
+  const normalized = ` ${normalize(text).replace(/(^| )със(?= |$)/g, '$1с')} `;
+  const hasTarget = HUMAN_TARGETS.some((target) => normalized.includes(` ${target} `));
+  if (requireHumanTarget && !hasTarget) return false;
   if (EXPLICIT_CONTACT_SHORTCUTS.some((phrase) => normalized.includes(` ${phrase} `))) {
     return true;
   }
-  const asksForContact = CONTACT_REQUESTS.some((phrase) =>
+  const asksForContact = / (?:искам|може ли|мога ли) да (?:говоря|поговоря|пиша) (?:с|на) /.test(normalized) ||
+    CONTACT_REQUESTS.some((phrase) =>
     normalized.includes(` ${phrase} `)
   );
   if (!asksForContact) return false;
-  return HUMAN_TARGETS.some((target) => normalized.includes(` ${target} `));
+  return hasTarget;
 }
 
 function isProductConcern(text) {
@@ -196,6 +200,15 @@ function createFreeTrialHandoffHandler({
 } = {}) {
   return async function handleFreeTrialHandoff(ctx, message, status) {
     const userId = String(ctx.from?.id || '');
+    // Owner-only live test shortcut: never enter or consume trial consent.
+    // Identity comes from Telegram, not the supplied entitlement status.
+    if (userId && ownerProfileUrl(ownerTelegramId) &&
+        userId === String(ownerTelegramId).trim()) {
+      pendingConsent.delete(userId);
+      return isExplicitHumanRequest(message, { requireHumanTarget: true })
+        ? sendOwnerLink(ctx, ownerTelegramId)
+        : false;
+    }
     if (!userId || !isActiveFreeTrial(status, now())) {
       pendingConsent.delete(userId);
       return false;
@@ -234,7 +247,7 @@ async function sendOwnerLink(ctx, ownerTelegramId) {
   }
   await ctx.reply('Разбира се — можеш да се свържеш с Дани директно:', {
     reply_markup: {
-      inline_keyboard: [[{ text: 'Отвори профила на Дани', url }]],
+      inline_keyboard: [[{ text: 'Свържи се с Дани', url }]],
     },
   });
   return true;

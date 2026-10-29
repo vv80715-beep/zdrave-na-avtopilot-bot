@@ -46,7 +46,7 @@ test('active free trial explicit request immediately gets Dani profile button', 
   assert.equal(await handle(message, 'Искам да говоря с Дани', trial), true);
   assert.equal(message.replies.length, 1);
   assert.deepEqual(message.replies[0].extra.reply_markup.inline_keyboard[0][0], {
-    text: 'Отвори профила на Дани',
+    text: 'Свържи се с Дани',
     url: `tg://user?id=${OWNER_ID}`,
   });
 });
@@ -66,6 +66,51 @@ test('product concern asks consent first and only an affirmative reply shows the
     message.replies[1].extra.reply_markup.inline_keyboard[0][0].url,
     `tg://user?id=${OWNER_ID}`
   );
+});
+
+test('owner explicit requests bypass trial eligibility and show the same direct button', async () => {
+  for (const request of [
+    'Искам да говоря с Дани', 'ели искам да говоря със истески човек',
+    'Може ли да пиша на support?', 'Искам да поговоря със собственика',
+    'Искам да се свържа с поддръжка',
+  ]) {
+    const message = ctx(OWNER_ID);
+    assert.equal(await handler()(message, request, { state: 'owner' }), true);
+    assert.deepEqual(message.replies[0].extra.reply_markup.inline_keyboard[0][0], {
+      text: 'Свържи се с Дани', url: `tg://user?id=${OWNER_ID}`,
+    });
+    assert.equal(message.replies.length, 1);
+  }
+});
+
+test('owner ordinary chat and product concerns never enter trial consent, even with trial status', async () => {
+  const handle = handler();
+  const message = ctx(OWNER_ID);
+  for (const request of ['Как си?', 'Притеснявам се за плащането', 'Да, моля', 'Боли ме коляното', 'Свържи ме с дневника']) {
+    assert.equal(await handle(message, request, trial), false);
+  }
+  assert.deepEqual(message.replies, []);
+});
+
+test('typo-independent human requests work only for owner or active trial', async () => {
+  const request = 'искам да говоря със истески човек';
+  assert.equal(isExplicitHumanRequest(request), true);
+  const free = ctx();
+  assert.equal(await handler()(free, request, trial), true);
+  for (const plan of ['seven_day', 'monthly', 'yearly']) {
+    const paid = ctx();
+    assert.equal(await handler()(paid, request, { ...trial, state: 'paid', plan }), false);
+    assert.deepEqual(paid.replies, []);
+  }
+});
+
+test('health concern plus explicit human contact is distinct from symptoms alone', async () => {
+  for (const id of [OWNER_ID, '987654321']) {
+    const message = ctx(id);
+    const handle = handler();
+    assert.equal(await handle(message, 'Притеснявам се за болката в коляното', trial), false);
+    assert.equal(await handle(message, 'Притеснявам се за болката, искам да говоря с човек', trial), true);
+  }
 });
 
 test('declining consent clears the pending handoff and continues normal handling', async () => {
