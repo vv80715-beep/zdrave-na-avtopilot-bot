@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
-    "test": "node --test"
+    "test": "node --test",
+    "test:offline": "node scripts/test-offline.cjs",
+    "test:personality": "node scripts/test-offline.cjs test/persona.test.js test/personalityConversation.test.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

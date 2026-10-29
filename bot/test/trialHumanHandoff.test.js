@@ -21,6 +21,7 @@ test('explicit human-contact intent is detected without matching ordinary health
   assert.equal(isExplicitHumanHandoffRequest('Искам да говоря с човек за продукта.'), true);
   assert.equal(isExplicitHumanHandoffRequest('Свържи ме с Дани, моля.'), true);
   assert.equal(isExplicitHumanHandoffRequest('Can I speak with a human agent?'), true);
+  assert.equal(isExplicitHumanHandoffRequest('Искам истински човек.'), true);
   assert.equal(isExplicitHumanHandoffRequest('Колко вода трябва да пие човек на ден?'), false);
 });
 
@@ -29,6 +30,10 @@ test('product/support questions are detected, health coaching questions are not'
   assert.equal(isProductSupportQuestion('Колко струва месечният план?'), true);
   assert.equal(isProductSupportQuestion('Как работи плащането?'), true);
   assert.equal(isProductSupportQuestion('Как да спя по-добре тази вечер?'), false);
+  assert.equal(isProductSupportQuestion('Как да се възстановя след тренировка?'), false);
+  assert.equal(isProductSupportQuestion('Колко време да държа планк?'), false);
+  assert.equal(isProductSupportQuestion('Как работи абонаментът?'), true);
+  assert.equal(isProductSupportQuestion('Колко струва услугата?'), true);
 });
 
 test('concern offer is limited to product/support context', () => {
