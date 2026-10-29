@@ -39,6 +39,7 @@ const {
   HANDOFF_OFFER_MESSAGE,
   isPendingOfferActive,
   resolveTrialHandoff,
+  resolveOwnerExplicitHandoff,
 } = require('./trialHumanHandoff');
 const { EliPlatformClient } = require('./boltPlatformClient');
 const startCommands = require('./commands/start');
@@ -52,6 +53,17 @@ const { sendVoiceReply } = require('./voiceReplyService');
 const { extractHealthEvents } = require('./dailyLogTracker');
 const { resolveLogQuery, answerDailyLogQuery, recordEvents, formatConfirmation } = require('./dailyLogService');
 const { feedbackForEvents } = require('./healthInsights');
+const {
+  IMAGE_ANALYSIS_PROMPT_NOTE,
+  DEFAULT_IMAGE_QUESTION,
+  ImageInputError,
+  isSupportedImageMime,
+  imageDescriptorFromMessage,
+  downloadTelegramImage,
+  buildVisionUserContent,
+  imageHistoryText,
+  friendlyImageError,
+} = require('./imageAnalysis');
 
 const profileWizard = require('./scenes/profileWizard');
 const editWizard = require('./scenes/editWizard');
@@ -299,15 +311,16 @@ async function askEli(ctx, question, opts = {}) {
   if (!status) return; // expired trial — static message already sent
 
   const owner = isOwner(ctx);
+  const imageTurn = Boolean(opts.imageDataUrl);
 
   // Free-trial owner handoff is deterministic and must keep working even when
   // OpenAI is temporarily unavailable. A concern produces only an offer first;
   // a short-lived session flag allows a plain "Да" to reveal the owner contact.
   ctx.session ??= {};
   const pendingOffer = isPendingOfferActive(ctx.session.trialHumanHandoffOfferedAt);
-  const trialHandoff = !owner
-    ? resolveTrialHandoff(status, question, { pendingOffer })
-    : null;
+  const trialHandoff = owner
+    ? resolveOwnerExplicitHandoff(question)
+    : resolveTrialHandoff(status, question, { pendingOffer });
 
   if (trialHandoff?.kind === 'immediate') {
     delete ctx.session.trialHumanHandoffOfferedAt;
@@ -380,13 +393,13 @@ async function askEli(ctx, question, opts = {}) {
   // на …", "какви цели съм ти казвал"). Handled deterministically so Eli acts on
   // real stored data, never a hallucinated edit. Owner memory is a separate
   // identity, so this only runs for regular users.
-  if (!owner) {
+  if (!owner && !imageTurn) {
     const memCmd = detectMemoryCommand(question);
     if (memCmd) {
       const reply = applyMemoryCommand(ctx.from.id, memCmd);
       if (reply) {
         await deliverDeterministic(reply);
-        addConversation(ctx.from.id, 'user', question);
+        addConversation(ctx.from.id, 'user', imageTurn ? imageHistoryText(question) : question);
         addConversation(ctx.from.id, 'assistant', 'Обработих заявка към отношенската памет.');
         return;
       }
@@ -396,7 +409,7 @@ async function askEli(ctx, question, opts = {}) {
   // If the user explicitly asks what Eli knows about them ("Какво знаеш за
   // мен?", "Покажи ми профила", "What do you know about me?"), answer straight
   // from stored data — never let the model invent or paraphrase it.
-  if (isProfileQuery(question)) {
+  if (!imageTurn && isProfileQuery(question)) {
     if (owner) {
       const ownerProfileAnswer =
         `🧠 *Памет за собственика (${OWNER_NAME})*\n\n` +
@@ -425,15 +438,15 @@ async function askEli(ctx, question, opts = {}) {
   //
   // A question about the log ("How much water today?", "Какво ядох днес?") is
   // answered deterministically from stored entries.
-  const logQuery = resolveLogQuery(question);
+  const logQuery = imageTurn ? null : resolveLogQuery(question);
   if (logQuery) {
     const answer = answerDailyLogQuery(ctx.from.id, logQuery);
     await deliverDeterministic(answer);
     if (owner) {
-      ownerRememberTurn(ctx.from.id, 'user', question);
+      ownerRememberTurn(ctx.from.id, 'user', imageTurn ? imageHistoryText(question) : question);
       ownerRememberTurn(ctx.from.id, 'assistant', 'Отговорих от дневника за здраве.');
     } else {
-      addConversation(ctx.from.id, 'user', question);
+      addConversation(ctx.from.id, 'user', imageTurn ? imageHistoryText(question) : question);
       addConversation(ctx.from.id, 'assistant', 'Отговорих от дневника за здраве.');
     }
     return;
@@ -443,7 +456,7 @@ async function askEli(ctx, question, opts = {}) {
   // so Eli still replies warmly and conversationally.
   // The confirmation is NOT sent here — it is merged into the single final
   // delivery below (one turn → one delivery, in every mode).
-  const events = extractHealthEvents(question);
+  const events = imageTurn ? [] : extractHealthEvents(question);
   let healthNote = '';
   if (events.length) {
     let recorded = [];
@@ -474,10 +487,12 @@ async function askEli(ctx, question, opts = {}) {
     // Passively capture durable personal context (goals, prefs, recurring
     // struggles …) from this message. The conservative classifier ignores
     // ordinary chatter and health reports, so nothing casual is stored.
-    try {
-      rememberFromMessage(ctx.from.id, question);
-    } catch (err) {
-      console.error('Relationship memory save failed:', err.message);
+    if (!imageTurn) {
+      try {
+        rememberFromMessage(ctx.from.id, question);
+      } catch (err) {
+        console.error('Relationship memory save failed:', err.message);
+      }
     }
     const memoryBlock = buildMemoryContext(ctx.from.id);
     if (memoryBlock) systemContent = `${memoryBlock}\n\n${SYSTEM_PROMPT}`;
@@ -491,6 +506,9 @@ async function askEli(ctx, question, opts = {}) {
   // Tell Eli whether to greet: only for a new or resumed-after-a-pause
   // conversation, never mid-flow. Applies to owner and users alike.
   systemContent = `${systemContent}\n\n${conversationFlowNote(conversationState)}`;
+  if (imageTurn) {
+    systemContent += `\n\n${IMAGE_ANALYSIS_PROMPT_NOTE}`;
+  }
 
   // Avatar mode ("Говори с аватара на Ели"): optimize the spoken script at
   // generation time, before the last-resort provider text-length cap.
@@ -518,7 +536,7 @@ async function askEli(ctx, question, opts = {}) {
       messages: [
         { role: 'system', content: systemContent },
         ...priorMessages,
-        { role: 'user', content: question },
+        { role: 'user', content: imageTurn ? buildVisionUserContent(question, opts.imageDataUrl) : question },
       ],
       // Technical response-length control (cost): free-trial answers are
       // hard-capped shorter than premium ones, independent of prompt wording.
@@ -549,10 +567,10 @@ async function askEli(ctx, question, opts = {}) {
     // BEFORE delivery — memory survives even if delivery fails. The owner's
     // turns go to the in-RAM session buffer instead (context without disk).
     if (owner) {
-      ownerRememberTurn(ctx.from.id, 'user', question);
+      ownerRememberTurn(ctx.from.id, 'user', imageTurn ? imageHistoryText(question) : question);
       ownerRememberTurn(ctx.from.id, 'assistant', answer);
     } else {
-      addConversation(ctx.from.id, 'user', question);
+      addConversation(ctx.from.id, 'user', imageTurn ? imageHistoryText(question) : question);
       addConversation(ctx.from.id, 'assistant', answer);
     }
 
@@ -610,6 +628,50 @@ bot.command('ask', async (ctx) => {
   const status = await gateChat(ctx);
   if (!status) return;
   await askEli(ctx, question, { status });
+});
+
+// Image messages use the same Eli conversation and one-delivery path as text.
+async function handleImageMessage(ctx) {
+  if (!openai) {
+    return ctx.reply('Анализът на снимки изисква AI, който в момента не е наличен.');
+  }
+
+  // Entitlement gate runs BEFORE download and before the single paid AI call.
+  const status = await gateChat(ctx);
+  if (!status) return;
+
+  let descriptor;
+  try {
+    descriptor = imageDescriptorFromMessage(ctx.message);
+  } catch (err) {
+    return ctx.reply(friendlyImageError(err));
+  }
+
+  let image;
+  try {
+    await ctx.sendChatAction('typing');
+    image = await downloadTelegramImage(ctx, descriptor);
+  } catch (err) {
+    console.error('Image processing error:', err instanceof ImageInputError ? err.code : 'unknown');
+    return ctx.reply(friendlyImageError(err));
+  }
+
+  const question = String(ctx.message?.caption || '').trim() || DEFAULT_IMAGE_QUESTION;
+  return askEli(ctx, question, {
+    status,
+    imageDataUrl: image.dataUrl,
+  });
+}
+
+bot.on('photo', handleImageMessage);
+
+bot.on('document', async (ctx, next) => {
+  const mimeType = String(ctx.message?.document?.mime_type || '').toLowerCase();
+  if (!mimeType.startsWith('image/')) return next();
+  if (!isSupportedImageMime(mimeType)) {
+    return ctx.reply('Поддържам снимки във формат JPEG, PNG или WebP.');
+  }
+  return handleImageMessage(ctx);
 });
 
 // Voice notes (.ogg) and audio files are transcribed, then handled exactly

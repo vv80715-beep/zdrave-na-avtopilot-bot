@@ -15,6 +15,7 @@ const {
   buildOwnerContactKeyboard,
   isPendingOfferActive,
   resolveTrialHandoff,
+  resolveOwnerExplicitHandoff,
 } = require('../trialHumanHandoff');
 
 test('explicit human-contact intent is detected without matching ordinary health language', () => {
@@ -89,6 +90,14 @@ test('trial handoff offers first for concern, then sends profile only after cons
     resolveTrialHandoff({ plan: 'free', canChat: false }, 'Искам човек.'),
     null
   );
+});
+
+test('owner explicit handoff uses the shared Dani button without Free Trial consent flow', () => {
+  process.env.OWNER_TELEGRAM_URL = 'https://t.me/Danail321';
+  const result = resolveOwnerExplicitHandoff('Ели, искам да говоря с истински човек.');
+  assert.equal(result.kind, 'immediate');
+  assert.equal(result.keyboard.reply_markup.inline_keyboard[0][0].url, 'https://t.me/Danail321');
+  assert.equal(resolveOwnerExplicitHandoff('Как си днес?'), null);
 });
 
 test('contact keyboard contains one direct Telegram profile button', () => {
