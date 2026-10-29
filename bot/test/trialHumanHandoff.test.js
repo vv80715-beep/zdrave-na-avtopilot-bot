@@ -5,10 +5,15 @@ const originalOwnerId = process.env.OWNER_TELEGRAM_ID;
 const originalOwnerUrl = process.env.OWNER_TELEGRAM_URL;
 
 const {
+  OFFER_TTL_MS,
   isExplicitHumanHandoffRequest,
   isProductSupportQuestion,
+  isProductConcern,
+  isHandoffAcceptance,
+  isHandoffDecline,
   getOwnerTelegramUrl,
   buildOwnerContactKeyboard,
+  isPendingOfferActive,
   resolveTrialHandoff,
 } = require('../trialHumanHandoff');
 
@@ -26,6 +31,21 @@ test('product/support questions are detected, health coaching questions are not'
   assert.equal(isProductSupportQuestion('Как да спя по-добре тази вечер?'), false);
 });
 
+test('concern offer is limited to product/support context', () => {
+  assert.equal(isProductConcern('Притеснявам се дали плащането е сигурно.'), true);
+  assert.equal(isProductConcern('Не съм сигурен за месечния абонамент.'), true);
+  assert.equal(isProductConcern('Страх ме е, защото ме боли гърдите.'), false);
+  assert.equal(isProductConcern('Притеснявам се за съня си.'), false);
+});
+
+test('yes/no after a handoff offer are recognized narrowly', () => {
+  assert.equal(isHandoffAcceptance('Да'), true);
+  assert.equal(isHandoffAcceptance('Да, моля'), true);
+  assert.equal(isHandoffAcceptance('Искам'), true);
+  assert.equal(isHandoffDecline('Не, благодаря'), true);
+  assert.equal(isHandoffAcceptance('Да пия ли повече вода?'), false);
+});
+
 test('owner Telegram contact uses configured public URL first, then owner id fallback', () => {
   process.env.OWNER_TELEGRAM_URL = 'https://t.me/dani_test';
   process.env.OWNER_TELEGRAM_ID = '123456';
@@ -38,11 +58,21 @@ test('owner Telegram contact uses configured public URL first, then owner id fal
   assert.equal(getOwnerTelegramUrl(), null);
 });
 
-test('trial handoff is active only while free chat is active', () => {
+test('pending handoff offer expires after 15 minutes', () => {
+  const now = 1_000_000;
+  assert.equal(isPendingOfferActive(now - OFFER_TTL_MS + 1, now), true);
+  assert.equal(isPendingOfferActive(now - OFFER_TTL_MS - 1, now), false);
+  assert.equal(isPendingOfferActive(null, now), false);
+});
+
+test('trial handoff offers first for concern, then sends profile only after consent', () => {
   delete process.env.OWNER_TELEGRAM_URL;
   process.env.OWNER_TELEGRAM_ID = '123456';
 
   const trial = { plan: 'free', canChat: true };
+  assert.equal(resolveTrialHandoff(trial, 'Притеснявам се дали плащането е сигурно.').kind, 'offer');
+  assert.equal(resolveTrialHandoff(trial, 'Да', { pendingOffer: true }).kind, 'immediate');
+  assert.equal(resolveTrialHandoff(trial, 'Не, благодаря', { pendingOffer: true }).kind, 'decline');
   assert.equal(resolveTrialHandoff(trial, 'Искам да говоря с човек.').kind, 'immediate');
   assert.equal(resolveTrialHandoff(trial, 'Какво представлява продуктът?').kind, 'append');
 
@@ -56,7 +86,7 @@ test('trial handoff is active only while free chat is active', () => {
   );
 });
 
-test('contact keyboard contains one direct Telegram button', () => {
+test('contact keyboard contains one direct Telegram profile button', () => {
   delete process.env.OWNER_TELEGRAM_URL;
   process.env.OWNER_TELEGRAM_ID = '123456';
   const keyboard = buildOwnerContactKeyboard();
