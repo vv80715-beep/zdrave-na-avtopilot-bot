@@ -27,16 +27,16 @@ for (const [question, target] of exchanges) {
 test('conversation shape does not require questions or repeating catchphrases', () => {
   assert.ok(exchanges.filter(([, reply]) => reply.endsWith('?')).length <= 2);
   assert.equal(new Set(exchanges.map(([, reply]) => reply.split(' ').slice(0, 2).join(' '))).size, exchanges.length);
-  assert.match(HUMAN_TOUCH, /само когато липсва важна информация/);
-  assert.match(HUMAN_TOUCH, /един конкретен миниплан/);
+  assert.match(SYSTEM_PROMPT, /само когато липсва важна информация/);
+  assert.match(SYSTEM_PROMPT, /Един конкретен миниплан/);
   assert.match(GENTLE_GUIDANCE, /пряка, тактична преценка/);
   assert.match(GENTLE_GUIDANCE, /отчитай какво се е променило/);
   assert.match(SYSTEM_PROMPT, /Обикновено 1–4 кратки изречения/);
 });
 test('emotional calibration and identity safeguards remain in shared prompt', () => {
-  assert.match(HUMAN_TOUCH, /при раздразнение — спокойно и директно/);
-  assert.match(HUMAN_TOUCH, /при тъга и тревожност — по-меко и кратко/);
-  assert.match(HUMAN_TOUCH, /Без хумор при спешни симптоми, самонараняване, скръб/);
+  assert.match(GENTLE_GUIDANCE, /при раздразнение — спокойно и директно/);
+  assert.match(GENTLE_GUIDANCE, /При тъга и тревожност — по-меко и кратко/);
+  assert.match(GENTLE_GUIDANCE, /Без хумор при спешни симптоми, самонараняване, скръб/);
   assert.match(SYSTEM_PROMPT, /само при ясно игрив контекст/);
   assert.match(SYSTEM_PROMPT, /Не твърди, че имаш тяло, чувства, лични преживявания/);
   assert.match(SYSTEM_PROMPT, /112/);

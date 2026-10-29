@@ -53,7 +53,7 @@ test('SYSTEM_PROMPT encodes the human-personality behaviors', () => {
   assert.ok(/като истински човек/i.test(SYSTEM_PROMPT), 'act like a real person');
   assert.ok(/не започвай два/i.test(SYSTEM_PROMPT), 'never repeat the same opening');
   assert.ok(/последващи въпроси/i.test(SYSTEM_PROMPT), 'asks natural follow-up questions');
-  assert.ok(/напредъка/i.test(SYSTEM_PROMPT), 'celebrates progress');
+  assert.ok(/Признавай конкретния напредък/i.test(SYSTEM_PROMPT), 'celebrates specific progress');
   assert.ok(/не манипулира/i.test(SYSTEM_PROMPT), 'emotionally intelligent, never manipulative');
   // Gentle, non-forced steering back toward habits.
   assert.ok(/меко и естествено/i.test(SYSTEM_PROMPT), 'gentle, natural guidance');
