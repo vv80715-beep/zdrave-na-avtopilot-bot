@@ -36,6 +36,8 @@ const { planKeyboard } = require('./planLinks');
 const {
   HANDOFF_MESSAGE,
   PRODUCT_CONTACT_NOTE,
+  HANDOFF_OFFER_MESSAGE,
+  isPendingOfferActive,
   resolveTrialHandoff,
 } = require('./trialHumanHandoff');
 const { EliPlatformClient } = require('./boltPlatformClient');
@@ -293,15 +295,52 @@ const { ownerRecentTurns, ownerRememberTurn } = require('./ownerSession');
 
 // opts.status: entitlement status from gateChat (computed if missing).
 async function askEli(ctx, question, opts = {}) {
-  if (!openai) {
-    await ctx.reply('OpenAI не е конфигуриран. Моля, провери настройките на бота.');
-    return;
-  }
-
   const status = opts.status || (await gateChat(ctx));
   if (!status) return; // expired trial — static message already sent
 
   const owner = isOwner(ctx);
+
+  // Free-trial owner handoff is deterministic and must keep working even when
+  // OpenAI is temporarily unavailable. A concern produces only an offer first;
+  // a short-lived session flag allows a plain "Да" to reveal the owner contact.
+  ctx.session ??= {};
+  const pendingOffer = isPendingOfferActive(ctx.session.trialHumanHandoffOfferedAt);
+  const trialHandoff = !owner
+    ? resolveTrialHandoff(status, question, { pendingOffer })
+    : null;
+
+  if (trialHandoff?.kind === 'immediate') {
+    delete ctx.session.trialHumanHandoffOfferedAt;
+    await ctx.reply(HANDOFF_MESSAGE, trialHandoff.keyboard);
+    addConversation(ctx.from.id, 'user', question);
+    addConversation(ctx.from.id, 'assistant', HANDOFF_MESSAGE);
+    return;
+  }
+
+  if (trialHandoff?.kind === 'offer') {
+    ctx.session.trialHumanHandoffOfferedAt = Date.now();
+    await ctx.reply(HANDOFF_OFFER_MESSAGE);
+    addConversation(ctx.from.id, 'user', question);
+    addConversation(ctx.from.id, 'assistant', HANDOFF_OFFER_MESSAGE);
+    return;
+  }
+
+  if (trialHandoff?.kind === 'decline') {
+    delete ctx.session.trialHumanHandoffOfferedAt;
+    const declineReply =
+      'Разбира се. Ако по-късно искаш да говориш с човек, просто ми кажи.';
+    await ctx.reply(declineReply);
+    addConversation(ctx.from.id, 'user', question);
+    addConversation(ctx.from.id, 'assistant', declineReply);
+    return;
+  }
+
+  if (!pendingOffer) delete ctx.session.trialHumanHandoffOfferedAt;
+
+  if (!openai) {
+    await ctx.reply('OpenAI не е конфигуриран. Моля, провери настройките на бота.');
+    return;
+  }
 
   // Record activity once per inbound turn — even for deterministic early
   // returns below — so "how long since we last talked" reflects real chatting,
@@ -321,17 +360,6 @@ async function askEli(ctx, question, opts = {}) {
     allowed.includes('voice') &&
     (storedMode === 'voice' || Boolean(opts.spokenInput));
   const freePlan = status.plan === 'free';
-  const trialHandoff = !owner ? resolveTrialHandoff(status, question) : null;
-
-  // Free-trial human handoff: an explicit request for a real person is handled
-  // deterministically with no OpenAI call. Product questions still get Eli's
-  // normal answer, with the same single message carrying a direct owner button.
-  if (trialHandoff?.kind === 'immediate') {
-    await ctx.reply(HANDOFF_MESSAGE, trialHandoff.keyboard);
-    addConversation(ctx.from.id, 'user', question);
-    addConversation(ctx.from.id, 'assistant', HANDOFF_MESSAGE);
-    return;
-  }
 
   // Deterministic answers (log queries, profile dumps, memory commands) follow
   // the same one-delivery rule: voice mode speaks them (text only as fallback);
