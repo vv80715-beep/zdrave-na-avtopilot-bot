@@ -83,7 +83,7 @@ function activeEntitlement(id, planId, modes) {
     billing_status: planId === 'seven_day' ? 'paid' : 'active',
     modes: normalizedModes,
     avatar_minutes_per_month: normalizedModes.includes('avatar')
-      ? (planId === 'yearly' ? 20 : 30)
+      ? (planId === 'yearly' ? 10 : 20)
       : 0,
     starts_at: startsAt.toISOString(),
     current_period_start: periodStart.toISOString(),
