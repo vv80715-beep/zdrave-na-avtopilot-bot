@@ -535,7 +535,7 @@ test('strict entitlement contract rejects unknown modes, invalid periods, and in
     {
       ...validEntitlement,
       modes: ['text', 'voice', 'community'],
-      avatar_minutes_per_month: 30,
+      avatar_minutes_per_month: 20,
     },
     {
       ...validEntitlement,
@@ -587,9 +587,9 @@ test('/plans and show_plans display all canonical plans', async () => {
     'Text + Voice + Community',
     'No Avatar',
     'Monthly — €50',
-    '30 Avatar minutes/month',
-    'Yearly — €360',
     '20 Avatar minutes/month',
+    'Yearly — €360',
+    '10 Avatar minutes/month',
   ]) {
     assert.ok(PLANS_TEXT.includes(required), required);
   }
