@@ -38,7 +38,7 @@ test('monthly plan: €50, 30 days, avatar, 20 avatar minutes/month', () => {
   assert.equal(plan.price.currency, 'EUR');
   assert.equal(plan.durationDays, 30);
   assert.ok(plan.modes.includes('avatar'));
-  assert.equal(plan.avatarMinutesPerMonth, 10);
+  assert.equal(plan.avatarMinutesPerMonth, 20);
   assert.ok(plan.modes.includes('text'));
   assert.ok(plan.modes.includes('voice'));
   assert.ok(plan.modes.includes('community'));
@@ -171,7 +171,7 @@ function rawEntitlementResponse(entitlementOverrides = {}) {
       status: 'active',
       billing_status: 'active',
       modes: ['text', 'voice', 'avatar', 'community'],
-      avatar_minutes_per_month: 10,
+      avatar_minutes_per_month: 20,
       starts_at: '2026-08-24T09:00:00.000Z',
       current_period_start: '2026-08-24T09:00:00.000Z',
       current_period_end: '2026-09-23T09:00:00.000Z',
@@ -213,7 +213,7 @@ test('monthly entitlement response: avatar mode, 20 avatar minutes', () => {
   );
   assert.equal(normalized.planId, 'monthly');
   assert.ok(normalized.modes.includes('avatar'));
-  assert.equal(normalized.avatarMinutesPerMonth, 10);
+  assert.equal(normalized.avatarMinutesPerMonth, 20);
 });
 
 test('yearly entitlement response: avatar mode, 10 avatar minutes', () => {
