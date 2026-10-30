@@ -40,7 +40,12 @@ const plans = require('./commands/plans');
 const link = require('./commands/link');
 const { getMode, setMode } = require('./avatarModeStorage');
 const { modePermissionsText } = require('./modePermissions');
-const { sendAvatarReply } = require('./avatarService');
+const {
+  sendAvatarReply,
+  checkAvatarAvailability,
+  formatAvatarTime,
+  AVATAR_ADDON_URL,
+} = require('./avatarService');
 const { sendVoiceReply } = require('./voiceReplyService');
 const { extractHealthEvents } = require('./dailyLogTracker');
 const { resolveLogQuery, answerDailyLogQuery, recordEvents, formatConfirmation } = require('./dailyLogService');
@@ -203,7 +208,16 @@ async function showModeSelector(ctx) {
     return ctx.reply(`${permissions}\n\n${TRIAL_EXPIRED_MESSAGE}`, planKeyboard());
   }
   const current = getMode(ctx.from.id);
-  const effective = status.allowedModes.includes(current) ? current : 'text';
+  let selectableModes = [...status.allowedModes];
+  let avatarAvailability = null;
+  if (selectableModes.includes('avatar')) {
+    avatarAvailability = await checkAvatarAvailability(ctx);
+    if (!avatarAvailability.available) {
+      selectableModes = selectableModes.filter((m) => m !== 'avatar');
+      if (current === 'avatar') setMode(ctx.from.id, 'text');
+    }
+  }
+  const effective = selectableModes.includes(current) ? current : 'text';
   if (status.allowedModes.length <= 1) {
     // Free trial: text only — no premium buttons, friendly plan pointer.
     return ctx.reply(
@@ -212,12 +226,21 @@ async function showModeSelector(ctx) {
     );
   }
   const keyboard = Markup.keyboard([
-    status.allowedModes.map((m) => MODE_LABELS[m]),
+    selectableModes.map((m) => MODE_LABELS[m]),
   ])
     .resize()
     .oneTime();
+  const avatarNote = avatarAvailability && !avatarAvailability.available
+    ? avatarAvailability.reason === 'quota'
+      ? `\n\n🎬 Avatar времето ти е изчерпано или е под минималните 30 секунди за ново видео. Добави минути: ${AVATAR_ADDON_URL}`
+      : avatarAvailability.reason === 'pending'
+        ? '\n\n🎬 Предишно Avatar видео още се проверява. Ново видео е временно блокирано.'
+        : '\n\n🎬 Avatar режимът временно не е достъпен, защото проверката на оставащото време не може да бъде потвърдена.'
+    : avatarAvailability?.low
+      ? `\n\n🎬 Остават ${formatAvatarTime(avatarAvailability.availableSeconds)} Avatar време.`
+      : '';
   return ctx.reply(
-    `${permissions}\n\nВ момента си в режим „${MODE_NAMES_BG[effective]}".\n\nИзбери режим:`,
+    `${permissions}\n\nВ момента си в режим „${MODE_NAMES_BG[effective]}".\n\nИзбери режим:${avatarNote}`,
     keyboard
   );
 }
@@ -235,6 +258,25 @@ async function handleModeSelection(ctx, mode) {
       'Тази опция не е включена в текущия ти план. 💙 Виж плановете с /mode или по-долу:',
       planKeyboard()
     );
+  }
+  if (mode === 'avatar') {
+    const avatarAvailability = await checkAvatarAvailability(ctx);
+    if (!avatarAvailability.available) {
+      setMode(ctx.from.id, 'text');
+      if (avatarAvailability.reason === 'quota') {
+        return ctx.reply(
+          '🎬 Avatar времето ти е изчерпано или е останало под 30 секунди. Няма да стартирам платена видео заявка. Добави допълнителни Avatar минути и опитай отново.',
+          Markup.inlineKeyboard([[Markup.button.url('➕ Добави Avatar минути', AVATAR_ADDON_URL)]])
+        );
+      }
+      if (avatarAvailability.reason === 'pending') {
+        return ctx.reply('🎬 Предишно Avatar видео още се проверява. Ново видео няма да бъде стартирано, докато състоянието му не се потвърди.');
+      }
+      return ctx.reply('🎬 В момента не мога безопасно да потвърдя оставащото Avatar време, затова видео заявката е блокирана. Опитай отново след малко.');
+    }
+    if (avatarAvailability.low) {
+      await ctx.reply(`🎬 Остават ${formatAvatarTime(avatarAvailability.availableSeconds)} Avatar време. Ще те предупредя отново, когато балансът стане критично нисък.`);
+    }
   }
   setMode(ctx.from.id, mode);
   const confirmations = {
@@ -523,16 +565,22 @@ async function askEli(ctx, question, opts = {}) {
       let avatarTimeExhausted = false;
       let pendingAvatar = false;
       let insufficientAvatarTime = false;
+      let avatarBalance = null;
       const ok = await sendAvatarReply(ctx, finalAnswer, {
         lookId, onQuotaExceeded: () => { avatarTimeExhausted = true; },
         onPending: () => { pendingAvatar = true; },
         onInsufficientTime: () => { insufficientAvatarTime = true; },
+        onBalance: (balance) => { avatarBalance = balance; },
       });
+      if (avatarBalance && !avatarBalance.usable) {
+        setMode(ctx.from.id, 'text');
+      }
       if (!ok) {
+        if (avatarTimeExhausted || insufficientAvatarTime) setMode(ctx.from.id, 'text');
         await ctx.reply(avatarTimeExhausted
-          ? `${finalAnswer}\n\n🎬 Общото налично време за видео аватара (включено и допълнително закупено) е изчерпано. Давам ти отговора с текст.`
+          ? `${finalAnswer}\n\n🎬 Avatar времето ти приключи. Няма да стартирам повече платени видео заявки. Добави допълнителни минути от профила си: ${AVATAR_ADDON_URL}`
           : insufficientAvatarTime
-            ? `${finalAnswer}\n\n🎬 Общото оставащо време за видео аватара не стига за този видеоотговор. Давам ти отговора с текст, без да отнемам минути.`
+            ? `${finalAnswer}\n\n🎬 Оставащото Avatar време е под 30 секунди и не стига за ново видео. Няма да отнемам минути или да стартирам HeyGen. Добави минути: ${AVATAR_ADDON_URL}`
           : pendingAvatar
             ? `${finalAnswer}\n\n🎬 Предишно видео все още се проверява. Няма да започвам ново, докато състоянието му не е потвърдено.`
           : finalAnswer);
