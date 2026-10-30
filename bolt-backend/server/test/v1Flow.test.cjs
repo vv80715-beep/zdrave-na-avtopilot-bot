@@ -32,25 +32,25 @@ test('7-day plan: €15, 7 days, no avatar, 0 avatar minutes', () => {
   assert.ok(plan.modes.includes('community'));
 });
 
-test('monthly plan: €50, 30 days, avatar, 30 avatar minutes/month', () => {
+test('monthly plan: €50, 30 days, avatar, 20 avatar minutes/month', () => {
   const plan = PLANS.monthly;
   assert.equal(plan.price.amount, 50);
   assert.equal(plan.price.currency, 'EUR');
   assert.equal(plan.durationDays, 30);
   assert.ok(plan.modes.includes('avatar'));
-  assert.equal(plan.avatarMinutesPerMonth, 30);
+  assert.equal(plan.avatarMinutesPerMonth, 10);
   assert.ok(plan.modes.includes('text'));
   assert.ok(plan.modes.includes('voice'));
   assert.ok(plan.modes.includes('community'));
 });
 
-test('yearly plan: €360, 365 days, avatar, 20 avatar minutes/month', () => {
+test('yearly plan: €360, 365 days, avatar, 10 avatar minutes/month', () => {
   const plan = PLANS.yearly;
   assert.equal(plan.price.amount, 360);
   assert.equal(plan.price.currency, 'EUR');
   assert.equal(plan.durationDays, 365);
   assert.ok(plan.modes.includes('avatar'));
-  assert.equal(plan.avatarMinutesPerMonth, 20);
+  assert.equal(plan.avatarMinutesPerMonth, 10);
   assert.ok(plan.modes.includes('text'));
   assert.ok(plan.modes.includes('voice'));
   assert.ok(plan.modes.includes('community'));
@@ -100,7 +100,7 @@ function paidEntitlement(overrides = {}) {
     planId: 'monthly',
     plan: { id: 'monthly', name: '1 месец с Ели' },
     modes: ['text', 'voice', 'avatar', 'community'],
-    avatarMinutesPerMonth: 30,
+    avatarMinutesPerMonth: 20,
     startsAt: new Date('2026-08-24T09:00:00.000Z'),
     currentPeriodStart: new Date('2026-08-24T09:00:00.000Z'),
     currentPeriodEnd: new Date('2026-09-23T09:00:00.000Z'),
@@ -171,7 +171,7 @@ function rawEntitlementResponse(entitlementOverrides = {}) {
       status: 'active',
       billing_status: 'active',
       modes: ['text', 'voice', 'avatar', 'community'],
-      avatar_minutes_per_month: 30,
+      avatar_minutes_per_month: 10,
       starts_at: '2026-08-24T09:00:00.000Z',
       current_period_start: '2026-08-24T09:00:00.000Z',
       current_period_end: '2026-09-23T09:00:00.000Z',
@@ -206,17 +206,17 @@ test('7-day entitlement response: no avatar modes, 0 avatar minutes', () => {
   assert.equal(normalized.avatarMinutesPerMonth, 0);
 });
 
-test('monthly entitlement response: avatar mode, 30 avatar minutes', () => {
+test('monthly entitlement response: avatar mode, 20 avatar minutes', () => {
   const normalized = normalizeEntitlementResponse(
     rawEntitlementResponse(),
     { requestedTelegramUserId: TELEGRAM_USER_ID },
   );
   assert.equal(normalized.planId, 'monthly');
   assert.ok(normalized.modes.includes('avatar'));
-  assert.equal(normalized.avatarMinutesPerMonth, 30);
+  assert.equal(normalized.avatarMinutesPerMonth, 10);
 });
 
-test('yearly entitlement response: avatar mode, 20 avatar minutes', () => {
+test('yearly entitlement response: avatar mode, 10 avatar minutes', () => {
   const payload = rawEntitlementResponse({
     telegram_user_id: TELEGRAM_USER_ID,
     active: true,
@@ -225,7 +225,7 @@ test('yearly entitlement response: avatar mode, 20 avatar minutes', () => {
     status: 'active',
     billing_status: 'active',
     modes: ['text', 'voice', 'avatar', 'community'],
-    avatar_minutes_per_month: 20,
+    avatar_minutes_per_month: 10,
     starts_at: '2026-08-24T09:00:00.000Z',
     current_period_start: '2026-08-24T09:00:00.000Z',
     current_period_end: '2027-08-24T09:00:00.000Z',
@@ -236,7 +236,7 @@ test('yearly entitlement response: avatar mode, 20 avatar minutes', () => {
   const normalized = normalizeEntitlementResponse(payload, { requestedTelegramUserId: TELEGRAM_USER_ID });
   assert.equal(normalized.planId, 'yearly');
   assert.ok(normalized.modes.includes('avatar'));
-  assert.equal(normalized.avatarMinutesPerMonth, 20);
+  assert.equal(normalized.avatarMinutesPerMonth, 10);
 });
 
 test('expired entitlement response: active=false, no modes', () => {
@@ -271,7 +271,7 @@ test('entitlement response rejects avatar minutes when avatar mode is not includ
     status: 'active',
     billing_status: 'paid',
     modes: ['text', 'voice', 'community'],
-    avatar_minutes_per_month: 30,
+    avatar_minutes_per_month: 10,
     starts_at: '2026-08-24T09:00:00.000Z',
     current_period_start: '2026-08-24T09:00:00.000Z',
     current_period_end: '2026-08-31T09:00:00.000Z',
