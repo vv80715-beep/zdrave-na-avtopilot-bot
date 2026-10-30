@@ -128,17 +128,17 @@ test('seven_day displays €15, 7 days, avatar disabled', () => {
   assert.ok(plan.modes.includes('community'));
 });
 
-test('monthly displays €50, monthly, avatar enabled, 30 avatar min', () => {
+test('monthly displays €50, monthly, avatar enabled, 20 avatar min', () => {
   const plan = PLANS.monthly;
   assert.equal(plan.price.display, '€50');
-  assert.equal(plan.avatarMinutesPerMonth, 30);
+  assert.equal(plan.avatarMinutesPerMonth, 20);
   assert.ok(plan.modes.includes('avatar'));
 });
 
-test('yearly displays €360, yearly, avatar enabled, 20 avatar min', () => {
+test('yearly displays €360, yearly, avatar enabled, 10 avatar min', () => {
   const plan = PLANS.yearly;
   assert.equal(plan.price.display, '€360');
-  assert.equal(plan.avatarMinutesPerMonth, 20);
+  assert.equal(plan.avatarMinutesPerMonth, 10);
   assert.ok(plan.modes.includes('avatar'));
 });
 
