@@ -96,8 +96,8 @@ const planCatalog = {
     price: '€50',
     period: { bg: '/ месец', en: '/ month' },
     description: {
-      bg: 'Пълният месечен достъп до Ели с Text, Voice, Community и до 30 минути Avatar видео.',
-      en: 'The full monthly access to Eli with Text, Voice, Community, and up to 30 minutes Avatar video.',
+      bg: 'Пълният месечен достъп до Ели с Text, Voice, Community и до 20 минути Avatar видео.',
+      en: 'The full monthly access to Eli with Text, Voice, Community, and up to 20 minutes Avatar video.',
     },
     page: 'monthly.html',
     expiry: {
@@ -125,8 +125,8 @@ const planCatalog = {
     price: '€360',
     period: { bg: '/ година', en: '/ year' },
     description: {
-      bg: 'Годишният Premium достъп до Ели с Text, Voice, Community и 20 минути Avatar всеки месец за 12 месеца.',
-      en: 'The yearly Premium access to Eli with Text, Voice, Community, and 20 Avatar minutes every month for 12 months.',
+      bg: 'Годишният Premium достъп до Ели с Text, Voice, Community и 10 минути Avatar всеки месец за 12 месеца.',
+      en: 'The yearly Premium access to Eli with Text, Voice, Community, and 10 Avatar minutes every month for 12 months.',
     },
     page: 'yearly.html',
     expiry: {
