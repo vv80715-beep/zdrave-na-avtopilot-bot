@@ -77,8 +77,8 @@ const PRODUCT_KNOWLEDGE = `АКТУАЛНО ЗНАНИЕ ЗА „ЗДРАВЕ Н
 
 ПЛАНОВЕ
 - 7 дни — €15 еднократно: Text + Voice + Community. Няма Avatar.
-- 1 месец — €50: Text + Voice + Avatar + Community, с 30 включени Avatar минути за месеца.
-- 1 година — €360: Text + Voice + Avatar + Community, с 20 включени Avatar минути за всеки месечен период.
+- 1 месец — €50: Text + Voice + Avatar + Community, с 20 включени Avatar минути за месеца.
+- 1 година — €360: Text + Voice + Avatar + Community, с 10 включени Avatar минути за всеки месечен период.
 - Плащането се потвърждава от backend-а. След успешно потвърдено плащане платеният достъп в свързания Telegram профил се активира автоматично.
 
 AVATAR
