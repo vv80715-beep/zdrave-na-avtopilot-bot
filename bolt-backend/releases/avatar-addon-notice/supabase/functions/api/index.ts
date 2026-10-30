@@ -32,7 +32,7 @@ const PLANS: Record<PlanId, {
     price: { amount: 1, currency: "EUR", display: "€1" },
     durationDays: 30,
     modes: ["text", "voice", "avatar", "community"],
-    avatarMinutesPerMonth: 30,
+    avatarMinutesPerMonth: 20,
   },
   yearly: {
     id: "yearly",
@@ -40,7 +40,7 @@ const PLANS: Record<PlanId, {
     price: { amount: 1, currency: "EUR", display: "€1" },
     durationDays: 365,
     modes: ["text", "voice", "avatar", "community"],
-    avatarMinutesPerMonth: 20,
+    avatarMinutesPerMonth: 10,
   },
 };
 
