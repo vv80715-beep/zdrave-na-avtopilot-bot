@@ -278,21 +278,6 @@ async function handleModeSelection(ctx, mode) {
       await ctx.reply(`🎬 Остават ${formatAvatarTime(avatarAvailability.availableSeconds)} Avatar време. Ще те предупредя отново, когато балансът стане критично нисък.`);
     }
   }
-  if (mode === 'avatar' && !isOwner(ctx)) {
-    const avatarAvailability = await checkAvatarAvailability(ctx);
-    if (!avatarAvailability.available) {
-      setMode(ctx.from.id, 'text');
-      const detail = avatarAvailability.reason === 'pending'
-        ? 'Предишно Avatar видео все още се проверява. Ново видео няма да бъде стартирано.'
-        : avatarAvailability.reason === 'metering_unavailable'
-          ? 'В момента не мога безопасно да проверя Avatar баланса ти, затова няма да стартирам платена видео заявка.'
-          : `Avatar времето ти е изчерпано или е под минималното нужно за ново видео (остават ${formatAvatarTime(avatarAvailability.availableSeconds)}).`;
-      return ctx.reply(
-        `🎬 ${detail}\n\nПреминах те към текстов режим. Можеш да добавиш допълнителни Avatar минути тук: ${AVATAR_ADDON_URL}`,
-        Markup.removeKeyboard()
-      );
-    }
-  }
   setMode(ctx.from.id, mode);
   const confirmations = {
     text: 'Добре! 💬 Продължаваме с текст. Пиши ми!',
