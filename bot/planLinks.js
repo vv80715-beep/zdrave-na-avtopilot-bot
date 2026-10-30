@@ -29,10 +29,10 @@ const PLANS_TEXT =
   'No Avatar\n\n' +
   'Monthly — €50\n' +
   'Text + Voice + Avatar + Community\n' +
-  '20 Avatar minutes/month\n\n' +
+  '30 Avatar minutes/month\n\n' +
   'Yearly — €360\n' +
   'Text + Voice + Avatar + Community\n' +
-  '10 Avatar minutes/month';
+  '20 Avatar minutes/month';
 
 function planKeyboard() {
   return Markup.inlineKeyboard(
