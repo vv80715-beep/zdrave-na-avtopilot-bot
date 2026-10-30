@@ -17,7 +17,7 @@ const PLANS = Object.freeze({
     price: Object.freeze({ amount: 50, currency: 'EUR', display: '€50' }),
     durationDays: 30,
     modes: Object.freeze(['text', 'voice', 'avatar', 'community']),
-    avatarMinutesPerMonth: 30,
+    avatarMinutesPerMonth: 20,
   }),
   yearly: Object.freeze({
     id: 'yearly',
@@ -25,7 +25,7 @@ const PLANS = Object.freeze({
     price: Object.freeze({ amount: 360, currency: 'EUR', display: '€360' }),
     durationDays: 365,
     modes: Object.freeze(['text', 'voice', 'avatar', 'community']),
-    avatarMinutesPerMonth: 20,
+    avatarMinutesPerMonth: 10,
   }),
 });
 
