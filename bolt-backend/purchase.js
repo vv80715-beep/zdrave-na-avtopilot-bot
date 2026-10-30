@@ -107,13 +107,13 @@ const planCatalog = {
     features: [
       ['TEXT', { bg: 'Ежедневни разговори и персонализирана подкрепа.', en: 'Daily conversations and personalized support.' }, true],
       ['VOICE', { bg: 'Гласови съобщения и гласови отговори.', en: 'Voice messages and voice replies.' }, true],
-      ['AVATAR', { bg: 'До 30 минути генерирано Avatar видео месечно.', en: 'Up to 30 minutes of generated Avatar video monthly.' }, true],
+      ['AVATAR', { bg: 'До 20 минути генерирано Avatar видео месечно.', en: 'Up to 20 minutes of generated Avatar video monthly.' }, true],
       ['COMMUNITY', { bg: 'Пълен достъп до V1 общността.', en: 'Full access to the V1 community.' }, true],
     ],
     summary: [
       ['TEXT', { bg: 'Включен', en: 'Included' }],
       ['VOICE', { bg: 'Включен', en: 'Included' }],
-      ['AVATAR', { bg: 'До 30 мин./месец', en: 'Up to 30 min./month' }],
+      ['AVATAR', { bg: 'До 20 мин./месец', en: 'Up to 20 min./month' }],
       ['COMMUNITY', { bg: 'Пълен достъп', en: 'Full access' }],
     ],
   },
