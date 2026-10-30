@@ -48,7 +48,7 @@ Bridge-ът налага следните правила:
 | Plan ID | Цена | Billing | Режими |
 |---|---:|---|---|
 | `seven_day` | €15 | еднократно, 7 дни | Text, Voice, Community |
-| `monthly` | €50 | месечен subscription | Text, Voice, Avatar, Community; до 30 Avatar мин./месец |
+| `monthly` | €50 | месечен subscription | Text, Voice, Avatar, Community; до 10 Avatar мин./месец |
 | `yearly` | €360 | годишен subscription | Text, Voice, Avatar, Community; 20 Avatar мин./месец |
 
 Backend-ът е единственият източник на истина за цена, billing type, payment и entitlement.
