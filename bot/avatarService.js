@@ -28,6 +28,60 @@ const inFlight = new Set();
 // Static waiting notice shown only when a real avatar generation is starting.
 const WAITING_MESSAGE = '🎬 Ели подготвя видео отговора си… Моля, изчакай малко. ✨';
 const AVATAR_HOLD_SECONDS = 30;
+const LOW_AVATAR_BALANCE_SECONDS = 120;
+const AVATAR_ADDON_URL = 'https://zdrave-na-avtopilot-dkr6.bolt.host/profile.html';
+
+function formatAvatarTime(seconds) {
+  const safe = Math.max(0, Math.floor(Number(seconds) || 0));
+  if (safe < 60) return `${safe} сек.`;
+  const minutes = Math.floor(safe / 60);
+  const rest = safe % 60;
+  return rest ? `${minutes} мин. ${rest} сек.` : `${minutes} мин.`;
+}
+
+async function checkAvatarAvailability(ctx) {
+  if (isOwner(ctx)) {
+    return { available: true, owner: true, low: false, availableSeconds: null };
+  }
+  const userId = String(ctx.from?.id || '');
+  const updateId = ctx.update?.update_id;
+  if (!/^[1-9]\d{4,18}$/.test(userId) || !Number.isSafeInteger(updateId) || updateId <= 0) {
+    return { available: false, reason: 'metering_unavailable', availableSeconds: 0 };
+  }
+  const credits = await checkAvatarCredits(ctx.from.id);
+  if (!credits.allowed) {
+    return { available: false, reason: 'plan', availableSeconds: 0 };
+  }
+  const requestId = `tg:${userId}:${updateId}`;
+  try {
+    const pending = await meterAvatar('pending', userId, requestId);
+    if (['submitting', 'submitted', 'uncertain'].includes(pending.status)) {
+      return { available: false, reason: 'pending', availableSeconds: 0 };
+    }
+    const allowance = await meterAvatar('allowance', userId, requestId);
+    const seconds = Number.isSafeInteger(allowance.available_seconds) ? allowance.available_seconds : 0;
+    if (allowance.status === 'exhausted' || seconds < AVATAR_HOLD_SECONDS) {
+      return { available: false, reason: 'quota', availableSeconds: seconds, low: true };
+    }
+    if (allowance.status !== 'eligible') {
+      return { available: false, reason: 'metering_unavailable', availableSeconds: seconds };
+    }
+    return {
+      available: true,
+      reason: null,
+      availableSeconds: seconds,
+      low: seconds <= LOW_AVATAR_BALANCE_SECONDS,
+    };
+  } catch (error) {
+    if (error?.code === 'avatar_quota_exceeded') {
+      return { available: false, reason: 'quota', availableSeconds: 0, low: true };
+    }
+    if (error?.code === 'avatar_pending_reconciliation') {
+      return { available: false, reason: 'pending', availableSeconds: 0 };
+    }
+    return { available: false, reason: 'metering_unavailable', availableSeconds: 0 };
+  }
+}
 
 // Sends Eli's reply as a HeyGen avatar video to the same chat.
 // Returns true when a video was sent; false when it fell back (caller's text
@@ -88,12 +142,14 @@ async function sendAvatarReply(ctx, replyText, opts = {}) {
     // HeyGen text-to-video has no known pre-generation duration bound. Reserve
     // exactly 30 available seconds in the backend BEFORE any paid generation.
     let reservation;
+    let availableSecondsBefore = null;
     try {
       if (outstanding.status === 'submitted') {
         reservation = outstanding;
       } else {
         trace.stage = 'allowance';
         const allowance = await meterAvatar('allowance', userId, requestId);
+        if (Number.isSafeInteger(allowance.available_seconds)) availableSecondsBefore = allowance.available_seconds;
         if (['settled', 'failed', 'submitting', 'uncertain'].includes(allowance.status)) return false;
         if (allowance.status === 'exhausted') { trace.reason = 'total_quota_exhausted'; opts.onQuotaExceeded?.(); return false; }
         if (allowance.status !== 'eligible' && allowance.status !== 'reserved') return false;
@@ -214,10 +270,25 @@ async function sendAvatarReply(ctx, replyText, opts = {}) {
         settled.video_url !== video.url) return false;
     trace.stage = 'delivery_authorization';
     if (!credits.allowed) return false;
+    let caption = '💙 Ели';
+    if (Number.isSafeInteger(availableSecondsBefore)) {
+      const remainingSeconds = Math.max(0, availableSecondsBefore - video.durationSeconds);
+      const balance = {
+        remainingSeconds,
+        usable: remainingSeconds >= AVATAR_HOLD_SECONDS,
+        low: remainingSeconds <= LOW_AVATAR_BALANCE_SECONDS,
+      };
+      opts.onBalance?.(balance);
+      if (!balance.usable) {
+        caption += `\n\n🎬 Остават ${formatAvatarTime(remainingSeconds)} Avatar време — недостатъчно за ново видео. Добави допълнителни минути: ${AVATAR_ADDON_URL}`;
+      } else if (balance.low) {
+        caption += `\n\n🎬 Остават ${formatAvatarTime(remainingSeconds)} Avatar време.`;
+      }
+    }
     trace.stage = 'telegram_video';
     await ctx.replyWithVideo(
       { url: video.url },
-      { caption: '💙 Ели' }
+      { caption }
     );
     console.log(`Avatar video ok [user ${userId}]`);
     trace.delivered = true;
@@ -242,4 +313,13 @@ async function sendAvatarReply(ctx, replyText, opts = {}) {
   }
 }
 
-module.exports = { sendAvatarReply, checkAvatarCredits, WAITING_MESSAGE };
+module.exports = {
+  sendAvatarReply,
+  checkAvatarCredits,
+  checkAvatarAvailability,
+  formatAvatarTime,
+  WAITING_MESSAGE,
+  AVATAR_HOLD_SECONDS,
+  LOW_AVATAR_BALANCE_SECONDS,
+  AVATAR_ADDON_URL,
+};
